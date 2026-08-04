@@ -27,8 +27,28 @@ public record WasabiAppBuilder(string AppName, string[] Arguments)
 
 	public WasabiAppBuilder OnTermination(Action action) =>
 		this with { Terminate = action };
+
 	public WasabiApplication Build() =>
-		new(this);
+		Build(ApplicationRuntime.Bitcoin);
+
+	internal WasabiApplication Build(ApplicationRuntime runtime) =>
+		SelectApplication(runtime, () => new WasabiApplication(this));
+
+	internal static TApplication SelectApplication<TApplication>(
+		ApplicationRuntime runtime,
+		Func<TApplication> applicationFactory) =>
+		runtime switch
+		{
+			ApplicationRuntime.Bitcoin => InvokeFactory(applicationFactory),
+			ApplicationRuntime.Liquid => throw new NotSupportedException("Liquid application composition is not implemented."),
+			_ => throw new ArgumentOutOfRangeException(nameof(runtime), runtime, "An explicit supported application runtime is required."),
+		};
+
+	private static TApplication InvokeFactory<TApplication>(Func<TApplication> applicationFactory)
+	{
+		ArgumentNullException.ThrowIfNull(applicationFactory);
+		return applicationFactory();
+	}
 
 	public static WasabiAppBuilder Create(string appName, string[] args) =>
 		new(appName, args);
