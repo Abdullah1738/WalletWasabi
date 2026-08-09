@@ -103,6 +103,306 @@ public class ElementsRpcClientTests
 	}
 
 	[Fact]
+	public async Task BracketsEffectiveFeeAssetWithExactNodeGenerationAsync()
+	{
+		const string StartupId = "abababababababababababababababababababababababababababababababab";
+		const string OverrideFeeAsset = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getnodegeneration" => Envelope(
+				invocation.Id,
+				GenerationResult(StartupId, 9, 42, BestBlockHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, FeeAssetResult(PeggedAsset, OverrideFeeAsset)),
+			_ => throw new InvalidOperationException(),
+		});
+
+		ElementsFeeAssetGenerationObservation observation =
+			await harness.Client.GetFeeAssetGenerationObservationAsync(CancellationToken.None);
+
+		Assert.Equal(PeggedAsset, observation.PeggedAsset);
+		Assert.Equal(OverrideFeeAsset, observation.EffectiveFeeAsset);
+		Assert.False(observation.UsesPeggedAssetForFees);
+		Assert.False(observation.ChainstateChangedDuringObservation);
+		Assert.Equal(StartupId, observation.GenerationBefore.StartupId);
+		Assert.Equal(9UL, observation.GenerationBefore.ChainstateRevision);
+		Assert.Equal(observation.GenerationBefore, observation.GenerationAfter);
+		Assert.Equal(["getnodegeneration", "getsidechaininfo", "getnodegeneration"], harness.Handler.Methods);
+		Assert.All(harness.Handler.Parameters, parameters => Assert.Equal("[]", parameters));
+	}
+
+	[Fact]
+	public async Task SerializesOtherPublicProbesOutsideFeeAssetGenerationBracketAsync()
+	{
+		const string StartupId = "abababababababababababababababababababababababababababababababab";
+		var middleCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var releaseMiddleCall = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		int sidechainCalls = 0;
+		using var harness = new ElementsRpcHarness(async (invocation, cancellationToken) =>
+		{
+			if (invocation.Method == "getnodegeneration")
+			{
+				return Envelope(invocation.Id, GenerationResult(StartupId, 9, 42, BestBlockHash));
+			}
+			if (invocation.Method == "getsidechaininfo" && sidechainCalls++ == 0)
+			{
+				middleCallEntered.TrySetResult();
+				await releaseMiddleCall.Task.WaitAsync(cancellationToken);
+				return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
+			}
+
+			return ValidResult(invocation);
+		});
+
+		Task<ElementsFeeAssetGenerationObservation> observationTask =
+			harness.Client.GetFeeAssetGenerationObservationAsync(CancellationToken.None);
+		await middleCallEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+		Task<ElementsNodeStatus> statusTask = harness.Client.GetNodeStatusAsync(CancellationToken.None);
+		try
+		{
+			Assert.Equal(["getnodegeneration", "getsidechaininfo"], harness.Handler.Methods);
+			Assert.False(statusTask.IsCompleted);
+		}
+		finally
+		{
+			releaseMiddleCall.TrySetResult();
+		}
+
+		ElementsFeeAssetGenerationObservation observation =
+			await observationTask.WaitAsync(TimeSpan.FromSeconds(5));
+		ElementsNodeStatus status = await statusTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+		Assert.False(observation.ChainstateChangedDuringObservation);
+		Assert.Equal("elementsregtest", status.Chain);
+		Assert.Equal(
+			[
+				"getnodegeneration",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getnetworkinfo",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockhash",
+				"getsidechaininfo",
+			],
+			harness.Handler.Methods);
+	}
+
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task CancellationDuringBracketReleasesProbeLockAsync(bool cancelClosingGeneration)
+	{
+		const string StartupId = "abababababababababababababababababababababababababababababababab";
+		var blockedCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var neverCompletes = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		int generationCalls = 0;
+		int sidechainCalls = 0;
+		using var harness = new ElementsRpcHarness(async (invocation, cancellationToken) =>
+		{
+			if (invocation.Method == "getnodegeneration")
+			{
+				generationCalls++;
+				if (cancelClosingGeneration && generationCalls == 2)
+				{
+					blockedCallEntered.TrySetResult();
+					await neverCompletes.Task.WaitAsync(cancellationToken);
+				}
+
+				return Envelope(invocation.Id, GenerationResult(StartupId, 9, 42, BestBlockHash));
+			}
+			if (invocation.Method == "getsidechaininfo" && sidechainCalls++ == 0)
+			{
+				if (!cancelClosingGeneration)
+				{
+					blockedCallEntered.TrySetResult();
+					await neverCompletes.Task.WaitAsync(cancellationToken);
+				}
+
+				return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
+			}
+
+			return ValidResult(invocation);
+		});
+		using var cancellation = new CancellationTokenSource();
+
+		Task<ElementsFeeAssetGenerationObservation> observationTask =
+			harness.Client.GetFeeAssetGenerationObservationAsync(cancellation.Token);
+		await blockedCallEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+		cancellation.Cancel();
+
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => observationTask);
+		ElementsNodeStatus status = await harness.Client.GetNodeStatusAsync(CancellationToken.None)
+			.WaitAsync(TimeSpan.FromSeconds(5));
+
+		Assert.Equal("elementsregtest", status.Chain);
+		Assert.Equal(cancelClosingGeneration ? 8 : 7, harness.Handler.Methods.Count);
+		Assert.Equal("getnetworkinfo", harness.Handler.Methods[cancelClosingGeneration ? 3 : 2]);
+	}
+
+	[Theory]
+	[InlineData(10UL, 43, "0202020202020202020202020202020202020202020202020202020202020202")]
+	[InlineData(10UL, 42, BestBlockHash)]
+	public async Task AcceptsAdvancedGenerationIncludingAbaTipAsync(
+		ulong closingRevision,
+		int closingBlocks,
+		string closingHash)
+	{
+		const string StartupId = "abababababababababababababababababababababababababababababababab";
+		int generationCalls = 0;
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getnodegeneration" => Envelope(
+				invocation.Id,
+				generationCalls++ == 0
+					? GenerationResult(StartupId, 9, 42, BestBlockHash)
+					: GenerationResult(StartupId, closingRevision, closingBlocks, closingHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset)),
+			_ => throw new InvalidOperationException(),
+		});
+
+		ElementsFeeAssetGenerationObservation observation =
+			await harness.Client.GetFeeAssetGenerationObservationAsync(CancellationToken.None);
+
+		Assert.True(observation.UsesPeggedAssetForFees);
+		Assert.True(observation.ChainstateChangedDuringObservation);
+		Assert.Equal(closingRevision, observation.GenerationAfter.ChainstateRevision);
+		Assert.Equal(closingBlocks, observation.GenerationAfter.Blocks);
+		Assert.Equal(closingHash, observation.GenerationAfter.BestBlockHash);
+	}
+
+	[Theory]
+	[InlineData("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd", 9UL, 42, BestBlockHash, "startup_id")]
+	[InlineData("abababababababababababababababababababababababababababababababab", 8UL, 42, BestBlockHash, "chainstate_revision")]
+	[InlineData("abababababababababababababababababababababababababababababababab", 9UL, 43, BestBlockHash, "inconsistent tip")]
+	[InlineData("abababababababababababababababababababababababababababababababab", 9UL, 42, "0202020202020202020202020202020202020202020202020202020202020202", "inconsistent tip")]
+	public async Task RejectsInconsistentGenerationFenceWithoutValuesAsync(
+		string closingStartupId,
+		ulong closingRevision,
+		int closingBlocks,
+		string closingHash,
+		string expectedReason)
+	{
+		const string OpeningStartupId = "abababababababababababababababababababababababababababababababab";
+		int generationCalls = 0;
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getnodegeneration" => Envelope(
+				invocation.Id,
+				generationCalls++ == 0
+					? GenerationResult(OpeningStartupId, 9, 42, BestBlockHash)
+					: GenerationResult(closingStartupId, closingRevision, closingBlocks, closingHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset)),
+			_ => throw new InvalidOperationException(),
+		});
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => harness.Client.GetFeeAssetGenerationObservationAsync(CancellationToken.None));
+
+		Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+		Assert.Contains(expectedReason, exception.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain(OpeningStartupId, exception.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain(closingStartupId, exception.Message, StringComparison.Ordinal);
+		Assert.Equal(3, harness.Handler.Methods.Count);
+	}
+
+	[Theory]
+	[InlineData("0000000000000000000000000000000000000000000000000000000000000000")]
+	[InlineData("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+	public async Task RequiresCanonicalEffectiveFeeAssetBeforeClosingGenerationAsync(string invalidFeeAsset)
+	{
+		const string StartupId = "abababababababababababababababababababababababababababababababab";
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getnodegeneration" => Envelope(invocation.Id, GenerationResult(StartupId, 9, 42, BestBlockHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, FeeAssetResult(PeggedAsset, invalidFeeAsset)),
+			_ => throw new InvalidOperationException(),
+		});
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => harness.Client.GetFeeAssetGenerationObservationAsync(CancellationToken.None));
+
+		Assert.Contains("fee_asset", exception.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain(invalidFeeAsset, exception.Message, StringComparison.Ordinal);
+		Assert.Equal(["getnodegeneration", "getsidechaininfo"], harness.Handler.Methods);
+	}
+
+	[Fact]
+	public async Task RequiresEffectiveFeeAssetFieldBeforeClosingGenerationAsync()
+	{
+		const string StartupId = "abababababababababababababababababababababababababababababababab";
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getnodegeneration" => Envelope(invocation.Id, GenerationResult(StartupId, 9, 42, BestBlockHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, SidechainResult()),
+			_ => throw new InvalidOperationException(),
+		});
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => harness.Client.GetFeeAssetGenerationObservationAsync(CancellationToken.None));
+
+		Assert.Contains("fee_asset", exception.Message, StringComparison.Ordinal);
+		Assert.Equal(["getnodegeneration", "getsidechaininfo"], harness.Handler.Methods);
+	}
+
+	[Theory]
+	[InlineData("{\"startup_id\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"chainstate_revision\":9,\"blocks\":42,\"bestblockhash\":\"0101010101010101010101010101010101010101010101010101010101010101\"}", "startup_id")]
+	[InlineData("{\"startup_id\":\"abababababababababababababababababababababababababababababababab\",\"chainstate_revision\":1.0,\"blocks\":42,\"bestblockhash\":\"0101010101010101010101010101010101010101010101010101010101010101\"}", "chainstate_revision")]
+	[InlineData("{\"startup_id\":\"abababababababababababababababababababababababababababababababab\",\"chainstate_revision\":1e0,\"blocks\":42,\"bestblockhash\":\"0101010101010101010101010101010101010101010101010101010101010101\"}", "chainstate_revision")]
+	[InlineData("{\"startup_id\":\"abababababababababababababababababababababababababababababababab\",\"chainstate_revision\":\"9\",\"blocks\":42,\"bestblockhash\":\"0101010101010101010101010101010101010101010101010101010101010101\"}", "chainstate_revision")]
+	[InlineData("{\"startup_id\":\"abababababababababababababababababababababababababababababababab\",\"chainstate_revision\":18446744073709551616,\"blocks\":42,\"bestblockhash\":\"0101010101010101010101010101010101010101010101010101010101010101\"}", "chainstate_revision")]
+	[InlineData("{\"startup_id\":\"abababababababababababababababababababababababababababababababab\",\"chainstate_revision\":9,\"blocks\":-1,\"bestblockhash\":\"0101010101010101010101010101010101010101010101010101010101010101\"}", "blocks")]
+	[InlineData("{\"startup_id\":\"abababababababababababababababababababababababababababababababab\",\"chainstate_revision\":9,\"blocks\":1e0,\"bestblockhash\":\"0101010101010101010101010101010101010101010101010101010101010101\"}", "blocks")]
+	[InlineData("{\"startup_id\":\"abababababababababababababababababababababababababababababababab\",\"chainstate_revision\":9,\"blocks\":42,\"bestblockhash\":\"0000000000000000000000000000000000000000000000000000000000000000\"}", "bestblockhash")]
+	public async Task RejectsMalformedOpeningNodeGenerationAsync(string generationResult, string field)
+	{
+		using var harness = new ElementsRpcHarness(invocation => Envelope(invocation.Id, generationResult));
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => harness.Client.GetFeeAssetGenerationObservationAsync(CancellationToken.None));
+
+		Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+		Assert.Contains(field, exception.Message, StringComparison.Ordinal);
+		Assert.Single(harness.Handler.Methods);
+	}
+
+	[Theory]
+	[InlineData("{\"startup_id\":\"abababababababababababababababababababababababababababababababab\",\"chainstate_revision\":9,\"blocks\":42}")]
+	[InlineData("{\"startup_id\":\"abababababababababababababababababababababababababababababababab\",\"chainstate_revision\":9,\"blocks\":42,\"bestblockhash\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"future\":true}")]
+	[InlineData("{\"startup_id\":\"abababababababababababababababababababababababababababababababab\",\"chainstate_revision\":9,\"chainstate_revision\":9,\"blocks\":42,\"bestblockhash\":\"0101010101010101010101010101010101010101010101010101010101010101\"}")]
+	public async Task RejectsNonExactOpeningNodeGenerationSchemaAsync(string generationResult)
+	{
+		using var harness = new ElementsRpcHarness(invocation => Envelope(invocation.Id, generationResult));
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => harness.Client.GetFeeAssetGenerationObservationAsync(CancellationToken.None));
+
+		Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+		Assert.Single(harness.Handler.Methods);
+	}
+
+	[Fact]
+	public async Task MissingGenerationRpcDoesNotPoisonLegacyStatusProbeAsync()
+	{
+		using var harness = new ElementsRpcHarness(invocation =>
+			invocation.Method == "getnodegeneration"
+				? $$"""{"result":null,"error":{"code":-32601,"message":"method not found"},"id":"{{invocation.Id}}"}"""
+				: ValidResult(invocation));
+		harness.Handler.StatusCode = HttpStatusCode.NotFound;
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => harness.Client.GetFeeAssetGenerationObservationAsync(CancellationToken.None));
+		harness.Handler.StatusCode = HttpStatusCode.OK;
+		ElementsNodeStatus status = await harness.Client.GetNodeStatusAsync(CancellationToken.None);
+
+		Assert.Equal(ElementsRpcFailureKind.Rpc, exception.FailureKind);
+		Assert.Equal(-32601, exception.RpcCode);
+		Assert.Equal("elementsregtest", status.Chain);
+		Assert.Equal(
+			["getnodegeneration", "getnetworkinfo", "getblockchaininfo", "getblockhash", "getblockhash", "getsidechaininfo"],
+			harness.Handler.Methods);
+	}
+
+	[Fact]
 	public async Task RejectsMissingPublicManifestBeforeRpcAsync()
 	{
 		using var harness = new ElementsRpcHarness(ValidResult);
@@ -729,6 +1029,12 @@ public class ElementsRpcClientTests
 		_ => throw new InvalidOperationException($"Unexpected RPC method '{invocation.Method}' with parameters '{invocation.Parameters}'."),
 	};
 
+	private static string FeeAssetResult(string peggedAsset, string effectiveFeeAsset) =>
+		$$"""{"pegged_asset":"{{peggedAsset}}","fee_asset":"{{effectiveFeeAsset}}"}""";
+
+	private static string GenerationResult(string startupId, ulong revision, int blocks, string bestBlockHash) =>
+		$$"""{"startup_id":"{{startupId}}","chainstate_revision":{{revision}},"blocks":{{blocks}},"bestblockhash":"{{bestBlockHash}}"}""";
+
 	private static string BlockchainResult(
 		int blocks = 42,
 		int headers = 42,
@@ -824,8 +1130,20 @@ public class ElementsRpcClientTests
 	private static string Envelope(string id, string result) =>
 		$$"""{"result":{{result}},"error":null,"id":"{{id}}"}""";
 
-	private sealed class ElementsRpcHandler(Func<RpcInvocation, string> responseFactory) : HttpMessageHandler
+	private sealed class ElementsRpcHandler : HttpMessageHandler
 	{
+		private readonly Func<RpcInvocation, CancellationToken, Task<string>> _responseFactory;
+
+		public ElementsRpcHandler(Func<RpcInvocation, string> responseFactory)
+			: this((invocation, _) => Task.FromResult(responseFactory(invocation)))
+		{
+		}
+
+		public ElementsRpcHandler(Func<RpcInvocation, CancellationToken, Task<string>> responseFactory)
+		{
+			_responseFactory = responseFactory;
+		}
+
 		public List<string> Methods { get; } = [];
 		public List<string> Ids { get; } = [];
 		public List<string> Parameters { get; } = [];
@@ -853,10 +1171,11 @@ public class ElementsRpcClientTests
 			{
 				request.RequestUri = responseUri;
 			}
+			string responseBody = await _responseFactory(new RpcInvocation(method, id, parameters), cancellationToken);
 
 			return new HttpResponseMessage(StatusCode)
 			{
-				Content = new StringContent(responseFactory(new RpcInvocation(method, id, parameters)), Encoding.UTF8, ContentType),
+				Content = new StringContent(responseBody, Encoding.UTF8, ContentType),
 				RequestMessage = request,
 			};
 		}
@@ -867,12 +1186,22 @@ public class ElementsRpcClientTests
 		public ElementsRpcHarness(Func<RpcInvocation, string> responseFactory)
 		{
 			Handler = new ElementsRpcHandler(responseFactory);
-			HttpClient = new HttpClient(Handler, disposeHandler: true)
+			HttpClient = CreateHttpClient(Handler);
+			Client = new ElementsRpcClient(HttpClient);
+		}
+
+		public ElementsRpcHarness(Func<RpcInvocation, CancellationToken, Task<string>> responseFactory)
+		{
+			Handler = new ElementsRpcHandler(responseFactory);
+			HttpClient = CreateHttpClient(Handler);
+			Client = new ElementsRpcClient(HttpClient);
+		}
+
+		private static HttpClient CreateHttpClient(ElementsRpcHandler handler) =>
+			new(handler, disposeHandler: true)
 			{
 				BaseAddress = new Uri("http://127.0.0.1:18884/"),
 			};
-			Client = new ElementsRpcClient(HttpClient);
-		}
 
 		public ElementsRpcHandler Handler { get; }
 		public HttpClient HttpClient { get; }

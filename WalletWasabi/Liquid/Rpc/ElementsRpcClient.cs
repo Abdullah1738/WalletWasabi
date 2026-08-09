@@ -136,12 +136,80 @@ public sealed class ElementsRpcClient : IDisposable
 		return GetPublicNetworkObservationCoreAsync(manifest, cancellationToken);
 	}
 
+	public async Task<ElementsFeeAssetGenerationObservation> GetFeeAssetGenerationObservationAsync(
+		CancellationToken cancellationToken)
+	{
+		await _probeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			return await GetFeeAssetGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+		}
+		finally
+		{
+			_probeLock.Release();
+		}
+	}
+
 	private async Task<ElementsManifestBoundObservation> GetPublicNetworkObservationCoreAsync(
 		ElementsPublicNetworkManifest manifest,
 		CancellationToken cancellationToken)
 	{
 		ElementsNodeStatus nodeStatus = await GetNodeStatusAsync(cancellationToken).ConfigureAwait(false);
 		return manifest.BindNodeObservation(nodeStatus);
+	}
+
+	private async Task<ElementsFeeAssetGenerationObservation> GetFeeAssetGenerationObservationCoreAsync(
+		CancellationToken cancellationToken)
+	{
+		ElementsNodeGenerationObservation generationBefore =
+			await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+		JsonElement sidechain = await CallObjectAsync("getsidechaininfo", [], cancellationToken).ConfigureAwait(false);
+		LiquidAssetId peggedAsset = RequiredAssetId(sidechain, "pegged_asset");
+		LiquidAssetId effectiveFeeAsset = RequiredAssetId(sidechain, "fee_asset");
+		ElementsNodeGenerationObservation generationAfter =
+			await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+
+		EnsureConsistentGenerationFence(generationBefore, generationAfter);
+		return new ElementsFeeAssetGenerationObservation(
+			peggedAsset,
+			effectiveFeeAsset,
+			generationBefore,
+			generationAfter);
+	}
+
+	private async Task<ElementsNodeGenerationObservation> GetNodeGenerationObservationCoreAsync(CancellationToken cancellationToken)
+	{
+		JsonElement generation = await CallObjectAsync("getnodegeneration", [], cancellationToken).ConfigureAwait(false);
+		RequireExactObjectProperties(
+			generation,
+			"getnodegeneration",
+			["startup_id", "chainstate_revision", "blocks", "bestblockhash"]);
+
+		string startupId = RequiredHex32(generation, "startup_id");
+		ulong chainstateRevision = RequiredCanonicalUInt64(generation, "chainstate_revision");
+		int blocks = RequiredCanonicalNonNegativeInt32(generation, "blocks");
+		string bestBlockHash = RequiredHex32(generation, "bestblockhash");
+		return new ElementsNodeGenerationObservation(startupId, chainstateRevision, blocks, bestBlockHash);
+	}
+
+	private static void EnsureConsistentGenerationFence(
+		ElementsNodeGenerationObservation generationBefore,
+		ElementsNodeGenerationObservation generationAfter)
+	{
+		if (!StringComparer.Ordinal.Equals(generationBefore.StartupId, generationAfter.StartupId))
+		{
+			throw InvalidResult("getnodegeneration", "startup_id changed during the fee-asset observation");
+		}
+		if (generationAfter.ChainstateRevision < generationBefore.ChainstateRevision)
+		{
+			throw InvalidResult("getnodegeneration", "chainstate_revision regressed during the fee-asset observation");
+		}
+		if (generationAfter.ChainstateRevision == generationBefore.ChainstateRevision
+			&& (generationAfter.Blocks != generationBefore.Blocks
+				|| !StringComparer.Ordinal.Equals(generationAfter.BestBlockHash, generationBefore.BestBlockHash)))
+		{
+			throw InvalidResult("getnodegeneration", "an unchanged revision reported an inconsistent tip");
+		}
 	}
 
 	private async Task<ElementsNodeStatus> GetNodeStatusCoreAsync(CancellationToken cancellationToken)
@@ -732,6 +800,53 @@ public sealed class ElementsRpcClient : IDisposable
 		return result;
 	}
 
+	private static int RequiredCanonicalNonNegativeInt32(JsonElement value, string propertyName)
+	{
+		JsonElement property = RequiredProperty(value, propertyName, "node generation");
+		string raw = property.GetRawText();
+		if (!IsCanonicalUnsignedInteger(raw)
+			|| property.ValueKind != JsonValueKind.Number
+			|| !property.TryGetInt32(out int result)
+			|| result < 0)
+		{
+			throw InvalidResult("node generation", $"field '{propertyName}' must be a canonical non-negative 32-bit integer");
+		}
+
+		return result;
+	}
+
+	private static ulong RequiredCanonicalUInt64(JsonElement value, string propertyName)
+	{
+		JsonElement property = RequiredProperty(value, propertyName, "node generation");
+		string raw = property.GetRawText();
+		if (!IsCanonicalUnsignedInteger(raw)
+			|| property.ValueKind != JsonValueKind.Number
+			|| !property.TryGetUInt64(out ulong result))
+		{
+			throw InvalidResult("node generation", $"field '{propertyName}' must be a canonical unsigned 64-bit integer");
+		}
+
+		return result;
+	}
+
+	private static bool IsCanonicalUnsignedInteger(string raw)
+	{
+		if (raw.Length == 0 || (raw.Length > 1 && raw[0] == '0'))
+		{
+			return false;
+		}
+
+		foreach (char character in raw)
+		{
+			if (!char.IsAsciiDigit(character))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 	private static bool RequiredBoolean(JsonElement value, string propertyName)
 	{
 		JsonElement property = RequiredProperty(value, propertyName, "node identity");
@@ -759,6 +874,28 @@ public sealed class ElementsRpcClient : IDisposable
 		if (value.ValueKind != JsonValueKind.Object)
 		{
 			throw InvalidResult(method, "an object result is required");
+		}
+	}
+
+	private static void RequireExactObjectProperties(
+		JsonElement value,
+		string method,
+		IReadOnlyCollection<string> expectedProperties)
+	{
+		var remaining = new HashSet<string>(expectedProperties, StringComparer.Ordinal);
+		int total = 0;
+		foreach (JsonProperty property in value.EnumerateObject())
+		{
+			total++;
+			if (!remaining.Remove(property.Name))
+			{
+				throw InvalidResult(method, "the result contains an unknown or duplicated field");
+			}
+		}
+
+		if (total != expectedProperties.Count || remaining.Count != 0)
+		{
+			throw InvalidResult(method, "the result does not match the required field set");
 		}
 	}
 
