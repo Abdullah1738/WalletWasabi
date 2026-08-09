@@ -162,7 +162,7 @@ public sealed class ElementsRpcClient : IDisposable
 		JsonElement sidechain = await CallObjectAsync("getsidechaininfo", [], cancellationToken).ConfigureAwait(false);
 		string fedpegScript = RequiredHex(sidechain, "fedpegscript");
 		string peggedAsset = RequiredHex32(sidechain, "pegged_asset");
-		string parentGenesisBlockHash = RequiredHex32(sidechain, "parent_blockhash");
+		string parentGenesisBlockHash = RequiredHex32(sidechain, "parent_blockhash", allowZero: true);
 		int peginConfirmationDepth = RequiredNonNegativeInt32(sidechain, "pegin_confirmation_depth");
 		bool enforcePak = RequiredBoolean(sidechain, "enforce_pak");
 
@@ -650,16 +650,19 @@ public sealed class ElementsRpcClient : IDisposable
 		}
 	}
 
-	private static string RequiredHex32(JsonElement value, string propertyName)
+	private static string RequiredHex32(JsonElement value, string propertyName, bool allowZero = false)
 	{
 		string result = RequiredString(value, propertyName);
 		try
 		{
-			return ElementsNodeStatus.RequireHex32(result, propertyName);
+			return allowZero
+				? ElementsNodeStatus.RequireHex32AllowZero(result, propertyName)
+				: ElementsNodeStatus.RequireHex32(result, propertyName);
 		}
 		catch (ArgumentException)
 		{
-			throw InvalidResult("node identity", $"field '{propertyName}' must be canonical nonzero lowercase hexadecimal");
+			string nonzero = allowZero ? "" : " nonzero";
+			throw InvalidResult("node identity", $"field '{propertyName}' must be canonical{nonzero} lowercase hexadecimal");
 		}
 	}
 

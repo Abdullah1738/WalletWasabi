@@ -21,7 +21,7 @@ public sealed record ElementsNodeExpectation(
 			GenesisBlockHash = ElementsNodeStatus.RequireHex32(GenesisBlockHash, nameof(GenesisBlockHash)),
 			FedpegScript = ElementsNodeStatus.RequireHex(FedpegScript, nameof(FedpegScript)),
 			PeggedAsset = ElementsNodeStatus.RequireHex32(PeggedAsset, nameof(PeggedAsset)),
-			ParentGenesisBlockHash = ElementsNodeStatus.RequireHex32(ParentGenesisBlockHash, nameof(ParentGenesisBlockHash)),
+			ParentGenesisBlockHash = ElementsNodeStatus.RequireHex32AllowZero(ParentGenesisBlockHash, nameof(ParentGenesisBlockHash)),
 			PeginConfirmationDepth = ElementsNodeStatus.RequireNonNegative(PeginConfirmationDepth, nameof(PeginConfirmationDepth)),
 			Version = ElementsNodeStatus.RequirePositive(Version, nameof(Version)),
 			ProtocolVersion = ElementsNodeStatus.RequirePositive(ProtocolVersion, nameof(ProtocolVersion)),
@@ -112,6 +112,17 @@ public sealed record ElementsNodeStatus(
 
 	internal static string RequireHex32(string value, string parameterName)
 	{
+		string result = RequireHex32AllowZero(value, parameterName);
+		if (result.AsSpan().IndexOfAnyExcept('0') < 0)
+		{
+			throw new ArgumentException("A nonzero 32-byte hexadecimal value is required.", parameterName);
+		}
+
+		return result;
+	}
+
+	internal static string RequireHex32AllowZero(string value, string parameterName)
+	{
 		ArgumentNullException.ThrowIfNull(value, parameterName);
 		if (value.Length != 64)
 		{
@@ -125,11 +136,6 @@ public sealed record ElementsNodeStatus(
 				throw new ArgumentException("A canonical 32-byte lowercase hexadecimal value is required.", parameterName);
 			}
 		}
-		if (value.AsSpan().IndexOfAnyExcept('0') < 0)
-		{
-			throw new ArgumentException("A nonzero 32-byte hexadecimal value is required.", parameterName);
-		}
-
 		return value;
 	}
 

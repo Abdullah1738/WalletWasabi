@@ -494,6 +494,32 @@ public class ElementsRpcClientTests
 	}
 
 	[Fact]
+	public async Task AcceptsLiquidTestnetZeroParentGenesisAsync()
+	{
+		const string ZeroParent = "0000000000000000000000000000000000000000000000000000000000000000";
+		using var harness = new ElementsRpcHarness(invocation =>
+			invocation.Method == "getsidechaininfo"
+				? Envelope(invocation.Id, SidechainResult(parentGenesis: ZeroParent))
+				: ValidResult(invocation));
+
+		ElementsNodeStatus status = await harness.Client.GetNodeStatusAsync(CancellationToken.None);
+
+		Assert.Equal(ZeroParent, status.ParentGenesisBlockHash);
+		var expectation = new ElementsNodeExpectation(
+			Chain: "elementsregtest",
+			GenesisBlockHash,
+			FedpegScript: "51",
+			PeggedAsset,
+			ParentGenesisBlockHash: ZeroParent,
+			PeginConfirmationDepth: 8,
+			EnforcePak: false,
+			Version: 230303,
+			ProtocolVersion: 70016,
+			Subversion: "/Elements Core:23.3.3/");
+		status.EnsureMatches(expectation);
+	}
+
+	[Fact]
 	public async Task EnforcesResponseBodyIdleTimeoutAsync()
 	{
 		using var handler = new StreamResponseHandler(() => new StallingStream());
@@ -620,8 +646,8 @@ public class ElementsRpcClientTests
 		string warnings = "") =>
 		$$"""{"chain":"elementsregtest","blocks":{{blocks}},"headers":{{headers}},"bestblockhash":"{{bestBlockHash}}","initialblockdownload":{{initialBlockDownload.ToString().ToLowerInvariant()}},"pruned":false,"trim_headers":false,"warnings":{{JsonSerializer.Serialize(warnings)}}}""";
 
-	private static string SidechainResult() =>
-		$$"""{"fedpegscript":"51","pegged_asset":"{{PeggedAsset}}","parent_blockhash":"{{ParentGenesis}}","pegin_confirmation_depth":8,"enforce_pak":false}""";
+	private static string SidechainResult(string parentGenesis = ParentGenesis) =>
+		$$"""{"fedpegscript":"51","pegged_asset":"{{PeggedAsset}}","parent_blockhash":"{{parentGenesis}}","pegin_confirmation_depth":8,"enforce_pak":false}""";
 
 	private static string NetworkResult(string warnings = "") =>
 		$$"""{"version":230303,"protocolversion":70016,"subversion":"/Elements Core:23.3.3/","localrelay":true,"networkactive":true,"warnings":{{JsonSerializer.Serialize(warnings)}}}""";
