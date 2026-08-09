@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using WalletWasabi.Liquid.Network;
 
 namespace WalletWasabi.Liquid.Rpc;
 
@@ -124,6 +125,22 @@ public sealed class ElementsRpcClient : IDisposable
 		{
 			_probeLock.Release();
 		}
+	}
+
+	public Task<ElementsManifestBoundObservation> GetPublicNetworkObservationAsync(
+		ElementsPublicNetworkManifest manifest,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(manifest);
+		return GetPublicNetworkObservationCoreAsync(manifest, cancellationToken);
+	}
+
+	private async Task<ElementsManifestBoundObservation> GetPublicNetworkObservationCoreAsync(
+		ElementsPublicNetworkManifest manifest,
+		CancellationToken cancellationToken)
+	{
+		ElementsNodeStatus nodeStatus = await GetNodeStatusAsync(cancellationToken).ConfigureAwait(false);
+		return manifest.BindNodeObservation(nodeStatus);
 	}
 
 	private async Task<ElementsNodeStatus> GetNodeStatusCoreAsync(CancellationToken cancellationToken)

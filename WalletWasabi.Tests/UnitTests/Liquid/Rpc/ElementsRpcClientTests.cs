@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
 using Xunit;
 
@@ -79,6 +80,53 @@ public class ElementsRpcClientTests
 		var exception = Assert.Throws<ElementsNodeMismatchException>(() => status.EnsureMatches(wrong));
 		Assert.Equal(["chain", "enforce_pak"], exception.MismatchedFields);
 		Assert.DoesNotContain(PeggedAsset, exception.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task ProbesAndBindsReviewedPublicNetworkInOneOperationAsync()
+	{
+		using var harness = new ElementsRpcHarness(LiquidTestnetResult);
+
+		ElementsManifestBoundObservation observation = await harness.Client.GetPublicNetworkObservationAsync(
+			ElementsPublicNetworkManifest.LiquidTestnet,
+			CancellationToken.None);
+
+		Assert.Same(ElementsPublicNetworkManifest.LiquidTestnet, observation.Manifest);
+		Assert.Equal("liquidtestnet", observation.NodeStatus.Chain);
+		Assert.Equal(ElementsNodeManifestBindingLevel.SelfReportedManifestTupleObservationOnly, observation.BindingLevel);
+		Assert.False(observation.HasArtifactSourceAttestation);
+		Assert.False(observation.HasEffectiveFeeAssetObservation);
+		Assert.False(observation.HasAtomicGenerationObservation);
+		Assert.False(observation.HasRuntimeQualification);
+		Assert.False(observation.HasPublicCtFixtureQualification);
+		Assert.Equal(["getnetworkinfo", "getblockchaininfo", "getblockhash", "getblockhash", "getsidechaininfo"], harness.Handler.Methods);
+	}
+
+	[Fact]
+	public async Task RejectsMissingPublicManifestBeforeRpcAsync()
+	{
+		using var harness = new ElementsRpcHarness(ValidResult);
+
+		await Assert.ThrowsAsync<ArgumentNullException>(
+			() => harness.Client.GetPublicNetworkObservationAsync(null!, CancellationToken.None));
+
+		Assert.Empty(harness.Handler.Methods);
+	}
+
+	[Fact]
+	public async Task RejectsPublicManifestMismatchWithoutObservedValuesAsync()
+	{
+		using var harness = new ElementsRpcHarness(LiquidTestnetResult);
+
+		var exception = await Assert.ThrowsAsync<ElementsNodeMismatchException>(
+			() => harness.Client.GetPublicNetworkObservationAsync(
+				ElementsPublicNetworkManifest.LiquidMainnet,
+				CancellationToken.None));
+
+		Assert.Contains("chain", exception.MismatchedFields);
+		Assert.DoesNotContain("liquidtestnet", exception.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain(ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId, exception.Message, StringComparison.Ordinal);
+		Assert.Equal(5, harness.Handler.Methods.Count);
 	}
 
 	[Fact]
@@ -638,16 +686,43 @@ public class ElementsRpcClientTests
 		_ => throw new InvalidOperationException($"Unexpected RPC method '{invocation.Method}' with parameters '{invocation.Parameters}'."),
 	};
 
+	private static string LiquidTestnetResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getnetworkinfo" => Envelope(invocation.Id, NetworkResult()),
+		"getblockchaininfo" => Envelope(
+			invocation.Id,
+			BlockchainResult(
+				blocks: 42,
+				headers: 42,
+				bestBlockHash: BestBlockHash,
+				chain: "liquidtestnet")),
+		"getblockhash" when invocation.Parameters == "[0]" => Envelope(
+			invocation.Id,
+			JsonSerializer.Serialize(ElementsPublicNetworkManifest.LiquidTestnet.GenesisBlockHash)),
+		"getblockhash" => Envelope(invocation.Id, JsonSerializer.Serialize(BestBlockHash)),
+		"getsidechaininfo" => Envelope(
+			invocation.Id,
+			SidechainResult(
+				parentGenesis: ElementsPublicNetworkManifest.LiquidTestnet.ParentGenesisHash,
+				peggedAsset: ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
+				peginConfirmationDepth: 0)),
+		_ => throw new InvalidOperationException($"Unexpected RPC method '{invocation.Method}' with parameters '{invocation.Parameters}'."),
+	};
+
 	private static string BlockchainResult(
 		int blocks = 42,
 		int headers = 42,
 		bool initialBlockDownload = false,
 		string bestBlockHash = BestBlockHash,
-		string warnings = "") =>
-		$$"""{"chain":"elementsregtest","blocks":{{blocks}},"headers":{{headers}},"bestblockhash":"{{bestBlockHash}}","initialblockdownload":{{initialBlockDownload.ToString().ToLowerInvariant()}},"pruned":false,"trim_headers":false,"warnings":{{JsonSerializer.Serialize(warnings)}}}""";
+		string warnings = "",
+		string chain = "elementsregtest") =>
+		$$"""{"chain":"{{chain}}","blocks":{{blocks}},"headers":{{headers}},"bestblockhash":"{{bestBlockHash}}","initialblockdownload":{{initialBlockDownload.ToString().ToLowerInvariant()}},"pruned":false,"trim_headers":false,"warnings":{{JsonSerializer.Serialize(warnings)}}}""";
 
-	private static string SidechainResult(string parentGenesis = ParentGenesis) =>
-		$$"""{"fedpegscript":"51","pegged_asset":"{{PeggedAsset}}","parent_blockhash":"{{parentGenesis}}","pegin_confirmation_depth":8,"enforce_pak":false}""";
+	private static string SidechainResult(
+		string parentGenesis = ParentGenesis,
+		string peggedAsset = PeggedAsset,
+		int peginConfirmationDepth = 8) =>
+		$$"""{"fedpegscript":"51","pegged_asset":"{{peggedAsset}}","parent_blockhash":"{{parentGenesis}}","pegin_confirmation_depth":{{peginConfirmationDepth}},"enforce_pak":false}""";
 
 	private static string NetworkResult(string warnings = "") =>
 		$$"""{"version":230303,"protocolversion":70016,"subversion":"/Elements Core:23.3.3/","localrelay":true,"networkactive":true,"warnings":{{JsonSerializer.Serialize(warnings)}}}""";
