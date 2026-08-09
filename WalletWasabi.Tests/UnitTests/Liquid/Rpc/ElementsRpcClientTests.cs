@@ -142,6 +142,26 @@ public class ElementsRpcClientTests
 	}
 
 	[Theory]
+	[InlineData("0000000000000000000000000000000000000000000000000000000000000000")]
+	[InlineData("B2E15D0D7A0C94E4E2CE0FE6E8691B9E451377F6E46E8045A86F7C4B5D4F0F23")]
+	[InlineData("b2e15d0d7a0c94e4e2ce0fe6e8691b9e451377f6e46e8045a86f7c4b5d4f0f2")]
+	public async Task RejectsNoncanonicalPeggedAssetWithoutDisclosingItAsync(string invalidAsset)
+	{
+		using var harness = new ElementsRpcHarness(invocation =>
+			invocation.Method == "getsidechaininfo"
+				? Envelope(invocation.Id, SidechainResult(peggedAsset: invalidAsset))
+				: ValidResult(invocation));
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => harness.Client.GetNodeStatusAsync(CancellationToken.None));
+
+		Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+		Assert.Contains("pegged_asset", exception.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain(invalidAsset, exception.Message, StringComparison.Ordinal);
+		Assert.Equal(5, harness.Handler.Methods.Count);
+	}
+
+	[Theory]
 	[InlineData(-28, 500)]
 	[InlineData(-32600, 400)]
 	[InlineData(-32601, 404)]

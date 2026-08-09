@@ -165,6 +165,21 @@ public class ElementsPublicNetworkManifestTests
 	}
 
 	[Fact]
+	public void RejectsMalformedManifestBoundAssetWithoutDisclosingIt()
+	{
+		ElementsNodeStatus valid = LiquidTestnetStatus();
+		string malformedAsset = valid.PeggedAsset.ToUpperInvariant();
+		ElementsNodeStatus malformed = valid with { PeggedAsset = malformedAsset };
+
+		var exception = Assert.Throws<ElementsNodeMismatchException>(
+			() => ElementsPublicNetworkManifest.LiquidTestnet.BindNodeObservation(malformed));
+
+		Assert.Equal(["pegged_asset"], exception.MismatchedFields);
+		Assert.DoesNotContain(malformedAsset, exception.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain(valid.PeggedAsset, exception.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
 	public void DynamicNodeObservationsDoNotChangeManifestBinding()
 	{
 		ElementsNodeStatus changed = LiquidTestnetStatus() with

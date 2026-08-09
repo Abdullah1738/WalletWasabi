@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Security.Cryptography;
+using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Rpc;
 
 namespace WalletWasabi.Liquid.Network;
@@ -56,8 +57,8 @@ public sealed class ElementsPublicNetworkManifest
 		RawGenesisSize = rawGenesisSize;
 		GenesisUtxoSetDigest = genesisUtxoSetDigest;
 		GenesisUtxoCount = genesisUtxoCount;
-		PeggedAssetId = peggedAssetId;
-		RequiredFeeAssetId = requiredFeeAssetId;
+		_peggedAssetId = LiquidAssetId.ParseRpcHex(peggedAssetId, nameof(peggedAssetId));
+		_requiredFeeAssetId = LiquidAssetId.ParseRpcHex(requiredFeeAssetId, nameof(requiredFeeAssetId));
 		ParentGenesisHash = parentGenesisHash;
 		HasParentChain = hasParentChain;
 		EnforcePak = enforcePak;
@@ -73,6 +74,8 @@ public sealed class ElementsPublicNetworkManifest
 	}
 
 	private readonly byte[] _canonicalCbor;
+	private readonly LiquidAssetId _peggedAssetId;
+	private readonly LiquidAssetId _requiredFeeAssetId;
 
 	public static ElementsPublicNetworkManifest LiquidMainnet { get; } =
 		DecodeKnown(MainnetCanonicalCbor, MainnetCborSha256, MainnetManifestId);
@@ -90,8 +93,8 @@ public sealed class ElementsPublicNetworkManifest
 	public ulong RawGenesisSize { get; }
 	public string GenesisUtxoSetDigest { get; }
 	public ulong GenesisUtxoCount { get; }
-	public string PeggedAssetId { get; }
-	public string RequiredFeeAssetId { get; }
+	public string PeggedAssetId => _peggedAssetId.CanonicalRpcHex;
+	public string RequiredFeeAssetId => _requiredFeeAssetId.CanonicalRpcHex;
 	public string ParentGenesisHash { get; }
 	public bool HasParentChain { get; }
 	public bool EnforcePak { get; }
@@ -134,7 +137,18 @@ public sealed class ElementsPublicNetworkManifest
 
 		AddMismatch(mismatches, "chain", nodeStatus.Chain, ChainRpcName);
 		AddMismatch(mismatches, "genesis_block_hash", nodeStatus.GenesisBlockHash, GenesisBlockHash);
-		AddMismatch(mismatches, "pegged_asset", nodeStatus.PeggedAsset, PeggedAssetId);
+		try
+		{
+			LiquidAssetId observedPeggedAsset = LiquidAssetId.ParseRpcHex(nodeStatus.PeggedAsset, nameof(nodeStatus.PeggedAsset));
+			if (observedPeggedAsset != _peggedAssetId)
+			{
+				mismatches.Add("pegged_asset");
+			}
+		}
+		catch (ArgumentException)
+		{
+			mismatches.Add("pegged_asset");
+		}
 		AddMismatch(mismatches, "parent_blockhash", nodeStatus.ParentGenesisBlockHash, ParentGenesisHash);
 		if (nodeStatus.EnforcePak != EnforcePak)
 		{

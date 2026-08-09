@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Network;
 
 namespace WalletWasabi.Liquid.Rpc;
@@ -178,7 +179,7 @@ public sealed class ElementsRpcClient : IDisposable
 
 		JsonElement sidechain = await CallObjectAsync("getsidechaininfo", [], cancellationToken).ConfigureAwait(false);
 		string fedpegScript = RequiredHex(sidechain, "fedpegscript");
-		string peggedAsset = RequiredHex32(sidechain, "pegged_asset");
+		string peggedAsset = RequiredAssetId(sidechain, "pegged_asset").CanonicalRpcHex;
 		string parentGenesisBlockHash = RequiredHex32(sidechain, "parent_blockhash", allowZero: true);
 		int peginConfirmationDepth = RequiredNonNegativeInt32(sidechain, "pegin_confirmation_depth");
 		bool enforcePak = RequiredBoolean(sidechain, "enforce_pak");
@@ -693,6 +694,19 @@ public sealed class ElementsRpcClient : IDisposable
 		catch (ArgumentException)
 		{
 			throw InvalidResult("node identity", $"field '{propertyName}' must be nonempty canonical lowercase hexadecimal");
+		}
+	}
+
+	private static LiquidAssetId RequiredAssetId(JsonElement value, string propertyName)
+	{
+		string result = RequiredString(value, propertyName);
+		try
+		{
+			return LiquidAssetId.ParseRpcHex(result, propertyName);
+		}
+		catch (ArgumentException)
+		{
+			throw InvalidResult("node identity", $"field '{propertyName}' must be a canonical nonzero Liquid asset identifier");
 		}
 	}
 
