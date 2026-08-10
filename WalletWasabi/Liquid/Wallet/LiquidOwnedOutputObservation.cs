@@ -125,6 +125,12 @@ internal sealed class LiquidOwnedOutputObservation : IEquatable<LiquidOwnedOutpu
 
 	public byte[] GetAssetIdConsensusBytes() => _assetId.ToConsensusBytes();
 
+	internal bool MatchesTransactionId(LiquidTransactionId transactionId) =>
+		_outPoint.TransactionId == transactionId;
+
+	internal bool MatchesTransactionWitnessBinding(LiquidTransactionWitnessBinding transactionWitnessBinding) =>
+		_transactionWitnessBinding.Equals(transactionWitnessBinding);
+
 	public bool Equals(LiquidOwnedOutputObservation? other) =>
 		other is not null &&
 		_outPoint == other._outPoint &&
