@@ -57,6 +57,57 @@ internal sealed class LiquidWalletState
 			LiquidAssetBalanceMap.Empty(peggedAssetId));
 	}
 
+	public LiquidWalletReplaySnapshot ExportReplaySnapshot() =>
+		LiquidWalletReplaySnapshot.Create(
+			PeggedAssetId,
+			Revision,
+			_history.Select(applied => applied.Delta),
+			_confirmations.Select(entry =>
+				LiquidWalletReplayConfirmation.Create(entry.Key, entry.Value)));
+
+	public static LiquidWalletState RestoreReplaySnapshot(LiquidWalletReplaySnapshot snapshot)
+	{
+		ArgumentNullException.ThrowIfNull(snapshot);
+
+		LiquidWalletState replayed = Empty(snapshot.PeggedAssetId);
+		foreach (LiquidWalletTransactionDelta delta in snapshot.GetDeltas())
+		{
+			replayed = replayed.Apply(replayed.Revision, delta);
+		}
+		foreach (LiquidWalletReplayConfirmation confirmation in snapshot.GetConfirmations())
+		{
+			replayed = replayed.Confirm(
+				replayed.Revision,
+				confirmation.TransactionId,
+				confirmation.Confirmation);
+		}
+
+		if (snapshot.Revision < replayed.Revision)
+		{
+			throw new InvalidOperationException("A Liquid wallet replay revision precedes its derived state.");
+		}
+
+		ulong revisionGap = snapshot.Revision - replayed.Revision;
+		if (revisionGap == 1)
+		{
+			throw new InvalidOperationException("A Liquid wallet replay revision gap is unreachable.");
+		}
+		if (revisionGap == 0)
+		{
+			return replayed;
+		}
+
+		return new LiquidWalletState(
+			replayed.PeggedAssetId,
+			snapshot.Revision,
+			new Dictionary<LiquidOutPoint, LiquidOwnedOutput>(replayed._unspentOutputs),
+			new Dictionary<LiquidOutPoint, LiquidOwnedOutput>(replayed._knownOutputs),
+			new HashSet<LiquidTransactionId>(replayed._appliedTransactionIds),
+			new List<AppliedDelta>(replayed._history),
+			new Dictionary<LiquidTransactionId, LiquidConfirmation>(replayed._confirmations),
+			replayed._balances);
+	}
+
 	public LiquidWalletState Apply(ulong expectedRevision, LiquidWalletTransactionDelta delta)
 	{
 		EnsureRevision(expectedRevision);
