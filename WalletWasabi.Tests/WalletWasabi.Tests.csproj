@@ -71,6 +71,9 @@
 		<None Update="UnitTests\Data\SilentPaymentTestVectors.json">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
+		<None Update="TestData\Liquid\WalletFactsWireV1\nonlinkable-reference\**\*">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
 	</ItemGroup>
 
 	<ItemGroup>
