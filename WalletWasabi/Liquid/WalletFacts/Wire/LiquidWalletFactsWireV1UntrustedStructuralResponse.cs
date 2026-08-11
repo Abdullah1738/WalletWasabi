@@ -9,7 +9,7 @@ internal enum LiquidWalletFactsWireV1Branch : byte
 	Internal = 1,
 }
 
-internal sealed class LiquidWalletFactsWireV1Response : IDisposable
+internal sealed partial class LiquidWalletFactsWireV1UntrustedStructuralResponse : IDisposable
 {
 	private const int SourceEpochOffset = 32;
 	private const int SourceEpochLength = 32;
@@ -42,7 +42,7 @@ internal sealed class LiquidWalletFactsWireV1Response : IDisposable
 	private readonly int[] _transactionOffsets;
 	private bool _disposed;
 
-	internal LiquidWalletFactsWireV1Response(byte[] ownedFrame, int[] transactionOffsets)
+	private LiquidWalletFactsWireV1UntrustedStructuralResponse(byte[] ownedFrame, int[] transactionOffsets)
 	{
 		_frame = ownedFrame;
 		_transactionOffsets = transactionOffsets;
@@ -93,13 +93,13 @@ internal sealed class LiquidWalletFactsWireV1Response : IDisposable
 		}
 	}
 
-	public LiquidWalletFactsWireV1TransactionView GetTransaction(int index)
+	public LiquidWalletFactsWireV1UntrustedStructuralTransactionView GetTransaction(int index)
 	{
 		lock (_gate)
 		{
 			ThrowIfDisposed();
 			ValidateIndex(index, _transactionOffsets.Length);
-			return new LiquidWalletFactsWireV1TransactionView(this, index);
+			return new LiquidWalletFactsWireV1UntrustedStructuralTransactionView(this, index);
 		}
 	}
 
@@ -118,7 +118,7 @@ internal sealed class LiquidWalletFactsWireV1Response : IDisposable
 		}
 	}
 
-	public override string ToString() => nameof(LiquidWalletFactsWireV1Response);
+	public override string ToString() => nameof(LiquidWalletFactsWireV1UntrustedStructuralResponse);
 
 	private void ValidateTransactionIndex(int transactionIndex)
 	{
@@ -149,21 +149,21 @@ internal sealed class LiquidWalletFactsWireV1Response : IDisposable
 		}
 	}
 
-	private LiquidWalletFactsWireV1InputView CreateInputView(int transactionIndex, int inputIndex)
+	private LiquidWalletFactsWireV1UntrustedStructuralInputView CreateInputView(int transactionIndex, int inputIndex)
 	{
 		lock (_gate)
 		{
 			ThrowIfDisposed();
-			return new LiquidWalletFactsWireV1InputView(this, transactionIndex, inputIndex);
+			return new LiquidWalletFactsWireV1UntrustedStructuralInputView(this, transactionIndex, inputIndex);
 		}
 	}
 
-	private LiquidWalletFactsWireV1OwnedOutputView CreateOwnedOutputView(int transactionIndex, int outputIndex)
+	private LiquidWalletFactsWireV1UntrustedStructuralOwnedOutputView CreateOwnedOutputView(int transactionIndex, int outputIndex)
 	{
 		lock (_gate)
 		{
 			ThrowIfDisposed();
-			return new LiquidWalletFactsWireV1OwnedOutputView(this, transactionIndex, outputIndex);
+			return new LiquidWalletFactsWireV1UntrustedStructuralOwnedOutputView(this, transactionIndex, outputIndex);
 		}
 	}
 
@@ -310,7 +310,7 @@ internal sealed class LiquidWalletFactsWireV1Response : IDisposable
 	{
 		if (_disposed)
 		{
-			throw new ObjectDisposedException(nameof(LiquidWalletFactsWireV1Response), DisposedMessage);
+			throw new ObjectDisposedException(nameof(LiquidWalletFactsWireV1UntrustedStructuralResponse), DisposedMessage);
 		}
 	}
 
@@ -322,12 +322,12 @@ internal sealed class LiquidWalletFactsWireV1Response : IDisposable
 		}
 	}
 
-	internal sealed class LiquidWalletFactsWireV1TransactionView
+	internal sealed class LiquidWalletFactsWireV1UntrustedStructuralTransactionView
 	{
-		private readonly LiquidWalletFactsWireV1Response _owner;
+		private readonly LiquidWalletFactsWireV1UntrustedStructuralResponse _owner;
 		private readonly int _transactionIndex;
 
-		internal LiquidWalletFactsWireV1TransactionView(LiquidWalletFactsWireV1Response owner, int transactionIndex)
+		internal LiquidWalletFactsWireV1UntrustedStructuralTransactionView(LiquidWalletFactsWireV1UntrustedStructuralResponse owner, int transactionIndex)
 		{
 			_owner = owner ?? throw new ArgumentNullException(nameof(owner));
 			_owner.ValidateTransactionIndex(transactionIndex);
@@ -342,23 +342,23 @@ internal sealed class LiquidWalletFactsWireV1Response : IDisposable
 
 		public byte[] GetTransactionWitnessBinding() => _owner.GetTransactionWitnessBinding(_transactionIndex);
 
-		public LiquidWalletFactsWireV1InputView GetInput(int index) =>
+		public LiquidWalletFactsWireV1UntrustedStructuralInputView GetInput(int index) =>
 			_owner.CreateInputView(_transactionIndex, index);
 
-		public LiquidWalletFactsWireV1OwnedOutputView GetOwnedOutput(int index) =>
+		public LiquidWalletFactsWireV1UntrustedStructuralOwnedOutputView GetOwnedOutput(int index) =>
 			_owner.CreateOwnedOutputView(_transactionIndex, index);
 
-		public override string ToString() => nameof(LiquidWalletFactsWireV1TransactionView);
+		public override string ToString() => nameof(LiquidWalletFactsWireV1UntrustedStructuralTransactionView);
 	}
 
-	internal sealed class LiquidWalletFactsWireV1InputView
+	internal sealed class LiquidWalletFactsWireV1UntrustedStructuralInputView
 	{
-		private readonly LiquidWalletFactsWireV1Response _owner;
+		private readonly LiquidWalletFactsWireV1UntrustedStructuralResponse _owner;
 		private readonly int _transactionIndex;
 		private readonly int _inputIndex;
 
-		internal LiquidWalletFactsWireV1InputView(
-			LiquidWalletFactsWireV1Response owner,
+		internal LiquidWalletFactsWireV1UntrustedStructuralInputView(
+			LiquidWalletFactsWireV1UntrustedStructuralResponse owner,
 			int transactionIndex,
 			int inputIndex)
 		{
@@ -373,17 +373,17 @@ internal sealed class LiquidWalletFactsWireV1Response : IDisposable
 
 		public uint PreviousOutputIndex => _owner.GetPreviousOutputIndex(_transactionIndex, _inputIndex);
 
-		public override string ToString() => nameof(LiquidWalletFactsWireV1InputView);
+		public override string ToString() => nameof(LiquidWalletFactsWireV1UntrustedStructuralInputView);
 	}
 
-	internal sealed class LiquidWalletFactsWireV1OwnedOutputView
+	internal sealed class LiquidWalletFactsWireV1UntrustedStructuralOwnedOutputView
 	{
-		private readonly LiquidWalletFactsWireV1Response _owner;
+		private readonly LiquidWalletFactsWireV1UntrustedStructuralResponse _owner;
 		private readonly int _transactionIndex;
 		private readonly int _outputIndex;
 
-		internal LiquidWalletFactsWireV1OwnedOutputView(
-			LiquidWalletFactsWireV1Response owner,
+		internal LiquidWalletFactsWireV1UntrustedStructuralOwnedOutputView(
+			LiquidWalletFactsWireV1UntrustedStructuralResponse owner,
 			int transactionIndex,
 			int outputIndex)
 		{
@@ -409,6 +409,6 @@ internal sealed class LiquidWalletFactsWireV1Response : IDisposable
 
 		public byte[] GetAssetIdConsensusBytes() => _owner.GetAssetIdConsensusBytes(_transactionIndex, _outputIndex);
 
-		public override string ToString() => nameof(LiquidWalletFactsWireV1OwnedOutputView);
+		public override string ToString() => nameof(LiquidWalletFactsWireV1UntrustedStructuralOwnedOutputView);
 	}
 }
