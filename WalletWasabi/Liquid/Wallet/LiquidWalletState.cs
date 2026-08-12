@@ -533,6 +533,25 @@ internal sealed class LiquidWalletState
 			entries);
 	}
 
+	public LiquidWalletCoinControlSnapshot QueryUnspentCoinControlEntry(
+		ulong expectedRevision,
+		LiquidOutPoint outPoint)
+	{
+		EnsureRevision(expectedRevision);
+		ArgumentNullException.ThrowIfNull(outPoint);
+		bool found = _unspentOutputs.TryGetValue(outPoint, out LiquidOwnedOutput? output);
+		var entries = new LiquidWalletCoinControlEntry[found ? 1 : 0];
+		if (found)
+		{
+			entries[0] = CreateCoinControlEntry(output!);
+		}
+
+		return LiquidWalletCoinControlSnapshot.TakeOwnershipFromState(
+			PeggedAssetId,
+			Revision,
+			entries);
+	}
+
 	public LiquidWalletCoinControlSelection CreateCoinControlSelection(
 		ulong expectedRevision,
 		IReadOnlyList<LiquidOutPoint> selectedOutPoints)
