@@ -464,6 +464,21 @@ internal sealed class LiquidWalletState
 	public LiquidAssetBalanceMap GetBalances() =>
 		LiquidAssetBalanceMap.FromAmounts(PeggedAssetId, _balances.GetAmounts());
 
+	public LiquidAssetAmount QueryAssetBalance(
+		ulong expectedRevision,
+		LiquidAssetId assetId)
+	{
+		EnsureRevision(expectedRevision);
+		LiquidAssetAmount balance = _balances.GetAmountOrZero(assetId);
+		LiquidAssetId copiedAssetId = LiquidAssetId.ParseConsensusBytes(assetId.ToConsensusBytes());
+		LiquidAssetId copiedPeggedAssetId = LiquidAssetId.ParseConsensusBytes(
+			PeggedAssetId.ToConsensusBytes());
+		return LiquidAssetAmount.Create(
+			copiedAssetId,
+			copiedPeggedAssetId,
+			balance.AtomicUnits);
+	}
+
 	public LiquidWalletTransactionEffectSnapshot GetTransactionEffectSnapshot()
 	{
 		var effects = new LiquidWalletTransactionEffect[_history.Count];
