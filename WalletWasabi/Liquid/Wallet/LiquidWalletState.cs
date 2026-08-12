@@ -514,6 +514,72 @@ internal sealed class LiquidWalletState
 			effects);
 	}
 
+	public LiquidWalletCoinControlSnapshot GetCoinControlSnapshot()
+	{
+		var entries = new LiquidWalletCoinControlEntry[_unspentOutputs.Count];
+		int entryIndex = 0;
+		foreach (LiquidOwnedOutput output in _unspentOutputs.Values)
+		{
+			entries[entryIndex++] = CreateCoinControlEntry(output);
+		}
+
+		Array.Sort(entries, CompareCoinControlEntries);
+		return LiquidWalletCoinControlSnapshot.TakeOwnershipFromState(
+			PeggedAssetId,
+			Revision,
+			entries);
+	}
+
+	public LiquidWalletCoinControlSelection CreateCoinControlSelection(
+		ulong expectedRevision,
+		IReadOnlyList<LiquidOutPoint> selectedOutPoints)
+	{
+		EnsureRevision(expectedRevision);
+		ArgumentNullException.ThrowIfNull(selectedOutPoints);
+		int selectedCount = selectedOutPoints.Count;
+		if (selectedCount == 0)
+		{
+			throw new ArgumentException(
+				"A Liquid coin-control selection requires at least one outpoint.",
+				nameof(selectedOutPoints));
+		}
+		if (selectedCount > _unspentOutputs.Count)
+		{
+			throw new ArgumentException(
+				"A Liquid coin-control selection exceeds the current unspent-output count.",
+				nameof(selectedOutPoints));
+		}
+
+		var uniqueOutPoints = new HashSet<LiquidOutPoint>(selectedCount);
+		var entries = new LiquidWalletCoinControlEntry[selectedCount];
+		for (int index = 0; index < entries.Length; index++)
+		{
+			LiquidOutPoint outPoint = selectedOutPoints[index]
+				?? throw new ArgumentException(
+					"A Liquid coin-control selection cannot contain a null outpoint.",
+					nameof(selectedOutPoints));
+			if (!uniqueOutPoints.Add(outPoint))
+			{
+				throw new ArgumentException(
+					"A Liquid coin-control selection cannot contain a duplicate outpoint.",
+					nameof(selectedOutPoints));
+			}
+			if (!_unspentOutputs.TryGetValue(outPoint, out LiquidOwnedOutput? output))
+			{
+				throw new InvalidOperationException(
+					"A Liquid coin-control selection contains an output not currently retained as unspent.");
+			}
+
+			entries[index] = CreateCoinControlEntry(output);
+		}
+
+		Array.Sort(entries, CompareCoinControlEntries);
+		return LiquidWalletCoinControlSelection.TakeOwnershipFromState(
+			PeggedAssetId,
+			Revision,
+			entries);
+	}
+
 	public IReadOnlyList<LiquidOwnedOutput> GetUnspentOutputs() =>
 		new ReadOnlyCollection<LiquidOwnedOutput>(
 			_unspentOutputs.Values
@@ -536,6 +602,30 @@ internal sealed class LiquidWalletState
 	}
 
 	public override string ToString() => nameof(LiquidWalletState);
+
+	private LiquidWalletCoinControlEntry CreateCoinControlEntry(LiquidOwnedOutput output)
+	{
+		_confirmations.TryGetValue(
+			output.OutPoint.TransactionId,
+			out LiquidConfirmation? confirmation);
+		return LiquidWalletCoinControlEntry.Create(
+			output.OutPoint,
+			output.Amount,
+			PeggedAssetId,
+			confirmation);
+	}
+
+	private static int CompareCoinControlEntries(
+		LiquidWalletCoinControlEntry left,
+		LiquidWalletCoinControlEntry right)
+	{
+		int transactionOrder = StringComparer.Ordinal.Compare(
+			left.OutPoint.TransactionId.CanonicalRpcHex,
+			right.OutPoint.TransactionId.CanonicalRpcHex);
+		return transactionOrder != 0
+			? transactionOrder
+			: left.OutPoint.OutputIndex.CompareTo(right.OutPoint.OutputIndex);
+	}
 
 	private void AccumulateTransactionEffectAmount(
 		Dictionary<string, TransactionEffectTotals> totals,
