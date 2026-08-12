@@ -67,12 +67,6 @@ internal static class LiquidWalletReplayCodec
 	// This is a wallet-lifetime replay-cache ceiling, not an observation-batch limit.
 	internal const int MaxDeltaCount = 4_096;
 	internal const int MaxConfirmationCount = 4_096;
-	// Exact collection-entry copy budget for the current immutable
-	// LiquidWalletState.Apply/Confirm and LiquidAssetBalanceMap Add/Subtract
-	// implementations. Revisit this formula whenever those methods change.
-	// The temporary budget fails closed before quadratic replay work; histories
-	// beyond it require a chain rescan until restore is linear.
-	internal const long MaxReplayWorkUnits = 1_000_000;
 	internal const int MaxSpentPerDelta = 102_298;
 	internal const int MaxCreatedPerDelta = 9_279;
 	internal const int MaxAggregateSpent = 1_636_801;
@@ -94,7 +88,6 @@ internal static class LiquidWalletReplayCodec
 	public static byte[] Encode(LiquidWalletReplaySnapshot snapshot)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
-		PreflightReplayWork(snapshot, trustedSnapshot: true);
 
 		byte[] encoded = EncodeCore(snapshot);
 		byte[]? canonical = null;
@@ -358,7 +351,6 @@ internal static class LiquidWalletReplayCodec
 			revision,
 			deltas,
 			confirmations);
-		PreflightReplayWork(decoded, trustedSnapshot: false);
 		LiquidWalletReplaySnapshot reconstructed = LiquidWalletState
 			.RestoreReplaySnapshot(decoded)
 			.ExportReplaySnapshot();
@@ -377,162 +369,6 @@ internal static class LiquidWalletReplayCodec
 
 		return reconstructed;
 	}
-
-	private static void PreflightReplayWork(
-		LiquidWalletReplaySnapshot snapshot,
-		bool trustedSnapshot)
-	{
-		IReadOnlyList<LiquidWalletTransactionDelta> deltas = snapshot.GetDeltas();
-		IReadOnlyList<LiquidWalletReplayConfirmation> confirmations = snapshot.GetConfirmations();
-		if (deltas.Count > MaxDeltaCount || confirmations.Count > MaxConfirmationCount)
-		{
-			throw ReplayCapacityFailure(trustedSnapshot);
-		}
-
-		var unspent = new Dictionary<LiquidOutPoint, LiquidOwnedOutput>();
-		var known = new HashSet<LiquidOutPoint>();
-		var applied = new HashSet<LiquidTransactionId>();
-		var balances = new Dictionary<LiquidAssetId, LiquidAssetAmount>();
-		long work = 0;
-		bool exceedsWorkBudget = false;
-		int historyCount = 0;
-		foreach (LiquidWalletTransactionDelta delta in deltas)
-		{
-			IReadOnlyList<LiquidOutPoint> spent = delta.GetSpentOutPoints();
-			IReadOnlyList<LiquidOwnedOutput> created = delta.GetCreatedOutputs();
-			long copiedEntries = (long)unspent.Count + known.Count + (2L * historyCount) +
-				(2L * spent.Count) + created.Count;
-			work = AddReplayWork(work, copiedEntries, ref exceedsWorkBudget);
-
-			if (!applied.Add(delta.TransactionId))
-			{
-				throw ReplayStructureFailure(trustedSnapshot);
-			}
-			foreach (LiquidOutPoint spentOutPoint in spent)
-			{
-				if (!unspent.Remove(spentOutPoint, out LiquidOwnedOutput? spentOutput))
-				{
-					throw ReplayStructureFailure(trustedSnapshot);
-				}
-				work = AddReplayWork(work, balances.Count, ref exceedsWorkBudget);
-				SubtractBalance(balances, spentOutput.Amount, trustedSnapshot);
-			}
-			foreach (LiquidOwnedOutput createdOutput in created)
-			{
-				if (createdOutput.Amount.PeggedAssetId != snapshot.PeggedAssetId ||
-					!known.Add(createdOutput.OutPoint))
-				{
-					throw ReplayStructureFailure(trustedSnapshot);
-				}
-				work = AddReplayWork(work, balances.Count, ref exceedsWorkBudget);
-				AddBalance(balances, createdOutput.Amount, trustedSnapshot);
-				unspent.Add(createdOutput.OutPoint, createdOutput);
-			}
-			historyCount++;
-		}
-
-		var confirmed = new HashSet<LiquidTransactionId>();
-		foreach (LiquidWalletReplayConfirmation confirmation in confirmations)
-		{
-			long copiedEntries = (long)unspent.Count + known.Count +
-				(2L * deltas.Count) + confirmed.Count;
-			work = AddReplayWork(work, copiedEntries, ref exceedsWorkBudget);
-			if (!applied.Contains(confirmation.TransactionId) ||
-				!confirmed.Add(confirmation.TransactionId))
-			{
-				throw ReplayStructureFailure(trustedSnapshot);
-			}
-		}
-
-		ulong derivedRevision = checked((ulong)deltas.Count + (ulong)confirmations.Count);
-		if (snapshot.Revision < derivedRevision || snapshot.Revision - derivedRevision == 1)
-		{
-			throw ReplayStructureFailure(trustedSnapshot);
-		}
-		if (snapshot.Revision > derivedRevision + 1)
-		{
-			long gapCopyEntries = (long)unspent.Count + known.Count +
-				(2L * deltas.Count) + confirmed.Count;
-			AddReplayWork(work, gapCopyEntries, ref exceedsWorkBudget);
-		}
-		if (exceedsWorkBudget)
-		{
-			throw ReplayCapacityFailure(trustedSnapshot);
-		}
-	}
-
-	private static void AddBalance(
-		Dictionary<LiquidAssetId, LiquidAssetAmount> balances,
-		LiquidAssetAmount amount,
-		bool trustedSnapshot)
-	{
-		try
-		{
-			balances[amount.AssetId] = balances.TryGetValue(amount.AssetId, out LiquidAssetAmount? current)
-				? current.Add(amount)
-				: amount;
-		}
-		catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or OverflowException)
-		{
-			throw ReplayStructureFailure(trustedSnapshot);
-		}
-	}
-
-	private static void SubtractBalance(
-		Dictionary<LiquidAssetId, LiquidAssetAmount> balances,
-		LiquidAssetAmount amount,
-		bool trustedSnapshot)
-	{
-		try
-		{
-			if (!balances.TryGetValue(amount.AssetId, out LiquidAssetAmount? current))
-			{
-				throw ReplayStructureFailure(trustedSnapshot);
-			}
-			LiquidAssetAmount remaining = current.Subtract(amount);
-			if (remaining.IsZero)
-			{
-				balances.Remove(amount.AssetId);
-			}
-			else
-			{
-				balances[amount.AssetId] = remaining;
-			}
-		}
-		catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or OverflowException)
-		{
-			throw ReplayStructureFailure(trustedSnapshot);
-		}
-	}
-
-	private static long AddReplayWork(long current, long addition, ref bool exceedsWorkBudget)
-	{
-		long result;
-		try
-		{
-			result = checked(current + addition);
-		}
-		catch (OverflowException)
-		{
-			exceedsWorkBudget = true;
-			return long.MaxValue;
-		}
-		if (result > MaxReplayWorkUnits)
-		{
-			exceedsWorkBudget = true;
-		}
-		return result;
-	}
-
-	private static Exception ReplayCapacityFailure(bool trustedSnapshot) =>
-		trustedSnapshot
-			? new LiquidWalletReplayCapacityException()
-			: new InvalidDataException("The replay cache exceeds its replay-work limit.");
-
-	private static Exception ReplayStructureFailure(bool trustedSnapshot) =>
-		trustedSnapshot
-			? new InvalidOperationException("The replay cache snapshot cannot be reconstructed.")
-			: new InvalidDataException("The replay cache cannot be reconstructed.");
 
 	private static void ValidateCapacity(int count, int maximum)
 	{

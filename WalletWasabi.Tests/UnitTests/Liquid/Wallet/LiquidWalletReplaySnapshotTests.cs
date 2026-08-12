@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 using WalletWasabi.Liquid.Amounts;
 using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Transactions;
@@ -174,6 +175,41 @@ public class LiquidWalletReplaySnapshotTests
 	}
 
 	[Fact]
+	public void MutableRestorePreservesSpentOutputOrderForRollbackHistory()
+	{
+		LiquidTransactionId receiveId = Tx('a');
+		LiquidOwnedOutput first = Output(receiveId, 0, PeggedAsset, 40);
+		LiquidOwnedOutput second = Output(receiveId, 1, IssuedAsset, 60);
+		LiquidTransactionId spendId = Tx('b');
+		LiquidWalletState original = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(receiveId, [], [first, second]))
+			.Apply(1, Delta(spendId, [second.OutPoint, first.OutPoint], []));
+		LiquidWalletState restored = LiquidWalletState.RestoreReplaySnapshot(
+			original.ExportReplaySnapshot());
+
+		FieldInfo historyField = typeof(LiquidWalletState).GetField(
+			"_history",
+			BindingFlags.NonPublic | BindingFlags.Instance) ??
+			throw new InvalidOperationException("The replay history field is unavailable.");
+		var history = Assert.IsAssignableFrom<System.Collections.IList>(historyField.GetValue(restored));
+		object? appliedValue = history[history.Count - 1];
+		Assert.NotNull(appliedValue);
+		object applied = appliedValue;
+		PropertyInfo spentOutputsProperty = applied.GetType().GetProperty(
+			"SpentOutputs",
+			BindingFlags.Public | BindingFlags.Instance) ??
+			throw new InvalidOperationException("The spent-output history is unavailable.");
+		LiquidOwnedOutput[] spentOutputs = Assert.IsType<LiquidOwnedOutput[]>(
+			spentOutputsProperty.GetValue(applied));
+
+		Assert.Equal([second, first], spentOutputs);
+		AssertEquivalent(
+			original.RollbackLast(2, spendId),
+			restored.RollbackLast(2, spendId),
+			[receiveId, spendId]);
+	}
+
+	[Fact]
 	public void RestoredMaximumRevisionFailsValidTransitionsAtomically()
 	{
 		LiquidTransactionId receiveId = Tx('a');
@@ -329,6 +365,91 @@ public class LiquidWalletReplaySnapshotTests
 	}
 
 	[Fact]
+	public void MutableRestorePreservesValidationPrecedence()
+	{
+		LiquidTransactionId receiveId = Tx('a');
+		LiquidOwnedOutput received = Output(receiveId, 0, PeggedAsset, 10);
+		LiquidWalletTransactionDelta receive = Delta(receiveId, [], [received]);
+		LiquidOutPoint unknown = LiquidOutPoint.CreateSpendable(Tx('f'), 0);
+		LiquidWalletTransactionDelta duplicateWithUnknownSpend = Delta(
+			receiveId,
+			[unknown],
+			[]);
+
+		InvalidOperationException duplicate = Assert.Throws<InvalidOperationException>(() =>
+			LiquidWalletState.RestoreReplaySnapshot(Snapshot(
+				2,
+				[receive, duplicateWithUnknownSpend],
+				[])));
+		Assert.Equal("A Liquid wallet transaction cannot be applied more than once.", duplicate.Message);
+
+		LiquidTransactionId laterId = Tx('b');
+		LiquidAssetAmount foreignAmount = LiquidAssetAmount.Create(
+			IssuedAsset,
+			OtherPeggedAsset,
+			1);
+		LiquidWalletTransactionDelta unknownSpendWithForeignOutput = Delta(
+			laterId,
+			[unknown],
+			[Output(laterId, 0, foreignAmount)]);
+		InvalidOperationException unavailable = Assert.Throws<InvalidOperationException>(() =>
+			LiquidWalletState.RestoreReplaySnapshot(Snapshot(
+				2,
+				[receive, unknownSpendWithForeignOutput],
+				[])));
+		Assert.Equal(
+			"A Liquid wallet transaction attempted to spend an unavailable owned output.",
+			unavailable.Message);
+	}
+
+	[Fact]
+	public void RestoreCallGraphUsesOnlyTheMutableBuilderPath()
+	{
+		MethodInfo restore = typeof(LiquidWalletState).GetMethod(
+			nameof(LiquidWalletState.RestoreReplaySnapshot),
+			BindingFlags.Public | BindingFlags.Static) ??
+			throw new InvalidOperationException("The replay restore method is unavailable.");
+		HashSet<MethodBase> callGraph = GetStateRestoreCallGraph(restore);
+		MethodInfo immutableApply = typeof(LiquidWalletState).GetMethod(
+			nameof(LiquidWalletState.Apply),
+			BindingFlags.Public | BindingFlags.Instance) ??
+			throw new InvalidOperationException("The immutable apply method is unavailable.");
+		MethodInfo immutableConfirm = typeof(LiquidWalletState).GetMethod(
+			nameof(LiquidWalletState.Confirm),
+			BindingFlags.Public | BindingFlags.Instance) ??
+			throw new InvalidOperationException("The immutable confirm method is unavailable.");
+		MethodInfo balanceAdd = typeof(LiquidAssetBalanceMap).GetMethod(
+			nameof(LiquidAssetBalanceMap.Add),
+			BindingFlags.Public | BindingFlags.Instance) ??
+			throw new InvalidOperationException("The immutable balance add method is unavailable.");
+		MethodInfo balanceSubtract = typeof(LiquidAssetBalanceMap).GetMethod(
+			nameof(LiquidAssetBalanceMap.Subtract),
+			BindingFlags.Public | BindingFlags.Instance) ??
+			throw new InvalidOperationException("The immutable balance subtract method is unavailable.");
+
+		Assert.DoesNotContain(immutableApply, callGraph);
+		Assert.DoesNotContain(immutableConfirm, callGraph);
+		Assert.DoesNotContain(balanceAdd, callGraph);
+		Assert.DoesNotContain(balanceSubtract, callGraph);
+		Assert.Contains(callGraph, method =>
+			method.DeclaringType?.Name.Contains("ReplayBuilder", StringComparison.Ordinal) == true &&
+			method.Name == nameof(LiquidWalletState.Apply));
+		Assert.Contains(callGraph, method =>
+			method.DeclaringType?.Name.Contains("ReplayBuilder", StringComparison.Ordinal) == true &&
+			method.Name == nameof(LiquidWalletState.Confirm));
+
+		MethodInfo builderApply = Assert.Single(callGraph.OfType<MethodInfo>(), method =>
+			method.DeclaringType?.Name.Contains("ReplayBuilder", StringComparison.Ordinal) == true &&
+			method.Name == nameof(LiquidWalletState.Apply));
+		MethodInfo builderConfirm = Assert.Single(callGraph.OfType<MethodInfo>(), method =>
+			method.DeclaringType?.Name.Contains("ReplayBuilder", StringComparison.Ordinal) == true &&
+			method.Name == nameof(LiquidWalletState.Confirm));
+		HashSet<MethodBase> perStepGraph = GetStateRestoreCallGraph(builderApply);
+		perStepGraph.UnionWith(GetStateRestoreCallGraph(builderConfirm));
+		Assert.DoesNotContain(perStepGraph, IsCollectionCopyOrMaterializer);
+	}
+
+	[Fact]
 	public void ReplayStringsAndErrorsDoNotExposeWalletValues()
 	{
 		LiquidTransactionId transactionId = Tx('a');
@@ -444,6 +565,117 @@ public class LiquidWalletReplaySnapshotTests
 		}
 		return candidate.IsGenericType && candidate.GetGenericArguments().Any(type => ContainsType(type, expected));
 	}
+
+	private static HashSet<MethodBase> GetStateRestoreCallGraph(MethodInfo root)
+	{
+		var discovered = new HashSet<MethodBase> { root };
+		var pending = new Queue<MethodBase>();
+		pending.Enqueue(root);
+		while (pending.TryDequeue(out MethodBase? current))
+		{
+			foreach (MethodBase called in GetCalledMethods(current))
+			{
+				if (!discovered.Add(called))
+				{
+					continue;
+				}
+				Type? declaringType = called.DeclaringType;
+				if (declaringType is not null &&
+					(declaringType == typeof(LiquidWalletState) ||
+					 declaringType.DeclaringType == typeof(LiquidWalletState)))
+				{
+					pending.Enqueue(called);
+				}
+			}
+		}
+		return discovered;
+	}
+
+	private static bool IsCollectionCopyOrMaterializer(MethodBase method)
+	{
+		if (method.DeclaringType == typeof(Enumerable) &&
+			method.Name is nameof(Enumerable.ToDictionary) or nameof(Enumerable.ToList) or nameof(Enumerable.ToHashSet))
+		{
+			return true;
+		}
+
+		if (!method.IsConstructor || method.DeclaringType is null ||
+			!method.DeclaringType.IsGenericType)
+		{
+			return false;
+		}
+
+		Type genericType = method.DeclaringType.GetGenericTypeDefinition();
+		if (genericType != typeof(Dictionary<,>) &&
+			genericType != typeof(HashSet<>) &&
+			genericType != typeof(List<>) &&
+			genericType != typeof(SortedDictionary<,>))
+		{
+			return false;
+		}
+
+		return method.GetParameters().Any(parameter =>
+		{
+			Type parameterType = parameter.ParameterType;
+			return parameterType.IsGenericType &&
+				parameterType.GetGenericTypeDefinition() is var definition &&
+				(definition == typeof(IEnumerable<>) ||
+				 definition == typeof(ICollection<>) ||
+				 definition == typeof(IDictionary<,>) ||
+				 definition == typeof(IReadOnlyDictionary<,>));
+		});
+	}
+
+	private static IEnumerable<MethodBase> GetCalledMethods(MethodBase method)
+	{
+		byte[]? il = method.GetMethodBody()?.GetILAsByteArray();
+		if (il is null)
+		{
+			yield break;
+		}
+
+		Dictionary<short, OpCode> opCodes = typeof(OpCodes)
+			.GetFields(BindingFlags.Public | BindingFlags.Static)
+			.Where(field => field.FieldType == typeof(OpCode))
+			.Select(field => (OpCode)field.GetValue(null)!)
+			.ToDictionary(opCode => opCode.Value);
+		int position = 0;
+		while (position < il.Length)
+		{
+			short value = il[position++] == 0xfe
+				? unchecked((short)(0xfe00 | il[position++]))
+				: il[position - 1];
+			OpCode opCode = opCodes[value];
+			if (opCode.OperandType == OperandType.InlineMethod)
+			{
+				int token = BitConverter.ToInt32(il, position);
+				MethodBase? called = method.Module.ResolveMethod(
+					token,
+					method.DeclaringType?.GetGenericArguments(),
+					method.IsGenericMethod ? method.GetGenericArguments() : null);
+				if (called is not null)
+				{
+					yield return called;
+				}
+			}
+			position += GetOperandSize(opCode.OperandType, il, position);
+		}
+	}
+
+	private static int GetOperandSize(OperandType operandType, byte[] il, int position) =>
+		operandType switch
+		{
+			OperandType.InlineNone => 0,
+			OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+			OperandType.InlineVar => 2,
+			OperandType.InlineI or OperandType.InlineBrTarget or OperandType.InlineField or
+				OperandType.InlineMethod or OperandType.InlineSig or OperandType.InlineString or
+				OperandType.InlineTok or OperandType.InlineType or OperandType.ShortInlineR => 4,
+			OperandType.InlineI8 or OperandType.InlineR => 8,
+			OperandType.InlineSwitch => sizeof(int) +
+				(BitConverter.ToInt32(il, position) * sizeof(int)),
+			_ => throw new InvalidOperationException("An unsupported IL operand type was encountered."),
+		};
 
 	private static LiquidTransactionId Tx(char value) =>
 		LiquidTransactionId.ParseRpcHex(new string(value, 64));

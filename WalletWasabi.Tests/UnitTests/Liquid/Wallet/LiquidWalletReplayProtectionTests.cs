@@ -37,7 +37,6 @@ public class LiquidWalletReplayProtectionTests
 		byte[]? reencoded = null;
 		try
 		{
-			Assert.Equal(1_000_000, LiquidWalletReplayCodec.MaxReplayWorkUnits);
 			LiquidWalletReplaySnapshot decoded = LiquidWalletReplayCodec.Decode(encoded);
 			reencoded = LiquidWalletReplayCodec.Encode(decoded);
 
@@ -132,14 +131,14 @@ public class LiquidWalletReplayProtectionTests
 	[Fact]
 	public void SealedEnvelopeDoesNotExposeFixtureWalletMetadata()
 	{
-		const ulong generation = 0x8877665544332211;
+		const ulong Generation = 0x8877665544332211;
 		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
 		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
 		byte[] envelope = LiquidWalletReplayProtectedPayload
-			.Seal(CreateReplaySnapshot(), generation, key, context)
+			.Seal(CreateReplaySnapshot(), Generation, key, context)
 			.GetBytes();
 		byte[] scriptPubKey = Output(Tx('a'), 0, PeggedAsset, 100).GetScriptPubKey();
-		byte[] generationBytes = UInt64Bytes(generation);
+		byte[] generationBytes = UInt64Bytes(Generation);
 		var forbidden = new List<byte[]>
 		{
 			Encoding.ASCII.GetBytes(Tx('a').CanonicalRpcHex),
@@ -332,82 +331,33 @@ public class LiquidWalletReplayProtectionTests
 	}
 
 	[Fact]
-	public void ReplayWorkBudgetAccepts707AndRejects708SmallReceivesBeforeRestore()
+	public void CodecRoundTripsMaximumDeltasAndConfirmations()
 	{
-		LiquidWalletReplaySnapshot accepted = CreateManyReceiveSnapshot(707);
-		LiquidWalletReplaySnapshot rejected = CreateManyReceiveSnapshot(708);
-		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
-		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
-		byte[]? acceptedCanonical = null;
-		byte[]? canonical = null;
-		byte[]? envelope = null;
+		LiquidWalletReplaySnapshot snapshot = CreateMaximumReplaySnapshot();
+		byte[] encoded = LiquidWalletReplayCodec.Encode(snapshot);
 		try
 		{
-			acceptedCanonical = LiquidWalletReplayCodec.Encode(accepted);
-			Assert.Equal(707, LiquidWalletReplayCodec.Decode(acceptedCanonical).GetDeltas().Count);
-			Assert.Throws<LiquidWalletReplayCapacityException>(() =>
-				LiquidWalletReplayCodec.Encode(rejected));
+			LiquidWalletReplaySnapshot decoded = LiquidWalletReplayCodec.Decode(encoded);
 
-			canonical = EncodeCoreForTest(rejected);
-			Assert.Throws<InvalidDataException>(() => LiquidWalletReplayCodec.Decode(canonical));
-			envelope = ProtectCanonicalForTest(canonical, 5, key, context);
-			AssertUniformFailure(() =>
-				LiquidWalletReplayProtectedPayload.Open(envelope, key, context));
+			Assert.Equal(LiquidWalletReplayCodec.MaxDeltaCount, decoded.GetDeltas().Count);
+			Assert.Equal(LiquidWalletReplayCodec.MaxConfirmationCount, decoded.GetConfirmations().Count);
+			Assert.Equal(8_192ul, decoded.Revision);
+			LiquidWalletState restored = LiquidWalletState.RestoreReplaySnapshot(decoded);
+			Assert.Equal(1, restored.UnspentOutputCount);
+			Assert.Equal(1, restored.GetBalances().GetAmountOrZero(PeggedAsset).AtomicUnits);
 		}
 		finally
 		{
-			CryptographicOperations.ZeroMemory(key);
-			CryptographicOperations.ZeroMemory(context);
-			Zero(acceptedCanonical);
-			Zero(canonical);
-			Zero(envelope);
+			CryptographicOperations.ZeroMemory(encoded);
 		}
 	}
 
 	[Fact]
-	public void ReplayWorkBudgetRejectsFrontLoadedOutputsAndLaterConfirmations()
+	public void CodecRoundTripsManyDistinctAssetsWithoutReplayWorkPolicy()
 	{
-		const int initialOutputCount = 500;
-		const int laterDeltaCount = 400;
-		const int confirmationCount = 200;
-		LiquidTransactionId initialId = Tx(1u);
-		LiquidOwnedOutput[] initialOutputs = Enumerable.Range(0, initialOutputCount)
-			.Select(index => Output(initialId, (uint)index, PeggedAsset, 1))
-			.ToArray();
-		var deltas = new List<LiquidWalletTransactionDelta>
-		{
-			Delta(initialId, [], initialOutputs),
-		};
-		for (int index = 0; index < laterDeltaCount; index++)
-		{
-			LiquidTransactionId transactionId = Tx((uint)index + 2);
-			deltas.Add(Delta(
-				transactionId,
-				[initialOutputs[index].OutPoint],
-				[Output(transactionId, 0, PeggedAsset, 1)]));
-		}
-		LiquidWalletReplayConfirmation[] confirmations = deltas
-			.Take(confirmationCount)
-			.Select(delta => LiquidWalletReplayConfirmation.Create(
-				delta.TransactionId,
-				LiquidConfirmation.Create(BlockHash, 42)))
-			.ToArray();
-		LiquidWalletReplaySnapshot snapshot = LiquidWalletReplaySnapshot.Create(
-			PeggedAsset,
-			(ulong)(deltas.Count + confirmations.Length),
-			deltas,
-			confirmations);
-
-		Assert.Throws<LiquidWalletReplayCapacityException>(() =>
-			LiquidWalletReplayCodec.Encode(snapshot));
-	}
-
-	[Fact]
-	public void ReplayWorkBudgetChargesEveryDistinctAssetBalanceClone()
-	{
-		const int distinctAssetCount = 1_500;
+		const int DistinctAssetCount = 1_500;
 		LiquidTransactionId transactionId = Tx(1u);
-		LiquidOwnedOutput[] outputs = Enumerable.Range(1, distinctAssetCount)
+		LiquidOwnedOutput[] outputs = Enumerable.Range(1, DistinctAssetCount)
 			.Select(index => Output(
 				transactionId,
 				(uint)(index - 1),
@@ -419,9 +369,19 @@ public class LiquidWalletReplayProtectionTests
 			1,
 			[Delta(transactionId, [], outputs)],
 			[]);
+		byte[] encoded = LiquidWalletReplayCodec.Encode(snapshot);
+		try
+		{
+			LiquidWalletReplaySnapshot decoded = LiquidWalletReplayCodec.Decode(encoded);
+			LiquidWalletState restored = LiquidWalletState.RestoreReplaySnapshot(decoded);
 
-		Assert.Throws<LiquidWalletReplayCapacityException>(() =>
-			LiquidWalletReplayCodec.Encode(snapshot));
+			Assert.Equal(DistinctAssetCount, restored.GetBalances().AssetCount);
+			Assert.Equal(DistinctAssetCount, restored.UnspentOutputCount);
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(encoded);
+		}
 	}
 
 	[Fact]
@@ -444,6 +404,18 @@ public class LiquidWalletReplayProtectionTests
 				deltas,
 				Array.Empty<LiquidWalletReplayConfirmation>(),
 			]));
+		LiquidWalletReplayConfirmation confirmation = LiquidWalletReplayConfirmation.Create(
+			transactionId,
+			LiquidConfirmation.Create(BlockHash, 42));
+		var overLimitConfirmations = Assert.IsType<LiquidWalletReplaySnapshot>(constructor.Invoke(
+			[
+				PeggedAsset,
+				(ulong)(LiquidWalletReplayCodec.MaxConfirmationCount + 2),
+				new[] { delta },
+				Enumerable.Repeat(
+					confirmation,
+					LiquidWalletReplayCodec.MaxConfirmationCount + 1).ToArray(),
+			]));
 		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
 		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
 		try
@@ -454,11 +426,13 @@ public class LiquidWalletReplayProtectionTests
 			LiquidWalletReplayCapacityException sealFailure =
 				Assert.Throws<LiquidWalletReplayCapacityException>(() =>
 					LiquidWalletReplayProtectedPayload.Seal(snapshot, 1, key, context));
+			Assert.Throws<LiquidWalletReplayCapacityException>(() =>
+				LiquidWalletReplayCodec.Encode(overLimitConfirmations));
 
-			const string expected =
+			const string Expected =
 				"The Liquid wallet replay cache exceeded its temporary capacity; a chain rescan is required.";
-			Assert.Equal(expected, encodeFailure.Message);
-			Assert.Equal(expected, sealFailure.Message);
+			Assert.Equal(Expected, encodeFailure.Message);
+			Assert.Equal(Expected, sealFailure.Message);
 			Assert.Null(encodeFailure.InnerException);
 			Assert.Null(sealFailure.InnerException);
 			Assert.DoesNotContain(transactionId.CanonicalRpcHex, encodeFailure.Message, StringComparison.Ordinal);
@@ -628,68 +602,6 @@ public class LiquidWalletReplayProtectionTests
 		}
 	}
 
-	private static byte[] EncodeCoreForTest(LiquidWalletReplaySnapshot snapshot)
-	{
-		MethodInfo method = typeof(LiquidWalletReplayCodec).GetMethod(
-			"EncodeCore",
-			BindingFlags.NonPublic | BindingFlags.Static) ??
-			throw new InvalidOperationException("The replay codec core encoder is unavailable.");
-		return Assert.IsType<byte[]>(method.Invoke(null, [snapshot]));
-	}
-
-	private static byte[] ProtectCanonicalForTest(
-		ReadOnlySpan<byte> canonical,
-		ulong generation,
-		ReadOnlySpan<byte> key,
-		ReadOnlySpan<byte> context)
-	{
-		int innerLength = LiquidWalletReplayProtectedPayload.InnerPrefixLength + canonical.Length;
-		int paddedLength = checked(
-			((innerLength + LiquidWalletReplayProtectedPayload.PaddingBucketLength - 1) /
-				LiquidWalletReplayProtectedPayload.PaddingBucketLength) *
-			LiquidWalletReplayProtectedPayload.PaddingBucketLength);
-		byte[] plaintext = new byte[paddedLength];
-		byte[] associatedData = new byte[HeaderLength + context.Length];
-		byte[] envelope = new byte[HeaderLength + paddedLength + LiquidWalletReplayProtectedPayload.TagLength];
-		try
-		{
-			BinaryPrimitives.WriteUInt64LittleEndian(plaintext, generation);
-			BinaryPrimitives.WriteUInt32LittleEndian(plaintext.AsSpan(sizeof(ulong)), (uint)canonical.Length);
-			canonical.CopyTo(plaintext.AsSpan(LiquidWalletReplayProtectedPayload.InnerPrefixLength));
-			RandomNumberGenerator.Fill(plaintext.AsSpan(innerLength));
-
-			Span<byte> header = envelope.AsSpan(0, HeaderLength);
-			Encoding.ASCII.GetBytes("WLRPENV1").CopyTo(header);
-			BinaryPrimitives.WriteUInt16LittleEndian(header[8..], 1);
-			BinaryPrimitives.WriteUInt16LittleEndian(header[10..], 1);
-			BinaryPrimitives.WriteUInt16LittleEndian(header[12..], 1);
-			BinaryPrimitives.WriteUInt32LittleEndian(header[16..], (uint)paddedLength);
-			BinaryPrimitives.WriteUInt32LittleEndian(header[20..], (uint)paddedLength);
-			RandomNumberGenerator.Fill(header.Slice(32, LiquidWalletReplayProtectedPayload.NonceLength));
-			header.CopyTo(associatedData);
-			context.CopyTo(associatedData.AsSpan(HeaderLength));
-
-			using var aes = new AesGcm(key, LiquidWalletReplayProtectedPayload.TagLength);
-			aes.Encrypt(
-				header.Slice(32, LiquidWalletReplayProtectedPayload.NonceLength),
-				plaintext,
-				envelope.AsSpan(HeaderLength, paddedLength),
-				envelope.AsSpan(HeaderLength + paddedLength, LiquidWalletReplayProtectedPayload.TagLength),
-				associatedData);
-			return envelope;
-		}
-		catch
-		{
-			CryptographicOperations.ZeroMemory(envelope);
-			throw;
-		}
-		finally
-		{
-			CryptographicOperations.ZeroMemory(plaintext);
-			CryptographicOperations.ZeroMemory(associatedData);
-		}
-	}
-
 	private static int FindConfirmationOffset(ReadOnlySpan<byte> canonical)
 	{
 		int position = LiquidAssetId.ConsensusByteLength + sizeof(ulong);
@@ -747,19 +659,29 @@ public class LiquidWalletReplayProtectionTests
 			.ExportReplaySnapshot();
 	}
 
-	private static LiquidWalletReplaySnapshot CreateManyReceiveSnapshot(int count)
+	private static LiquidWalletReplaySnapshot CreateMaximumReplaySnapshot()
 	{
-		LiquidWalletTransactionDelta[] deltas = Enumerable.Range(1, count)
-			.Select(index =>
-			{
-				LiquidTransactionId transactionId = Tx((uint)index);
-				return Delta(
-					transactionId,
-					[],
-					[Output(transactionId, 0, PeggedAsset, 1)]);
-			})
-			.ToArray();
-		return LiquidWalletReplaySnapshot.Create(PeggedAsset, (ulong)deltas.Length, deltas, []);
+		var deltas = new LiquidWalletTransactionDelta[LiquidWalletReplayCodec.MaxDeltaCount];
+		var confirmations = new LiquidWalletReplayConfirmation[LiquidWalletReplayCodec.MaxConfirmationCount];
+		LiquidOwnedOutput? previous = null;
+		for (int index = 0; index < deltas.Length; index++)
+		{
+			LiquidTransactionId transactionId = Tx((uint)index + 1);
+			LiquidOwnedOutput created = Output(transactionId, 0, PeggedAsset, 1);
+			deltas[index] = Delta(
+				transactionId,
+				previous is null ? [] : [previous.OutPoint],
+				[created]);
+			confirmations[index] = LiquidWalletReplayConfirmation.Create(
+				transactionId,
+				LiquidConfirmation.Create(BlockHash, 42));
+			previous = created;
+		}
+		return LiquidWalletReplaySnapshot.Create(
+			PeggedAsset,
+			(ulong)deltas.Length + (ulong)confirmations.Length,
+			deltas,
+			confirmations);
 	}
 
 	private static void AssertUniformFailure(Action action)

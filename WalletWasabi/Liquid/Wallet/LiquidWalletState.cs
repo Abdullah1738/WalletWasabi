@@ -11,6 +11,145 @@ internal sealed class LiquidWalletState
 		LiquidWalletTransactionDelta Delta,
 		LiquidOwnedOutput[] SpentOutputs);
 
+	private sealed class ReplayBuilder
+	{
+		private readonly LiquidAssetId _peggedAssetId;
+		private readonly Dictionary<LiquidOutPoint, LiquidOwnedOutput> _unspentOutputs = [];
+		private readonly Dictionary<LiquidOutPoint, LiquidOwnedOutput> _knownOutputs = [];
+		private readonly HashSet<LiquidTransactionId> _appliedTransactionIds = [];
+		private readonly List<AppliedDelta> _history = [];
+		private readonly Dictionary<LiquidTransactionId, LiquidConfirmation> _confirmations = [];
+		private readonly Dictionary<string, LiquidAssetAmount> _balances = new(StringComparer.Ordinal);
+		private ulong _revision;
+
+		public ReplayBuilder(LiquidAssetId peggedAssetId)
+		{
+			_peggedAssetId = peggedAssetId;
+		}
+
+		public void Apply(LiquidWalletTransactionDelta delta)
+		{
+			ArgumentNullException.ThrowIfNull(delta);
+			if (_appliedTransactionIds.Contains(delta.TransactionId))
+			{
+				throw new InvalidOperationException("A Liquid wallet transaction cannot be applied more than once.");
+			}
+
+			IReadOnlyList<LiquidOutPoint> spentOutPoints = delta.GetSpentOutPoints();
+			IReadOnlyList<LiquidOwnedOutput> createdOutputs = delta.GetCreatedOutputs();
+			var spentOutputs = new LiquidOwnedOutput[spentOutPoints.Count];
+			for (int index = 0; index < spentOutPoints.Count; index++)
+			{
+				LiquidOutPoint spentOutPoint = spentOutPoints[index];
+				if (!_unspentOutputs.TryGetValue(spentOutPoint, out LiquidOwnedOutput? spentOutput))
+				{
+					throw new InvalidOperationException("A Liquid wallet transaction attempted to spend an unavailable owned output.");
+				}
+
+				spentOutputs[index] = spentOutput;
+				SubtractBalance(spentOutput.Amount);
+			}
+
+			foreach (LiquidOwnedOutput createdOutput in createdOutputs)
+			{
+				if (createdOutput.Amount.PeggedAssetId != _peggedAssetId)
+				{
+					throw new InvalidOperationException("A Liquid wallet output belongs to a different pegged-asset context.");
+				}
+				if (_knownOutputs.ContainsKey(createdOutput.OutPoint))
+				{
+					throw new InvalidOperationException("A Liquid wallet transaction attempted to reuse an owned outpoint.");
+				}
+
+				AddBalance(createdOutput.Amount);
+			}
+
+			ulong nextRevision = CheckedNextRevision(_revision);
+			foreach (LiquidOutPoint spentOutPoint in spentOutPoints)
+			{
+				_unspentOutputs.Remove(spentOutPoint);
+			}
+			foreach (LiquidOwnedOutput createdOutput in createdOutputs)
+			{
+				_unspentOutputs.Add(createdOutput.OutPoint, createdOutput);
+				_knownOutputs.Add(createdOutput.OutPoint, createdOutput);
+			}
+			_appliedTransactionIds.Add(delta.TransactionId);
+			_history.Add(new AppliedDelta(delta, spentOutputs));
+			_revision = nextRevision;
+		}
+
+		public void Confirm(LiquidWalletReplayConfirmation replayConfirmation)
+		{
+			ArgumentNullException.ThrowIfNull(replayConfirmation);
+			if (!_appliedTransactionIds.Contains(replayConfirmation.TransactionId))
+			{
+				throw new InvalidOperationException("Only an applied Liquid wallet transaction can be confirmed.");
+			}
+			if (_confirmations.ContainsKey(replayConfirmation.TransactionId))
+			{
+				throw new InvalidOperationException("A Liquid wallet transaction confirmation cannot be replaced.");
+			}
+
+			ulong nextRevision = CheckedNextRevision(_revision);
+			_confirmations.Add(replayConfirmation.TransactionId, replayConfirmation.Confirmation);
+			_revision = nextRevision;
+		}
+
+		public LiquidWalletState Build(ulong requestedRevision)
+		{
+			if (requestedRevision < _revision)
+			{
+				throw new InvalidOperationException("A Liquid wallet replay revision precedes its derived state.");
+			}
+
+			ulong revisionGap = requestedRevision - _revision;
+			if (revisionGap == 1)
+			{
+				throw new InvalidOperationException("A Liquid wallet replay revision gap is unreachable.");
+			}
+
+			// Replay steps use expected-linear hash operations. This one-time
+			// canonical balance freeze is O(A log A) for A active assets.
+			return new LiquidWalletState(
+				_peggedAssetId,
+				requestedRevision,
+				_unspentOutputs,
+				_knownOutputs,
+				_appliedTransactionIds,
+				_history,
+				_confirmations,
+				LiquidAssetBalanceMap.FromAmounts(_peggedAssetId, _balances.Values));
+		}
+
+		private void AddBalance(LiquidAssetAmount amount)
+		{
+			string key = amount.AssetId.CanonicalRpcHex;
+			_balances[key] = _balances.TryGetValue(key, out LiquidAssetAmount? current)
+				? current.Add(amount)
+				: amount;
+		}
+
+		private void SubtractBalance(LiquidAssetAmount amount)
+		{
+			string key = amount.AssetId.CanonicalRpcHex;
+			if (!_balances.TryGetValue(key, out LiquidAssetAmount? current))
+			{
+				throw new OverflowException("Liquid asset balance subtraction cannot produce a negative result.");
+			}
+
+			LiquidAssetAmount remaining = current.Subtract(amount);
+			if (remaining.IsZero)
+			{
+				_balances.Remove(key);
+			}
+			else
+			{
+				_balances[key] = remaining;
+			}
+		}
+	}
+
 	private readonly Dictionary<LiquidOutPoint, LiquidOwnedOutput> _unspentOutputs;
 	private readonly Dictionary<LiquidOutPoint, LiquidOwnedOutput> _knownOutputs;
 	private readonly HashSet<LiquidTransactionId> _appliedTransactionIds;
@@ -69,43 +208,16 @@ internal sealed class LiquidWalletState
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
 
-		LiquidWalletState replayed = Empty(snapshot.PeggedAssetId);
+		var builder = new ReplayBuilder(snapshot.PeggedAssetId);
 		foreach (LiquidWalletTransactionDelta delta in snapshot.GetDeltas())
 		{
-			replayed = replayed.Apply(replayed.Revision, delta);
+			builder.Apply(delta);
 		}
 		foreach (LiquidWalletReplayConfirmation confirmation in snapshot.GetConfirmations())
 		{
-			replayed = replayed.Confirm(
-				replayed.Revision,
-				confirmation.TransactionId,
-				confirmation.Confirmation);
+			builder.Confirm(confirmation);
 		}
-
-		if (snapshot.Revision < replayed.Revision)
-		{
-			throw new InvalidOperationException("A Liquid wallet replay revision precedes its derived state.");
-		}
-
-		ulong revisionGap = snapshot.Revision - replayed.Revision;
-		if (revisionGap == 1)
-		{
-			throw new InvalidOperationException("A Liquid wallet replay revision gap is unreachable.");
-		}
-		if (revisionGap == 0)
-		{
-			return replayed;
-		}
-
-		return new LiquidWalletState(
-			replayed.PeggedAssetId,
-			snapshot.Revision,
-			new Dictionary<LiquidOutPoint, LiquidOwnedOutput>(replayed._unspentOutputs),
-			new Dictionary<LiquidOutPoint, LiquidOwnedOutput>(replayed._knownOutputs),
-			new HashSet<LiquidTransactionId>(replayed._appliedTransactionIds),
-			new List<AppliedDelta>(replayed._history),
-			new Dictionary<LiquidTransactionId, LiquidConfirmation>(replayed._confirmations),
-			replayed._balances);
+		return builder.Build(snapshot.Revision);
 	}
 
 	public LiquidWalletState Apply(ulong expectedRevision, LiquidWalletTransactionDelta delta)
@@ -343,10 +455,13 @@ internal sealed class LiquidWalletState
 	}
 
 	private ulong CheckedNextRevision()
+		=> CheckedNextRevision(Revision);
+
+	private static ulong CheckedNextRevision(ulong revision)
 	{
 		try
 		{
-			return checked(Revision + 1);
+			return checked(revision + 1);
 		}
 		catch (OverflowException)
 		{
