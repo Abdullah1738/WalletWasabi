@@ -314,6 +314,39 @@ public class LiquidWalletCoinControlTests
 			LiquidAssetAmount.Create(IssuedAsset, PeggedAsset, 74_567_891),
 			PeggedAsset,
 			LiquidConfirmation.Create(BlockHash, 4_242));
+		LiquidWalletCoinControlEntry lateTransaction =
+			Entry(Tx('f'), 505_043, IssuedAsset, 85_678_913);
+		LiquidWalletCoinControlEntry middleTransaction =
+			Entry(Tx('c'), 303_017, IssuedAsset, 63_456_789);
+		LiquidWalletCoinControlEntry earliestTransaction =
+			Entry(Tx(1), 606_049, IssuedAsset, 96_789_131);
+		LiquidTransactionId sharedTransactionId = Tx('e');
+		LiquidWalletCoinControlEntry lowOutputIndex =
+			Entry(sharedTransactionId, 0, PeggedAsset, 107_891_337);
+		LiquidWalletCoinControlEntry highOutputIndex = Entry(
+			sharedTransactionId,
+			LiquidOutPoint.MaxSpendableOutputIndex,
+			IssuedAsset,
+			118_913_579);
+		LiquidWalletCoinControlEntry earlyHighIndex = Entry(
+			Tx('a'),
+			LiquidOutPoint.MaxSpendableOutputIndex,
+			IssuedAsset,
+			129_135_791);
+		LiquidWalletCoinControlEntry lateLowIndex =
+			Entry(Tx('c'), 0, PeggedAsset, 130_357_913);
+		Assert.True(StringComparer.Ordinal.Compare(
+			first.OutPoint.TransactionId.CanonicalRpcHex,
+			middleTransaction.OutPoint.TransactionId.CanonicalRpcHex) < -1);
+		Assert.True(StringComparer.Ordinal.Compare(
+			middleTransaction.OutPoint.TransactionId.CanonicalRpcHex,
+			first.OutPoint.TransactionId.CanonicalRpcHex) > 1);
+		Assert.True(StringComparer.Ordinal.Compare(
+			earliestTransaction.OutPoint.TransactionId.CanonicalRpcHex,
+			lateTransaction.OutPoint.TransactionId.CanonicalRpcHex) < -1);
+		Assert.True(StringComparer.Ordinal.Compare(
+			lateTransaction.OutPoint.TransactionId.CanonicalRpcHex,
+			earliestTransaction.OutPoint.TransactionId.CanonicalRpcHex) > 1);
 
 		ArgumentNullException nullOutPoint = AssertRedactedFailure<ArgumentNullException>(() =>
 			LiquidWalletCoinControlEntry.Create(null!, null!, null!, null), first, foreign);
@@ -355,6 +388,16 @@ public class LiquidWalletCoinControlTests
 			new LiquidWalletCoinControlSnapshot(PeggedAsset, 0, [second, first]), first, second, foreign);
 		AssertRedactedFailure<ArgumentException>(() =>
 			new LiquidWalletCoinControlSnapshot(PeggedAsset, 0, [confirmed, confirmed]), confirmed);
+		AssertSnapshotOrderingAccepted(first, middleTransaction);
+		AssertSnapshotOrderingRejected(middleTransaction, first);
+		AssertSnapshotOrderingAccepted(earliestTransaction, lateTransaction);
+		AssertSnapshotOrderingRejected(lateTransaction, earliestTransaction);
+		AssertSnapshotOrderingAccepted(lowOutputIndex, highOutputIndex);
+		AssertSnapshotOrderingRejected(highOutputIndex, lowOutputIndex);
+		AssertSnapshotOrderingRejected(lowOutputIndex, lowOutputIndex);
+		AssertSnapshotOrderingAccepted(earlyHighIndex, lateLowIndex);
+		AssertSnapshotOrderingRejected(lateLowIndex, earlyHighIndex);
+		AssertSnapshotOrderingRejected(first, middleTransaction, second);
 
 		AssertRedactedFailure<ArgumentNullException>(() =>
 			LiquidWalletCoinControlSnapshot.TakeOwnershipFromState(null!, 0, [first]), first, foreign);
@@ -1818,7 +1861,7 @@ public class LiquidWalletCoinControlTests
 				instruction => IsForbiddenExactQueryOpcode(instruction.OpCode));
 			Assert.DoesNotContain(GetCalledMethods(method), IsCapacityMutationOrCallback);
 		}
-		AssertExactOwnedGraphCycles(graphFlows, validator);
+		AssertExactOwnedGraphCycles(graphFlows, validator, comparator);
 		AssertGraphHasNoForbiddenSurface(completeOwnedGraph);
 		AssertExactOwnershipReferenceFlow(
 			query,
@@ -2348,6 +2391,137 @@ public class LiquidWalletCoinControlTests
 				BindingFlags.Public | BindingFlags.Instance,
 				typeof(uint)));
 		Assert.Empty(GetStoredFields(comparator));
+		AssertExactComparatorResultProvenance(comparator);
+	}
+
+	private static void AssertExactComparatorResultProvenance(MethodInfo comparator)
+	{
+		MethodInfo ordinalGetter = RequiredPropertyGetter(
+			typeof(StringComparer),
+			nameof(StringComparer.Ordinal));
+		MethodInfo outPointGetter = RequiredPropertyGetter(
+			typeof(LiquidWalletCoinControlEntry),
+			nameof(LiquidWalletCoinControlEntry.OutPoint));
+		MethodInfo transactionIdGetter = RequiredPropertyGetter(
+			typeof(LiquidOutPoint),
+			nameof(LiquidOutPoint.TransactionId));
+		MethodInfo canonicalIdGetter = RequiredPropertyGetter(
+			typeof(LiquidTransactionId),
+			nameof(LiquidTransactionId.CanonicalRpcHex));
+		MethodInfo ordinalCompare = RequiredMethod(
+			typeof(StringComparer),
+			nameof(StringComparer.Compare),
+			BindingFlags.Public | BindingFlags.Instance,
+			typeof(string),
+			typeof(string));
+		MethodInfo outputIndexGetter = RequiredPropertyGetter(
+			typeof(LiquidOutPoint),
+			nameof(LiquidOutPoint.OutputIndex));
+		MethodInfo outputIndexCompare = RequiredMethod(
+			typeof(uint),
+			nameof(uint.CompareTo),
+			BindingFlags.Public | BindingFlags.Instance,
+			typeof(uint));
+		var flow = CreateValidControlFlow(comparator);
+		var instructions = flow.Instructions
+			.Where(instruction => instruction.OpCode != OpCodes.Nop)
+			.ToArray();
+		Assert.True(instructions.Length is 25 or 28);
+		Assert.Equal(ordinalGetter, ResolveInstructionMember(comparator, instructions[0]));
+		Assert.Equal(0, GetLoadedArgumentIndex(comparator, instructions[1]));
+		Assert.Equal(outPointGetter, ResolveInstructionMember(comparator, instructions[2]));
+		Assert.Equal(transactionIdGetter, ResolveInstructionMember(comparator, instructions[3]));
+		Assert.Equal(canonicalIdGetter, ResolveInstructionMember(comparator, instructions[4]));
+		Assert.Equal(1, GetLoadedArgumentIndex(comparator, instructions[5]));
+		Assert.Equal(outPointGetter, ResolveInstructionMember(comparator, instructions[6]));
+		Assert.Equal(transactionIdGetter, ResolveInstructionMember(comparator, instructions[7]));
+		Assert.Equal(canonicalIdGetter, ResolveInstructionMember(comparator, instructions[8]));
+		Assert.Equal(ordinalCompare, ResolveInstructionMember(comparator, instructions[9]));
+		int transactionOrderLocal = Assert.IsType<int>(
+			GetStoredLocalIndex(comparator, instructions[10]));
+		Assert.Equal(
+			typeof(int),
+			comparator.GetMethodBody()?.LocalVariables[transactionOrderLocal].LocalType);
+		Assert.Equal(transactionOrderLocal, GetLoadedLocalIndex(comparator, instructions[11]));
+		var transactionGuard = instructions[12];
+		Assert.True(IsBooleanConditionalBranch(transactionGuard.OpCode));
+		Assert.True(BranchesOnTrue(transactionGuard.OpCode));
+		AssertExactLinearNopPath(flow, instructions[9].Offset, instructions[10].Offset);
+		AssertExactLinearNopPath(flow, instructions[10].Offset, instructions[11].Offset);
+		AssertExactLinearNopPath(flow, instructions[11].Offset, transactionGuard.Offset);
+
+		Assert.Equal(0, GetLoadedArgumentIndex(comparator, instructions[13]));
+		Assert.Equal(outPointGetter, ResolveInstructionMember(comparator, instructions[14]));
+		Assert.Equal(outputIndexGetter, ResolveInstructionMember(comparator, instructions[15]));
+		int leftOutputIndexLocal = Assert.IsType<int>(
+			GetStoredLocalIndex(comparator, instructions[16]));
+		Assert.Equal(
+			typeof(uint),
+			comparator.GetMethodBody()?.LocalVariables[leftOutputIndexLocal].LocalType);
+		Assert.Equal(leftOutputIndexLocal, GetAddressedLocalIndex(comparator, instructions[17]));
+		Assert.Equal(1, GetLoadedArgumentIndex(comparator, instructions[18]));
+		Assert.Equal(outPointGetter, ResolveInstructionMember(comparator, instructions[19]));
+		Assert.Equal(outputIndexGetter, ResolveInstructionMember(comparator, instructions[20]));
+		Assert.Equal(outputIndexCompare, ResolveInstructionMember(comparator, instructions[21]));
+		Assert.Equal(1, CountLocalAccess(comparator, instructions, leftOutputIndexLocal, 1));
+		Assert.Equal(0, CountLocalAccess(comparator, instructions, leftOutputIndexLocal, 0));
+		Assert.Equal(1, CountLocalAccess(comparator, instructions, leftOutputIndexLocal, 2));
+		int transactionGuardPosition = FindInstructionPosition(
+			flow.Instructions,
+			transactionGuard.Offset);
+		Assert.Equal(
+			instructions[13].Offset,
+			flow.Instructions[transactionGuardPosition + 1].Offset);
+		for (int position = 13; position < 21; position++)
+		{
+			AssertExactLinearNopPath(
+				flow,
+				instructions[position].Offset,
+				instructions[position + 1].Offset);
+		}
+
+		byte[] comparatorIl = comparator.GetMethodBody()?.GetILAsByteArray() ?? [];
+		int transactionResultOffset = Assert.Single(
+			GetBranchTargets(transactionGuard, comparatorIl));
+		Assert.Equal(instructions[23].Offset, transactionResultOffset);
+		Assert.Equal(transactionOrderLocal, GetLoadedLocalIndex(comparator, instructions[23]));
+		Assert.Equal(1, CountLocalAccess(comparator, instructions, transactionOrderLocal, 1));
+		Assert.Equal(2, CountLocalAccess(comparator, instructions, transactionOrderLocal, 0));
+		Assert.Equal(0, CountLocalAccess(comparator, instructions, transactionOrderLocal, 2));
+		Assert.True(flow.Successors[transactionGuard.Offset].SetEquals(
+			new[] { instructions[13].Offset, transactionResultOffset }));
+		if (instructions.Length == 25)
+		{
+			Assert.Equal(OpCodes.Ret, instructions[22].OpCode);
+			Assert.Equal(OpCodes.Ret, instructions[24].OpCode);
+			AssertExactLinearNopPath(flow, instructions[21].Offset, instructions[22].Offset);
+			AssertExactLinearNopPath(flow, instructions[23].Offset, instructions[24].Offset);
+		}
+		else
+		{
+			Assert.Equal(FlowControl.Branch, instructions[22].OpCode.FlowControl);
+			Assert.Equal(FlowControl.Branch, instructions[25].OpCode.FlowControl);
+			int resultStoreOffset = Assert.Single(
+				GetBranchTargets(instructions[22], comparatorIl));
+			Assert.Equal(instructions[24].Offset, resultStoreOffset);
+			int resultLocal = Assert.IsType<int>(
+				GetStoredLocalIndex(comparator, instructions[24]));
+			Assert.Equal(
+				typeof(int),
+				comparator.GetMethodBody()?.LocalVariables[resultLocal].LocalType);
+			Assert.Equal(resultLocal, GetLoadedLocalIndex(comparator, instructions[26]));
+			Assert.Equal(OpCodes.Ret, instructions[27].OpCode);
+			Assert.Equal(
+				instructions[26].Offset,
+				Assert.Single(GetBranchTargets(instructions[25], comparatorIl)));
+			Assert.Equal(instructions[24].Offset, Assert.Single(flow.Successors[instructions[23].Offset]));
+			Assert.Equal(1, CountLocalAccess(comparator, instructions, resultLocal, 1));
+			Assert.Equal(1, CountLocalAccess(comparator, instructions, resultLocal, 0));
+			Assert.Equal(0, CountLocalAccess(comparator, instructions, resultLocal, 2));
+			AssertExactLinearNopPath(flow, instructions[21].Offset, instructions[22].Offset);
+			AssertExactLinearNopPath(flow, instructions[24].Offset, instructions[25].Offset);
+			AssertExactLinearNopPath(flow, instructions[26].Offset, instructions[27].Offset);
+		}
 	}
 
 	private static HashSet<string> GetSelectedCoinControlStateManifest()
@@ -3330,6 +3504,18 @@ public class LiquidWalletCoinControlTests
 			method.IsGenericMethod ? method.GetGenericArguments() : null);
 	}
 
+	private static string? ResolveInstructionString(
+		MethodBase method,
+		(int Offset, OpCode OpCode, int OperandOffset, int OperandSize) instruction)
+	{
+		if (instruction.OpCode != OpCodes.Ldstr)
+		{
+			return null;
+		}
+		byte[] il = method.GetMethodBody()?.GetILAsByteArray() ?? [];
+		return method.Module.ResolveString(BitConverter.ToInt32(il, instruction.OperandOffset));
+	}
+
 	private static int? GetStoredLocalIndex(
 		MethodBase method,
 		(int Offset, OpCode OpCode, int OperandOffset, int OperandSize) instruction) =>
@@ -3457,7 +3643,8 @@ public class LiquidWalletCoinControlTests
 			IReadOnlyList<(int Offset, OpCode OpCode, int OperandOffset, int OperandSize)> Instructions,
 			IReadOnlyDictionary<int, HashSet<int>> Successors,
 			IReadOnlySet<int> ReachableOffsets)> graphFlows,
-		MethodInfo validator)
+		MethodInfo validator,
+		MethodInfo comparator)
 	{
 		var cyclicMethods = new List<MethodBase>();
 		foreach ((MethodBase method, var flow) in graphFlows)
@@ -3499,6 +3686,7 @@ public class LiquidWalletCoinControlTests
 			Assert.Contains(length.Offset, loop);
 			AssertValidatorLoopBoundedByEntriesLength(
 				validator,
+				comparator,
 				flow,
 				loop,
 				backEdge,
@@ -3510,6 +3698,7 @@ public class LiquidWalletCoinControlTests
 
 	private static void AssertValidatorLoopBoundedByEntriesLength(
 		MethodInfo validator,
+		MethodInfo comparator,
 		(
 			IReadOnlyList<(int Offset, OpCode OpCode, int OperandOffset, int OperandSize)> Instructions,
 			IReadOnlyDictionary<int, HashSet<int>> Successors,
@@ -3537,6 +3726,8 @@ public class LiquidWalletCoinControlTests
 			}
 		}
 		Assert.Contains(instructions[elementLoadPosition - 2].Offset, loop);
+		int firstBodyOffset = instructions[elementLoadPosition - 2].Offset;
+		var returned = GetSingleInstruction(instructions, OpCodes.Ret);
 
 		var indexStores = new List<(int Offset, OpCode OpCode, int OperandOffset, int OperandSize)>();
 		foreach (var instruction in instructions)
@@ -3550,7 +3741,6 @@ public class LiquidWalletCoinControlTests
 		int initializationPosition = FindInstructionPosition(instructions, indexStores[0].Offset);
 		Assert.Equal(0, GetInt32Constant(validator, instructions[initializationPosition - 1]));
 		Assert.DoesNotContain(indexStores[0].Offset, loop);
-		int firstBodyOffset = instructions[elementLoadPosition - 2].Offset;
 		AssertDominates(flow, indexStores[0].Offset, firstBodyOffset);
 		AssertDominates(flow, indexStores[0].Offset, backEdge.Source);
 		Assert.Equal(
@@ -3565,25 +3755,450 @@ public class LiquidWalletCoinControlTests
 		Assert.Equal(1, GetInt32Constant(validator, instructions[incrementPosition - 2]));
 		Assert.Equal(OpCodes.Add, instructions[incrementPosition - 1].OpCode);
 		Assert.Contains(indexStores[1].Offset, loop);
-		for (int position = incrementPosition - 3; position < incrementPosition; position++)
+		var incrementStart = instructions[incrementPosition - 3];
+		var incrementConstant = instructions[incrementPosition - 2];
+		var incrementAdd = instructions[incrementPosition - 1];
+		var incrementStore = indexStores[1];
+
+		(int EntryLoadOffset, int CompletedStoreOffset, int EntryLocal, int PreviousLocal)?
+			completedCopyMatch = null;
+		for (int position = 0; position + 1 < instructions.Length; position++)
 		{
-			Assert.Equal(
-				[instructions[position + 1].Offset],
-				flow.Successors[instructions[position].Offset]);
-			Assert.Equal(
-				[instructions[position].Offset],
-				GetPredecessors(flow, instructions[position + 1].Offset));
+			int? loadedLocal = GetLoadedLocalIndex(validator, instructions[position]);
+			int? storedLocal = GetStoredLocalIndex(validator, instructions[position + 1]);
+			if (loadedLocal is null || storedLocal is null || loadedLocal == storedLocal ||
+				validator.GetMethodBody()?.LocalVariables[loadedLocal.Value].LocalType !=
+					typeof(LiquidWalletCoinControlEntry) ||
+				validator.GetMethodBody()?.LocalVariables[storedLocal.Value].LocalType !=
+					typeof(LiquidWalletCoinControlEntry))
+			{
+				continue;
+			}
+
+			Assert.Null(completedCopyMatch);
+			completedCopyMatch = (
+				instructions[position].Offset,
+				instructions[position + 1].Offset,
+				loadedLocal.Value,
+				storedLocal.Value);
 		}
+		var completedCopy = Assert.IsType<(
+			int EntryLoadOffset,
+			int CompletedStoreOffset,
+			int EntryLocal,
+			int PreviousLocal)>(completedCopyMatch);
+		Assert.NotEqual(completedCopy.EntryLocal, completedCopy.PreviousLocal);
+		Assert.Contains(completedCopy.EntryLoadOffset, loop);
+		Assert.Contains(completedCopy.CompletedStoreOffset, loop);
+		Assert.True(elementLoad.Offset < completedCopy.EntryLoadOffset);
+		Assert.True(completedCopy.CompletedStoreOffset < incrementStart.Offset);
+
+		var previousStores = new List<(
+			int Offset,
+			OpCode OpCode,
+			int OperandOffset,
+			int OperandSize)>();
+		var entryStores = new List<(
+			int Offset,
+			OpCode OpCode,
+			int OperandOffset,
+			int OperandSize)>();
+		foreach (var instruction in instructions)
+		{
+			int? storedLocal = GetStoredLocalIndex(validator, instruction);
+			if (storedLocal == completedCopy.PreviousLocal)
+			{
+				previousStores.Add(instruction);
+			}
+			if (storedLocal == completedCopy.EntryLocal)
+			{
+				entryStores.Add(instruction);
+			}
+		}
+		Assert.Equal(2, previousStores.Count);
+		Assert.Single(entryStores);
+		var entryStore = entryStores[0];
+		Assert.True(previousStores[0].Offset < firstBodyOffset);
+		Assert.DoesNotContain(previousStores[0].Offset, loop);
+		Assert.Equal(completedCopy.CompletedStoreOffset, previousStores[1].Offset);
+		Assert.Contains(entryStore.Offset, loop);
+		Assert.True(elementLoad.Offset < entryStore.Offset);
+		Assert.True(entryStore.Offset < completedCopy.EntryLoadOffset);
+		int previousInitializationPosition = FindInstructionPosition(
+			instructions,
+			previousStores[0].Offset);
+		Assert.True(previousInitializationPosition > 0);
+		Assert.Equal(OpCodes.Ldnull, instructions[previousInitializationPosition - 1].OpCode);
+		Assert.Equal(
+			0,
+			CountLocalAccess(
+				validator,
+				instructions,
+				completedCopy.PreviousLocal,
+				2));
+		Assert.Equal(
+			0,
+			CountLocalAccess(
+				validator,
+				instructions,
+				completedCopy.EntryLocal,
+				2));
+
+		AssertExactLinearNopPath(
+			flow,
+			instructions[previousInitializationPosition - 1].Offset,
+			previousStores[0].Offset);
+		AssertExactLinearNopPath(
+			flow,
+			instructions[elementLoadPosition - 2].Offset,
+			instructions[elementLoadPosition - 1].Offset);
+		AssertExactLinearNopPath(
+			flow,
+			instructions[elementLoadPosition - 1].Offset,
+			elementLoad.Offset);
+		var elementDuplicate = instructions[elementLoadPosition + 1];
+		var nullEntryGuard = instructions[elementLoadPosition + 2];
+		Assert.Equal(OpCodes.Dup, elementDuplicate.OpCode);
+		Assert.True(IsBooleanConditionalBranch(nullEntryGuard.OpCode));
+		Assert.True(BranchesOnTrue(nullEntryGuard.OpCode));
+		AssertExactLinearNopPath(flow, elementLoad.Offset, elementDuplicate.Offset);
+		AssertExactLinearNopPath(flow, elementDuplicate.Offset, nullEntryGuard.Offset);
+		byte[] validatorIl = validator.GetMethodBody()?.GetILAsByteArray() ?? [];
+		Assert.Equal(
+			entryStore.Offset,
+			Assert.Single(GetBranchTargets(nullEntryGuard, validatorIl)));
+		Assert.Equal(nullEntryGuard.Offset, Assert.Single(GetPredecessors(flow, entryStore.Offset)));
+		Assert.Equal(OpCodes.Pop, instructions[elementLoadPosition + 3].OpCode);
+
+		AssertExactLinearNopPath(
+			flow,
+			completedCopy.EntryLoadOffset,
+			completedCopy.CompletedStoreOffset);
+		AssertExactLinearNopPath(
+			flow,
+			completedCopy.CompletedStoreOffset,
+			incrementStart.Offset);
+		AssertExactLinearNopPath(flow, incrementStart.Offset, incrementConstant.Offset);
+		AssertExactLinearNopPath(flow, incrementConstant.Offset, incrementAdd.Offset);
+		AssertExactLinearNopPath(flow, incrementAdd.Offset, incrementStore.Offset);
 		Assert.Equal(0, CountLocalAccess(validator, instructions, indexLocal, 2));
 
-		Assert.True(CanReach(flow, firstBodyOffset, indexStores[1].Offset));
-		Assert.True(CanReach(flow, indexStores[1].Offset, backEdge.Source));
-		var incrementStore = new HashSet<int> { indexStores[1].Offset };
+		int previousNullGuardOffset = -1;
+		int previousNullGuardCount = 0;
+		int comparatorCallOffset = -1;
+		int comparatorCallCount = 0;
+		foreach (var call in GetCalledMethodInstructions(validator))
+		{
+			Assert.True(call.Offset < completedCopy.CompletedStoreOffset);
+			if (call.Method == comparator)
+			{
+				comparatorCallCount++;
+				comparatorCallOffset = call.Offset;
+			}
+		}
+		Assert.Equal(1, comparatorCallCount);
+		int comparatorPosition = FindInstructionPosition(instructions, comparatorCallOffset);
+		Assert.True(comparatorPosition >= 2);
+		Assert.Equal(
+			completedCopy.PreviousLocal,
+			GetLoadedLocalIndex(validator, instructions[comparatorPosition - 2]));
+		Assert.Equal(
+			completedCopy.EntryLocal,
+			GetLoadedLocalIndex(validator, instructions[comparatorPosition - 1]));
+		Assert.True(firstBodyOffset < comparatorCallOffset);
+		Assert.True(comparatorCallOffset < completedCopy.EntryLoadOffset);
+
+		const string CanonicalOrderMessage =
+			"Liquid coin-control snapshot entries must be unique and canonically ordered.";
+		const string EntriesParameterName = "entries";
+		ConstructorInfo argumentExceptionConstructor = RequiredConstructor(
+			typeof(ArgumentException),
+			typeof(string),
+			typeof(string));
+		(int MessageOffset, int ParameterOffset, int AllocationOffset, int ThrowOffset)?
+			canonicalFailureMatch = null;
+		for (int position = 0; position + 3 < instructions.Length; position++)
+		{
+			if (ResolveInstructionString(validator, instructions[position]) != CanonicalOrderMessage ||
+				ResolveInstructionString(validator, instructions[position + 1]) != EntriesParameterName ||
+				instructions[position + 2].OpCode != OpCodes.Newobj ||
+				ResolveInstructionMember(validator, instructions[position + 2]) !=
+					argumentExceptionConstructor ||
+				instructions[position + 3].OpCode != OpCodes.Throw)
+			{
+				continue;
+			}
+
+			Assert.Null(canonicalFailureMatch);
+			canonicalFailureMatch = (
+				instructions[position].Offset,
+				instructions[position + 1].Offset,
+				instructions[position + 2].Offset,
+				instructions[position + 3].Offset);
+		}
+		var canonicalFailure = Assert.IsType<(
+			int MessageOffset,
+			int ParameterOffset,
+			int AllocationOffset,
+			int ThrowOffset)>(canonicalFailureMatch);
+		AssertExactLinearNopPath(
+			flow,
+			canonicalFailure.MessageOffset,
+			canonicalFailure.ParameterOffset);
+		AssertExactLinearNopPath(
+			flow,
+			canonicalFailure.ParameterOffset,
+			canonicalFailure.AllocationOffset);
+		AssertExactLinearNopPath(
+			flow,
+			canonicalFailure.AllocationOffset,
+			canonicalFailure.ThrowOffset);
+		Assert.Equal(
+			canonicalFailure.AllocationOffset,
+			Assert.Single(GetPredecessors(flow, canonicalFailure.ThrowOffset)));
+		Assert.Empty(flow.Successors[canonicalFailure.ThrowOffset]);
+
+		var comparatorZero = instructions[comparatorPosition + 1];
+		Assert.Equal(0, GetInt32Constant(validator, comparatorZero));
+		AssertExactLinearNopPath(flow, comparatorCallOffset, comparatorZero.Offset);
+		int comparatorFailureGuardOffset;
+		int noPreviousCompletionPathOffset;
+		var signedComparison = instructions[comparatorPosition + 2];
+		if (signedComparison.OpCode == OpCodes.Blt || signedComparison.OpCode == OpCodes.Blt_S)
+		{
+			AssertExactLinearNopPath(flow, comparatorZero.Offset, signedComparison.Offset);
+			Assert.Equal(
+				completedCopy.EntryLoadOffset,
+				Assert.Single(GetBranchTargets(signedComparison, validatorIl)));
+			int signedComparisonPosition = FindInstructionPosition(
+				instructions,
+				signedComparison.Offset);
+			Assert.Equal(
+				canonicalFailure.MessageOffset,
+				instructions[signedComparisonPosition + 1].Offset);
+			comparatorFailureGuardOffset = signedComparison.Offset;
+			noPreviousCompletionPathOffset = completedCopy.EntryLoadOffset;
+		}
+		else
+		{
+			Assert.Equal(OpCodes.Clt, signedComparison.OpCode);
+			var inversionZero = instructions[comparatorPosition + 3];
+			var inversion = instructions[comparatorPosition + 4];
+			var predicateTransfer = instructions[comparatorPosition + 5];
+			Assert.Equal(0, GetInt32Constant(validator, inversionZero));
+			Assert.Equal(OpCodes.Ceq, inversion.OpCode);
+			Assert.Equal(FlowControl.Branch, predicateTransfer.OpCode.FlowControl);
+			AssertExactLinearNopPath(flow, comparatorZero.Offset, signedComparison.Offset);
+			AssertExactLinearNopPath(flow, signedComparison.Offset, inversionZero.Offset);
+			AssertExactLinearNopPath(flow, inversionZero.Offset, inversion.Offset);
+			AssertExactLinearNopPath(flow, inversion.Offset, predicateTransfer.Offset);
+			int predicateStoreOffset = Assert.Single(
+				GetBranchTargets(predicateTransfer, validatorIl));
+			int predicateStorePosition = FindInstructionPosition(
+				instructions,
+				predicateStoreOffset);
+			Assert.True(predicateStorePosition > 0);
+			int predicateLocal = Assert.IsType<int>(
+				GetStoredLocalIndex(validator, instructions[predicateStorePosition]));
+			Assert.Equal(
+				typeof(bool),
+				validator.GetMethodBody()?.LocalVariables[predicateLocal].LocalType);
+			Assert.Equal(0, GetInt32Constant(
+				validator,
+				instructions[predicateStorePosition - 1]));
+			Assert.Equal(1, CountLocalAccess(validator, instructions, predicateLocal, 1));
+			Assert.Equal(1, CountLocalAccess(validator, instructions, predicateLocal, 0));
+			Assert.Equal(0, CountLocalAccess(validator, instructions, predicateLocal, 2));
+			var predicateLoad = instructions[predicateStorePosition + 1];
+			var predicateGuard = instructions[predicateStorePosition + 2];
+			Assert.Equal(predicateLocal, GetLoadedLocalIndex(validator, predicateLoad));
+			Assert.True(IsBooleanConditionalBranch(predicateGuard.OpCode));
+			Assert.False(BranchesOnTrue(predicateGuard.OpCode));
+			AssertExactLinearNopPath(flow, predicateStoreOffset, predicateLoad.Offset);
+			AssertExactLinearNopPath(flow, predicateLoad.Offset, predicateGuard.Offset);
+			Assert.Equal(
+				completedCopy.EntryLoadOffset,
+				Assert.Single(GetBranchTargets(predicateGuard, validatorIl)));
+			int predicateGuardPosition = FindInstructionPosition(
+				instructions,
+				predicateGuard.Offset);
+			Assert.Equal(
+				canonicalFailure.MessageOffset,
+				instructions[predicateGuardPosition + 1].Offset);
+			comparatorFailureGuardOffset = predicateGuard.Offset;
+			noPreviousCompletionPathOffset = instructions[predicateStorePosition - 1].Offset;
+			Assert.True(GetPredecessors(flow, completedCopy.EntryLoadOffset).SetEquals(
+				new[] { predicateGuard.Offset }));
+			Assert.True(GetPredecessors(flow, predicateStoreOffset).SetEquals(
+				new[] { predicateTransfer.Offset, noPreviousCompletionPathOffset }));
+			Assert.Equal(
+				predicateStoreOffset,
+				Assert.Single(flow.Successors[noPreviousCompletionPathOffset]));
+		}
+		int? comparatorFailureEdgeMatch = null;
+		foreach (int successor in flow.Successors[comparatorFailureGuardOffset])
+		{
+			if (successor != completedCopy.EntryLoadOffset)
+			{
+				Assert.Null(comparatorFailureEdgeMatch);
+				comparatorFailureEdgeMatch = successor;
+			}
+		}
+		int comparatorFailureEdge = Assert.IsType<int>(comparatorFailureEdgeMatch);
+		Assert.True(flow.Successors[comparatorFailureGuardOffset].SetEquals(
+			new[] { completedCopy.EntryLoadOffset, comparatorFailureEdge }));
+		if (comparatorFailureEdge != canonicalFailure.MessageOffset)
+		{
+			AssertExactLinearNopPath(
+				flow,
+				comparatorFailureEdge,
+				canonicalFailure.MessageOffset);
+		}
+		Assert.True(CanReach(
+			flow,
+			canonicalFailure.MessageOffset,
+			canonicalFailure.AllocationOffset));
+		Assert.True(CanReach(
+			flow,
+			canonicalFailure.MessageOffset,
+			canonicalFailure.ThrowOffset));
+		Assert.False(CanReach(
+			flow,
+			canonicalFailure.MessageOffset,
+			completedCopy.CompletedStoreOffset));
+		Assert.False(CanReach(
+			flow,
+			canonicalFailure.MessageOffset,
+			incrementStart.Offset));
+		Assert.False(CanReach(
+			flow,
+			canonicalFailure.MessageOffset,
+			returned.Offset));
+		var currentIterationExclusion = new HashSet<int> { backEdge.Source };
+		Assert.False(CanReachAvoiding(
+			flow,
+			completedCopy.EntryLoadOffset,
+			canonicalFailure.AllocationOffset,
+			currentIterationExclusion));
+		Assert.False(CanReachAvoiding(
+			flow,
+			completedCopy.EntryLoadOffset,
+			canonicalFailure.ThrowOffset,
+			currentIterationExclusion));
+		Assert.True(CanReach(
+			flow,
+			completedCopy.EntryLoadOffset,
+			completedCopy.CompletedStoreOffset));
+		for (int position = 0; position + 1 < instructions.Length; position++)
+		{
+			if (GetLoadedLocalIndex(validator, instructions[position]) ==
+					completedCopy.PreviousLocal &&
+				instructions[position + 1].OpCode.FlowControl == FlowControl.Cond_Branch)
+			{
+				previousNullGuardCount++;
+				previousNullGuardOffset = instructions[position + 1].Offset;
+			}
+		}
+		Assert.Equal(1, previousNullGuardCount);
+		Assert.True(entryStore.Offset < previousNullGuardOffset);
+		Assert.True(previousNullGuardOffset < comparatorCallOffset);
+		var previousNullGuard = instructions[
+			FindInstructionPosition(instructions, previousNullGuardOffset)];
+		Assert.True(IsBooleanConditionalBranch(previousNullGuard.OpCode));
+		Assert.False(BranchesOnTrue(previousNullGuard.OpCode));
+		Assert.Equal(
+			noPreviousCompletionPathOffset,
+			Assert.Single(GetBranchTargets(previousNullGuard, validatorIl)));
+		Assert.True(flow.Successors[previousNullGuard.Offset].SetEquals(
+			new[]
+			{
+				instructions[comparatorPosition - 2].Offset,
+				noPreviousCompletionPathOffset,
+			}));
+		Assert.True(CanReach(
+			flow,
+			noPreviousCompletionPathOffset,
+			completedCopy.CompletedStoreOffset));
+		if (noPreviousCompletionPathOffset == completedCopy.EntryLoadOffset)
+		{
+			Assert.False(CanReachAvoiding(
+				flow,
+				noPreviousCompletionPathOffset,
+				canonicalFailure.ThrowOffset,
+				currentIterationExclusion));
+			Assert.True(GetPredecessors(flow, completedCopy.EntryLoadOffset).SetEquals(
+				new[] { previousNullGuard.Offset, comparatorFailureGuardOffset }));
+		}
+		Assert.Equal(
+			2,
+			CountLocalAccess(
+				validator,
+				instructions,
+				completedCopy.PreviousLocal,
+				0));
+
+		Assert.True(CanReach(flow, firstBodyOffset, completedCopy.CompletedStoreOffset));
+		Assert.True(CanReach(flow, elementLoad.Offset, completedCopy.CompletedStoreOffset));
+		Assert.True(CanReach(flow, completedCopy.CompletedStoreOffset, incrementStart.Offset));
+		Assert.True(CanReach(flow, incrementStart.Offset, backEdge.Source));
+		var completedStoreExclusion = new HashSet<int> { completedCopy.CompletedStoreOffset };
+		Assert.False(CanReachAvoiding(
+			flow,
+			firstBodyOffset,
+			incrementStart.Offset,
+			completedStoreExclusion));
+		Assert.False(CanReachAvoiding(
+			flow,
+			elementLoad.Offset,
+			backEdge.Source,
+			completedStoreExclusion));
 		Assert.False(CanReachAvoiding(
 			flow,
 			firstBodyOffset,
 			backEdge.Source,
-			incrementStore));
+			completedStoreExclusion));
+		Assert.False(CanReachAvoiding(
+			flow,
+			firstBodyOffset,
+			returned.Offset,
+			completedStoreExclusion));
+		var incrementStoreExclusion = new HashSet<int> { incrementStore.Offset };
+		Assert.False(CanReachAvoiding(
+			flow,
+			completedCopy.CompletedStoreOffset,
+			backEdge.Source,
+			incrementStoreExclusion));
+		Assert.False(CanReachAvoiding(
+			flow,
+			firstBodyOffset,
+			backEdge.Source,
+			incrementStoreExclusion));
+		IReadOnlySet<int> conditionExclusion = currentIterationExclusion;
+		Assert.False(CanReachAvoiding(
+			flow,
+			firstBodyOffset,
+			returned.Offset,
+			conditionExclusion));
+
+		int throwTerminalCount = 0;
+		foreach (var instruction in instructions)
+		{
+			if (instruction.OpCode != OpCodes.Throw && instruction.OpCode != OpCodes.Rethrow)
+			{
+				continue;
+			}
+
+			throwTerminalCount++;
+			Assert.True(CanReach(flow, firstBodyOffset, instruction.Offset));
+			Assert.True(CanReach(flow, elementLoad.Offset, instruction.Offset));
+			Assert.False(CanReachAvoiding(
+				flow,
+				completedCopy.CompletedStoreOffset,
+				instruction.Offset,
+				conditionExclusion));
+			Assert.True(instruction.Offset < completedCopy.CompletedStoreOffset);
+		}
+		Assert.True(throwTerminalCount > 0);
 		int lengthPosition = FindInstructionPosition(instructions, length.Offset);
 		Assert.True(lengthPosition >= 2);
 		Assert.Equal(1, GetLoadedArgumentIndex(validator, instructions[lengthPosition - 1]));
@@ -3631,7 +4246,6 @@ public class LiquidWalletCoinControlTests
 		}
 		Assert.Equal(backEdge.Target, Assert.IsType<int>(backwardTarget));
 		Assert.Equal(3, CountLocalAccess(validator, instructions, indexLocal, 0));
-		var returned = GetSingleInstruction(instructions, OpCodes.Ret);
 		int branchPosition = FindInstructionPosition(instructions, backEdge.Source);
 		Assert.Equal(2, flow.Successors[backEdge.Source].Count);
 		int? falseSuccessorMatch = null;
@@ -3657,6 +4271,31 @@ public class LiquidWalletCoinControlTests
 			}
 		}
 		AssertValidatorArrayArgumentUse(validator, instructions, elementLoad, length);
+	}
+
+	private static void AssertExactLinearNopPath(
+		(
+			IReadOnlyList<(int Offset, OpCode OpCode, int OperandOffset, int OperandSize)> Instructions,
+			IReadOnlyDictionary<int, HashSet<int>> Successors,
+			IReadOnlySet<int> ReachableOffsets) flow,
+		int sourceOffset,
+		int targetOffset)
+	{
+		int sourcePosition = FindInstructionPosition(flow.Instructions, sourceOffset);
+		int targetPosition = FindInstructionPosition(flow.Instructions, targetOffset);
+		Assert.True(sourcePosition >= 0 && targetPosition > sourcePosition);
+		for (int position = sourcePosition; position < targetPosition; position++)
+		{
+			if (position > sourcePosition)
+			{
+				Assert.Equal(OpCodes.Nop, flow.Instructions[position].OpCode);
+			}
+
+			int currentOffset = flow.Instructions[position].Offset;
+			int nextOffset = flow.Instructions[position + 1].Offset;
+			Assert.Equal(nextOffset, Assert.Single(flow.Successors[currentOffset]));
+			Assert.Equal(currentOffset, Assert.Single(GetPredecessors(flow, nextOffset)));
+		}
 	}
 
 	private static void AssertValidatorArrayArgumentUse(
@@ -4418,4 +5057,53 @@ public class LiquidWalletCoinControlTests
 	private static bool IsCapacityMutationOrCallback(MethodBase method) =>
 		method.Name is "EnsureCapacity" or "TrimExcess" or "set_Capacity" ||
 		typeof(Delegate).IsAssignableFrom(method.DeclaringType);
+
+	private static void AssertSnapshotOrderingAccepted(
+		params LiquidWalletCoinControlEntry[] entries)
+	{
+		var ordinary = new LiquidWalletCoinControlSnapshot(PeggedAsset, 0, entries);
+		LiquidWalletCoinControlSnapshot owned =
+			LiquidWalletCoinControlSnapshot.TakeOwnershipFromState(
+				PeggedAsset,
+				0,
+				entries.ToArray());
+		LiquidOutPoint[] expected = entries.Select(entry => entry.OutPoint).ToArray();
+		Assert.Equal(expected, ordinary.GetEntries().Select(entry => entry.OutPoint));
+		Assert.Equal(expected, owned.GetEntries().Select(entry => entry.OutPoint));
+	}
+
+	private static void AssertSnapshotOrderingRejected(
+		params LiquidWalletCoinControlEntry[] entries)
+	{
+		for (int path = 0; path < 2; path++)
+		{
+			Exception? failure = null;
+			try
+			{
+				if (path == 0)
+				{
+					_ = new LiquidWalletCoinControlSnapshot(PeggedAsset, 0, entries);
+				}
+				else
+				{
+					_ = LiquidWalletCoinControlSnapshot.TakeOwnershipFromState(
+						PeggedAsset,
+						0,
+						entries.ToArray());
+				}
+			}
+			catch (Exception exception)
+			{
+				failure = exception;
+			}
+
+			ArgumentException argumentFailure = Assert.IsType<ArgumentException>(failure);
+			Assert.Equal("entries", argumentFailure.ParamName);
+			Assert.Contains(
+				"unique and canonically ordered",
+				argumentFailure.Message,
+				StringComparison.Ordinal);
+			AssertRedacted(argumentFailure, entries);
+		}
+	}
 }
