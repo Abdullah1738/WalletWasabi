@@ -1,6 +1,6 @@
 using NBitcoin;
 
-namespace WalletWasabi.Liquid.Wallet;
+namespace WalletWasabi.Liquid.Cryptography;
 
 internal sealed class LiquidBlindingPublicKey : IEquatable<LiquidBlindingPublicKey>
 {

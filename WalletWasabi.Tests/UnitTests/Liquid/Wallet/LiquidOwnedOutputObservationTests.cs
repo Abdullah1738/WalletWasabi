@@ -3,6 +3,7 @@ using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using WalletWasabi.Liquid.Amounts;
+using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Transactions;
 using WalletWasabi.Liquid.Wallet;
 using Xunit;

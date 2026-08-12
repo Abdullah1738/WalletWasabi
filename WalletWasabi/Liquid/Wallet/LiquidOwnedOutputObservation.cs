@@ -1,4 +1,5 @@
 using WalletWasabi.Liquid.Assets;
+using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Transactions;
 
 namespace WalletWasabi.Liquid.Wallet;

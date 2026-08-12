@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Amounts;
+using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Transactions;
 using WalletWasabi.Liquid.Wallet;
 using Xunit;
