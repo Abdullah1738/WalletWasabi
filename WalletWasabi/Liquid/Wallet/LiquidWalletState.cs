@@ -11,6 +11,47 @@ internal sealed class LiquidWalletState
 		LiquidWalletTransactionDelta Delta,
 		LiquidOwnedOutput[] SpentOutputs);
 
+	private sealed class TransactionEffectTotals
+	{
+		public TransactionEffectTotals(LiquidAssetId assetId)
+		{
+			AssetId = assetId;
+		}
+
+		public LiquidAssetId AssetId { get; }
+		public long SpentAtomicUnits { get; private set; }
+		public long CreatedAtomicUnits { get; private set; }
+
+		public void AddSpent(LiquidAssetAmount amount) =>
+			SpentAtomicUnits = CheckedEffectTotal(SpentAtomicUnits, amount);
+
+		public void AddCreated(LiquidAssetAmount amount) =>
+			CreatedAtomicUnits = CheckedEffectTotal(CreatedAtomicUnits, amount);
+
+		private long CheckedEffectTotal(long current, LiquidAssetAmount amount)
+		{
+			long updated;
+			try
+			{
+				updated = checked(current + amount.AtomicUnits);
+			}
+			catch (OverflowException)
+			{
+				throw new OverflowException(
+					"Liquid wallet transaction effect accumulation exceeded the supported range.");
+			}
+
+			if (AssetId == amount.PeggedAssetId &&
+				updated > LiquidAssetAmount.MaxPeggedAssetAtomicUnits)
+			{
+				throw new OverflowException(
+					"Liquid wallet transaction effect accumulation exceeded the supported range.");
+			}
+
+			return updated;
+		}
+	}
+
 	private sealed class ReplayBuilder
 	{
 		private readonly LiquidAssetId _peggedAssetId;
@@ -423,6 +464,56 @@ internal sealed class LiquidWalletState
 	public LiquidAssetBalanceMap GetBalances() =>
 		LiquidAssetBalanceMap.FromAmounts(PeggedAssetId, _balances.GetAmounts());
 
+	public LiquidWalletTransactionEffectSnapshot GetTransactionEffectSnapshot()
+	{
+		var effects = new LiquidWalletTransactionEffect[_history.Count];
+		for (int historyIndex = 0; historyIndex < _history.Count; historyIndex++)
+		{
+			AppliedDelta applied = _history[historyIndex];
+			var totals = new Dictionary<string, TransactionEffectTotals>(StringComparer.Ordinal);
+			foreach (LiquidOwnedOutput spentOutput in applied.SpentOutputs)
+			{
+				AccumulateTransactionEffectAmount(totals, spentOutput.Amount, isSpent: true);
+			}
+
+			foreach (LiquidOwnedOutput createdOutput in
+				applied.Delta.GetRetainedCreatedOutputsForStateProjection())
+			{
+				AccumulateTransactionEffectAmount(totals, createdOutput.Amount, isSpent: false);
+			}
+
+			var changes = new List<LiquidWalletAssetNetChange>(totals.Count);
+			foreach (TransactionEffectTotals assetTotals in totals.Values)
+			{
+				long netAtomicUnits = assetTotals.CreatedAtomicUnits >= assetTotals.SpentAtomicUnits
+					? assetTotals.CreatedAtomicUnits - assetTotals.SpentAtomicUnits
+					: -(assetTotals.SpentAtomicUnits - assetTotals.CreatedAtomicUnits);
+				if (netAtomicUnits != 0)
+				{
+					changes.Add(LiquidWalletAssetNetChange.Create(
+						assetTotals.AssetId,
+						PeggedAssetId,
+						netAtomicUnits));
+				}
+			}
+
+			changes.Sort(static (left, right) => StringComparer.Ordinal.Compare(
+				left.AssetId.CanonicalRpcHex,
+				right.AssetId.CanonicalRpcHex));
+			_confirmations.TryGetValue(applied.Delta.TransactionId, out LiquidConfirmation? confirmation);
+			effects[historyIndex] = new LiquidWalletTransactionEffect(
+				applied.Delta.TransactionId,
+				PeggedAssetId,
+				confirmation,
+				changes);
+		}
+
+		return LiquidWalletTransactionEffectSnapshot.TakeOwnershipFromState(
+			PeggedAssetId,
+			Revision,
+			effects);
+	}
+
 	public IReadOnlyList<LiquidOwnedOutput> GetUnspentOutputs() =>
 		new ReadOnlyCollection<LiquidOwnedOutput>(
 			_unspentOutputs.Values
@@ -445,6 +536,34 @@ internal sealed class LiquidWalletState
 	}
 
 	public override string ToString() => nameof(LiquidWalletState);
+
+	private void AccumulateTransactionEffectAmount(
+		Dictionary<string, TransactionEffectTotals> totals,
+		LiquidAssetAmount amount,
+		bool isSpent)
+	{
+		if (amount.PeggedAssetId != PeggedAssetId)
+		{
+			throw new InvalidOperationException(
+				"A Liquid wallet transaction effect belongs to a different pegged-asset context.");
+		}
+
+		string key = amount.AssetId.CanonicalRpcHex;
+		if (!totals.TryGetValue(key, out TransactionEffectTotals? assetTotals))
+		{
+			assetTotals = new TransactionEffectTotals(amount.AssetId);
+			totals.Add(key, assetTotals);
+		}
+
+		if (isSpent)
+		{
+			assetTotals.AddSpent(amount);
+		}
+		else
+		{
+			assetTotals.AddCreated(amount);
+		}
+	}
 
 	private void EnsureRevision(ulong expectedRevision)
 	{

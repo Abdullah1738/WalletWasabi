@@ -77,5 +77,13 @@ internal sealed class LiquidWalletTransactionDelta
 	public IReadOnlyList<LiquidOwnedOutput> GetCreatedOutputs() =>
 		new ReadOnlyCollection<LiquidOwnedOutput>([.. _createdOutputs]);
 
+	/// <summary>
+	/// Borrows the immutable retained created-output array for one immediate
+	/// wallet-state projection. The returned span cannot outlive this delta and
+	/// does not grant mutation or ownership of the retained array.
+	/// </summary>
+	internal ReadOnlySpan<LiquidOwnedOutput> GetRetainedCreatedOutputsForStateProjection() =>
+		_createdOutputs;
+
 	public override string ToString() => nameof(LiquidWalletTransactionDelta);
 }
