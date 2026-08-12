@@ -10,6 +10,8 @@ internal enum LiquidKeyBranch : byte
 
 internal sealed class LiquidSpendKeyReference : IEquatable<LiquidSpendKeyReference>
 {
+	internal const uint MaximumIndex = 100_000;
+
 	private readonly byte[] _compressedPublicKey;
 	private readonly byte[] _scriptPubKey;
 
@@ -36,6 +38,12 @@ internal sealed class LiquidSpendKeyReference : IEquatable<LiquidSpendKeyReferen
 		if (!Enum.IsDefined(branch))
 		{
 			throw new ArgumentOutOfRangeException(nameof(branch), "A supported Liquid key branch is required.");
+		}
+		if (index > MaximumIndex)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(index),
+				"A supported normal descriptor derivation index is required.");
 		}
 		if (compressedPublicKey.Length != 33 || compressedPublicKey[0] is not (0x02 or 0x03))
 		{

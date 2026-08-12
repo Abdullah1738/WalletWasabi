@@ -266,6 +266,16 @@ public class LiquidWalletStateTests
 		Assert.Throws<ArgumentException>(() => LiquidSpendKeyReference.Create(new byte[65], LiquidKeyBranch.External, 0));
 		Assert.Throws<ArgumentException>(() => LiquidSpendKeyReference.Create(invalidPoint, LiquidKeyBranch.External, 0));
 		Assert.Throws<ArgumentOutOfRangeException>(() => LiquidSpendKeyReference.Create(valid, (LiquidKeyBranch)2, 0));
+		LiquidSpendKeyReference maximum = LiquidSpendKeyReference.Create(
+			valid,
+			LiquidKeyBranch.External,
+			LiquidSpendKeyReference.MaximumIndex);
+		Assert.Equal(LiquidSpendKeyReference.MaximumIndex, maximum.Index);
+		Assert.Equal(LiquidOwnedOutputObservation.MaxDerivationIndex, LiquidSpendKeyReference.MaximumIndex);
+		Assert.Throws<ArgumentOutOfRangeException>(() => LiquidSpendKeyReference.Create(
+			valid,
+			LiquidKeyBranch.External,
+			LiquidSpendKeyReference.MaximumIndex + 1));
 	}
 
 	[Fact]

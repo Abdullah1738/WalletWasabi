@@ -40,8 +40,8 @@ internal sealed record LiquidWalletReplayConfirmation
 }
 
 /// <summary>
-/// A serialization-free replay description of the journal inputs that derive
-/// one Liquid wallet state. It contains no cached balance or output state and
+/// An in-memory replay description of the journal inputs that derive one
+/// Liquid wallet state. It contains no cached balance or output state and
 /// carries no persistence, chain, confirmation-source, or UTXO authority.
 /// </summary>
 internal sealed class LiquidWalletReplaySnapshot

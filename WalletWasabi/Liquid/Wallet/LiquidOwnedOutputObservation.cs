@@ -11,7 +11,7 @@ namespace WalletWasabi.Liquid.Wallet;
 /// </summary>
 internal sealed class LiquidOwnedOutputObservation : IEquatable<LiquidOwnedOutputObservation>
 {
-	public const uint MaxDerivationIndex = 100_000;
+	public const uint MaxDerivationIndex = LiquidSpendKeyReference.MaximumIndex;
 
 	private readonly LiquidOutPoint _outPoint;
 	private readonly LiquidTransactionWitnessBinding _transactionWitnessBinding;
