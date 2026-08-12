@@ -7,6 +7,8 @@ namespace WalletWasabi.Liquid.Wallet;
 
 internal sealed class LiquidWalletState
 {
+	public const int MaximumQueriedAssetCount = 256;
+
 	private sealed record AppliedDelta(
 		LiquidWalletTransactionDelta Delta,
 		LiquidOwnedOutput[] SpentOutputs);
@@ -477,6 +479,55 @@ internal sealed class LiquidWalletState
 			copiedAssetId,
 			copiedPeggedAssetId,
 			balance.AtomicUnits);
+	}
+
+	public LiquidWalletAssetBalanceQueryResult QueryAssetBalances(
+		ulong expectedRevision,
+		IReadOnlyList<LiquidAssetId> assetIds)
+	{
+		EnsureRevision(expectedRevision);
+		ArgumentNullException.ThrowIfNull(assetIds);
+
+		int count = assetIds.Count;
+		if (count is < 1 or > MaximumQueriedAssetCount)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(assetIds),
+				null,
+				"The Liquid asset balance query could not be accepted.");
+		}
+
+		var capturedAssetIds = new LiquidAssetId[count];
+		for (int index = 0; index < capturedAssetIds.Length; index++)
+		{
+			capturedAssetIds[index] = assetIds[index];
+		}
+
+		for (int index = 0; index < capturedAssetIds.Length; index++)
+		{
+			if (capturedAssetIds[index] is null)
+			{
+				throw new ArgumentException(
+					"The Liquid asset balance query could not be accepted.",
+					nameof(assetIds));
+			}
+		}
+
+		var amounts = new LiquidAssetAmount[capturedAssetIds.Length];
+		for (int index = 0; index < amounts.Length; index++)
+		{
+			LiquidAssetId assetId = capturedAssetIds[index];
+			LiquidAssetAmount balance = _balances.GetAmountOrZero(assetId);
+			LiquidAssetId copiedAssetId = LiquidAssetId.ParseConsensusBytes(assetId.ToConsensusBytes());
+			LiquidAssetId copiedPeggedAssetId = LiquidAssetId.ParseConsensusBytes(
+				PeggedAssetId.ToConsensusBytes());
+			amounts[index] = LiquidAssetAmount.Create(
+				copiedAssetId,
+				copiedPeggedAssetId,
+				balance.AtomicUnits);
+		}
+
+		return new LiquidWalletAssetBalanceQueryResult(amounts);
 	}
 
 	public LiquidWalletTransactionEffectSnapshot GetTransactionEffectSnapshot()

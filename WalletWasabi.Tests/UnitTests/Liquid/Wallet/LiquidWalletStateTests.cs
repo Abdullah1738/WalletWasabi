@@ -1,5 +1,7 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -18,9 +20,13 @@ public class LiquidWalletStateTests
 #if DEBUG
 	private const string ExpectedBalanceQueryGraphManifestSha256 =
 		"c80bc7bd948f7f8b4626d68864bea7ac133dffb19ca98a38d06fe1da416a88a5";
+	private const string ExpectedMultiassetBalanceQueryGraphManifestSha256 =
+		"8906ddac369d14a81db00bbedfe28359e1aeef2d0a7a26f2ae1af741c0a86dfc";
 #else
 	private const string ExpectedBalanceQueryGraphManifestSha256 =
 		"93f8974db98e3b4c52a00b4b646ea412b55b70c6fc8efcb7def7d87bdb4b2019";
+	private const string ExpectedMultiassetBalanceQueryGraphManifestSha256 =
+		"b757187abd90aebafd4d29b0394bcf79668b4ef2a267e5ad53f6891609965d26";
 #endif
 
 	private const string PeggedAssetHex = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -33,6 +39,446 @@ public class LiquidWalletStateTests
 	private static LiquidAssetId PeggedAsset => LiquidAssetId.ParseRpcHex(PeggedAssetHex);
 	private static LiquidAssetId IssuedAsset => LiquidAssetId.ParseRpcHex(IssuedAssetHex);
 	private static LiquidSpendKeyReference ExternalKey => Key(LiquidKeyBranch.External, 0);
+
+	[Fact]
+	public void MultiassetBalanceQueryPreservesPositionsAndOwnsEveryDisclosure()
+	{
+		LiquidAssetId peggedQuery = PeggedAsset;
+		LiquidAssetId issuedQuery = IssuedAsset;
+		LiquidAssetId missingQuery = Asset(3);
+		LiquidTransactionId transactionId = Tx('9');
+		LiquidOwnedOutput peggedOutput = Output(transactionId, 0, peggedQuery, 12_345_678);
+		LiquidOwnedOutput issuedOutput = Output(transactionId, 1, issuedQuery, 23_456_789);
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset).Apply(
+			0,
+			Delta(transactionId, [], [peggedOutput, issuedOutput]));
+		LiquidAssetId[] requested = [issuedQuery, missingQuery, peggedQuery, issuedQuery];
+
+		LiquidWalletAssetBalanceQueryResult first = state.QueryAssetBalances(1, requested);
+		LiquidWalletAssetBalanceQueryResult second = state.QueryAssetBalances(1, requested);
+
+		Assert.Equal(4, first.Count);
+		Assert.Equal(
+			new[] { IssuedAssetHex, Asset(3).CanonicalRpcHex, PeggedAssetHex, IssuedAssetHex },
+			first.Select(amount => amount.AssetId.CanonicalRpcHex));
+		AssertFreshBalance(first[0], issuedQuery, state.PeggedAssetId, 23_456_789);
+		AssertFreshBalance(first[1], missingQuery, state.PeggedAssetId, 0);
+		AssertFreshBalance(first[2], peggedQuery, state.PeggedAssetId, 12_345_678);
+		AssertFreshBalance(first[3], issuedQuery, state.PeggedAssetId, 23_456_789);
+		AssertEqualIndependentResults(first[0], first[3]);
+		Assert.NotSame(first, second);
+		for (int index = 0; index < first.Count; index++)
+		{
+			AssertEqualIndependentResults(first[index], second[index]);
+			Assert.NotSame(requested[index], first[index].AssetId);
+		}
+
+		Assert.NotSame(issuedOutput.Amount, first[0]);
+		Assert.NotSame(issuedOutput.Amount.AssetId, first[0].AssetId);
+		Assert.NotSame(peggedOutput.Amount, first[2]);
+		Assert.NotSame(peggedOutput.Amount.PeggedAssetId, first[2].PeggedAssetId);
+	}
+
+	[Fact]
+	public void MultiassetBalanceQueryUsesOneBoundedIndexedSnapshot()
+	{
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
+		var one = new IndexedAssetList([IssuedAsset]);
+
+		LiquidWalletAssetBalanceQueryResult accepted = state.QueryAssetBalances(0, one);
+
+		Assert.Single(accepted);
+		Assert.Equal(1, one.CountReads);
+		Assert.Equal([0], one.IndexReads);
+		Assert.Equal(0, one.EnumerationRequests);
+
+		var maximum = new IndexedAssetList(
+			Enumerable.Range(1, LiquidWalletState.MaximumQueriedAssetCount)
+				.Select(index => Asset((uint)index))
+				.ToArray());
+		Assert.Equal(
+			LiquidWalletState.MaximumQueriedAssetCount,
+			state.QueryAssetBalances(0, maximum).Count);
+		Assert.Equal(1, maximum.CountReads);
+		Assert.Equal(Enumerable.Range(0, LiquidWalletState.MaximumQueriedAssetCount), maximum.IndexReads);
+		Assert.Equal(0, maximum.EnumerationRequests);
+
+		var empty = new IndexedAssetList([]);
+		ArgumentOutOfRangeException emptyFailure = Assert.Throws<ArgumentOutOfRangeException>(() =>
+			state.QueryAssetBalances(0, empty));
+		Assert.Equal("assetIds", emptyFailure.ParamName);
+		Assert.Null(emptyFailure.ActualValue);
+		Assert.Equal(1, empty.CountReads);
+		Assert.Empty(empty.IndexReads);
+
+		var tooLarge = new IndexedAssetList(
+			Enumerable.Repeat(
+				IssuedAsset,
+				LiquidWalletState.MaximumQueriedAssetCount + 1).ToArray());
+		ArgumentOutOfRangeException largeFailure = Assert.Throws<ArgumentOutOfRangeException>(() =>
+			state.QueryAssetBalances(0, tooLarge));
+		Assert.Equal("assetIds", largeFailure.ParamName);
+		Assert.Null(largeFailure.ActualValue);
+		Assert.Equal(1, tooLarge.CountReads);
+		Assert.Empty(tooLarge.IndexReads);
+	}
+
+	[Fact]
+	public void MultiassetBalanceQueryValidatesRevisionBeforeInspectingRequest()
+	{
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
+		const string HostileRenderingCanary = "private-stale-request-canary-482017";
+		var hostile = new IndexedAssetList(
+			[IssuedAsset],
+			throwOnCount: true,
+			renderingCanary: HostileRenderingCanary);
+
+		InvalidOperationException failure = Assert.Throws<InvalidOperationException>(() =>
+			state.QueryAssetBalances(1, hostile));
+
+		Assert.Equal(
+			"The Liquid wallet state revision changed before the requested transition.",
+			failure.Message);
+		Assert.Equal(0, hostile.CountReads);
+		Assert.Empty(hostile.IndexReads);
+		Assert.Equal(0, hostile.EnumerationRequests);
+		AssertOwnedPrivateFailure(
+			failure,
+			"The Liquid wallet state revision changed before the requested transition.",
+			[hostile, IssuedAsset],
+			[HostileRenderingCanary]);
+	}
+
+	[Theory]
+	[InlineData(0)]
+	[InlineData(1)]
+	[InlineData(2)]
+	public void MultiassetBalanceQueryRejectsNullMembersBeforeResults(int nullIndex)
+	{
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
+		LiquidAssetId[] values = [IssuedAsset, Asset(3), PeggedAsset];
+		values[nullIndex] = null!;
+		string indexCanary = $"private-null-index-{nullIndex}-canary";
+		var request = new IndexedAssetList(values, renderingCanary: indexCanary);
+
+		ArgumentException failure = Assert.Throws<ArgumentException>(() =>
+			state.QueryAssetBalances(0, request));
+
+		Assert.Equal("assetIds", failure.ParamName);
+		Assert.Equal(1, request.CountReads);
+		Assert.Equal([0, 1, 2], request.IndexReads);
+		Assert.Equal(0, request.EnumerationRequests);
+		AssertOwnedPrivateFailure(
+			failure,
+			"The Liquid asset balance query could not be accepted. (Parameter 'assetIds')",
+			[request, .. values.Where(value => value is not null)],
+			[indexCanary]);
+	}
+
+	[Fact]
+	public void MultiassetBalanceQueryOwnedFailuresAreOpaqueAndRetainNoInputs()
+	{
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
+		const string RequestRenderingCanary = "private-request-rendering-canary-804193";
+		LiquidAssetId canary = LiquidAssetId.ParseRpcHex(
+			"7392517392517392517392517392517392517392517392517392517392517392");
+
+		ArgumentNullException nullRequest = Assert.Throws<ArgumentNullException>(() =>
+			state.QueryAssetBalances(0, null!));
+		Assert.Equal("assetIds", nullRequest.ParamName);
+		AssertOwnedPrivateFailure(
+			nullRequest,
+			"Value cannot be null. (Parameter 'assetIds')",
+			[],
+			[RequestRenderingCanary]);
+
+		const string EmptyCountCanary = "request-count-canary-zero";
+		var empty = new IndexedAssetList(
+			[],
+			renderingCanary: $"{RequestRenderingCanary}|{EmptyCountCanary}");
+		ArgumentOutOfRangeException emptyFailure = Assert.Throws<ArgumentOutOfRangeException>(() =>
+			state.QueryAssetBalances(0, empty));
+		Assert.Equal("assetIds", emptyFailure.ParamName);
+		AssertOwnedPrivateFailure(
+			emptyFailure,
+			"The Liquid asset balance query could not be accepted. (Parameter 'assetIds')",
+			[empty],
+			[RequestRenderingCanary, EmptyCountCanary]);
+
+		LiquidAssetId[] largeValues = Enumerable.Repeat(
+			canary,
+			LiquidWalletState.MaximumQueriedAssetCount + 1).ToArray();
+		const string LargeCountCanary = "request-count-canary-257";
+		var large = new IndexedAssetList(
+			largeValues,
+			renderingCanary: $"{RequestRenderingCanary}|{LargeCountCanary}");
+		ArgumentOutOfRangeException largeFailure = Assert.Throws<ArgumentOutOfRangeException>(() =>
+			state.QueryAssetBalances(0, large));
+		Assert.Equal("assetIds", largeFailure.ParamName);
+		AssertOwnedPrivateFailure(
+			largeFailure,
+			"The Liquid asset balance query could not be accepted. (Parameter 'assetIds')",
+			[large, canary],
+			[RequestRenderingCanary, LargeCountCanary]);
+
+		LiquidAssetId[] nullValues = [canary, null!];
+		const string NullIndexCanary = "request-index-canary-one";
+		var nullMember = new IndexedAssetList(
+			nullValues,
+			renderingCanary: $"{RequestRenderingCanary}|{NullIndexCanary}");
+		ArgumentException nullMemberFailure = Assert.Throws<ArgumentException>(() =>
+			state.QueryAssetBalances(0, nullMember));
+		Assert.Equal("assetIds", nullMemberFailure.ParamName);
+		AssertOwnedPrivateFailure(
+			nullMemberFailure,
+			"The Liquid asset balance query could not be accepted. (Parameter 'assetIds')",
+			[nullMember, canary],
+			[RequestRenderingCanary, NullIndexCanary]);
+
+		ArgumentNullException nullResult = Assert.Throws<ArgumentNullException>(() =>
+			new LiquidWalletAssetBalanceQueryResult(null!));
+		Assert.Equal("amounts", nullResult.ParamName);
+		AssertOwnedPrivateFailure(
+			nullResult,
+			"Value cannot be null. (Parameter 'amounts')",
+			[],
+			[RequestRenderingCanary]);
+
+		LiquidAssetAmount validAmount = Amount(canary, 57);
+		LiquidAssetAmount[] invalidAmounts = [validAmount, null!];
+		ArgumentException nullResultMember = Assert.Throws<ArgumentException>(() =>
+			new LiquidWalletAssetBalanceQueryResult(invalidAmounts));
+		Assert.Equal("amounts", nullResultMember.ParamName);
+		AssertOwnedPrivateFailure(
+			nullResultMember,
+			"The Liquid asset balance query result could not be accepted. (Parameter 'amounts')",
+			[invalidAmounts, validAmount, canary],
+			[RequestRenderingCanary, "result-index-canary-one"]);
+	}
+
+	[Fact]
+	public void MultiassetBalanceQueryOwnsStorageAndExposesNoMutableCollectionSurface()
+	{
+		LiquidAssetAmount first = Amount(IssuedAsset, 41);
+		LiquidAssetAmount second = Amount(Asset(3), 42);
+		LiquidAssetAmount[] source = [first, second];
+		var result = new LiquidWalletAssetBalanceQueryResult(source);
+
+		source[0] = second;
+		Array.Clear(source);
+
+		Assert.Equal([first, second], result);
+		object boxedResult = result;
+		Type resultType = typeof(LiquidWalletAssetBalanceQueryResult);
+		Assert.True(resultType.IsClass);
+		Assert.True(resultType.IsNotPublic);
+		Assert.True(resultType.IsSealed);
+		Assert.False(resultType.IsAbstract);
+		Assert.False(resultType.IsNested);
+		Assert.Equal(typeof(object), resultType.BaseType);
+
+		ConstructorInfo resultConstructor = Assert.Single(resultType.GetConstructors(
+			BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance |
+			BindingFlags.Static | BindingFlags.DeclaredOnly));
+		Assert.Equal(
+			MethodAttributes.Assembly | MethodAttributes.HideBySig |
+				MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
+			resultConstructor.Attributes);
+		Assert.False(resultConstructor.IsStatic);
+		Assert.Equal(
+			[typeof(LiquidAssetAmount[])],
+			resultConstructor.GetParameters().Select(parameter => parameter.ParameterType));
+
+		FieldInfo amountsField = Assert.Single(resultType.GetFields(
+			BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance |
+			BindingFlags.Static | BindingFlags.DeclaredOnly));
+		Assert.Equal("_amounts", amountsField.Name);
+		Assert.Equal(typeof(LiquidAssetAmount[]), amountsField.FieldType);
+		Assert.Equal(FieldAttributes.Private | FieldAttributes.InitOnly, amountsField.Attributes);
+
+		Assert.False(boxedResult is IList);
+		Assert.False(boxedResult is ICollection);
+		Assert.False(boxedResult is IList<LiquidAssetAmount>);
+		Assert.False(boxedResult is ICollection<LiquidAssetAmount>);
+		Assert.Equal(
+			new[]
+			{
+				typeof(IEnumerable<LiquidAssetAmount>),
+				typeof(IReadOnlyCollection<LiquidAssetAmount>),
+				typeof(IReadOnlyList<LiquidAssetAmount>),
+				typeof(IEnumerable),
+			},
+			resultType.GetInterfaces()
+				.OrderBy(type => type.FullName, StringComparer.Ordinal));
+		Assert.Empty(resultType.GetFields(
+			BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static));
+		Assert.Equal(
+			[
+				"GetEnumerator()->System.Collections.Generic.IEnumerator`1[[WalletWasabi.Liquid.Amounts.LiquidAssetAmount, WalletWasabi, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]]",
+				"System.Collections.IEnumerable.GetEnumerator()->System.Collections.IEnumerator",
+				"ToString()->System.String",
+				"get_Count()->System.Int32",
+				"get_Item(System.Int32)->WalletWasabi.Liquid.Amounts.LiquidAssetAmount",
+			],
+			resultType.GetMethods(
+				BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance |
+				BindingFlags.Static | BindingFlags.DeclaredOnly)
+				.Select(method =>
+				{
+					string parameters = string.Join(",", method.GetParameters()
+						.Select(parameter => parameter.ParameterType.FullName));
+					return $"{method.Name}({parameters})->{method.ReturnType.FullName}";
+				})
+				.OrderBy(value => value, StringComparer.Ordinal));
+		Assert.DoesNotContain(
+			resultType.GetProperties(
+				BindingFlags.Public | BindingFlags.Instance),
+			property => property.PropertyType.IsArray ||
+				property.PropertyType.IsGenericType &&
+				(property.PropertyType.GetGenericTypeDefinition() == typeof(Memory<>) ||
+				 property.PropertyType.GetGenericTypeDefinition() == typeof(ReadOnlyMemory<>)));
+		Assert.Equal(nameof(LiquidWalletAssetBalanceQueryResult), result.ToString());
+		Assert.Equal([first, second], result.ToArray());
+
+		IEnumerator<LiquidAssetAmount> genericEnumerator = result.GetEnumerator();
+		IEnumerator nonGenericEnumerator = ((IEnumerable)result).GetEnumerator();
+		AssertEnumeratorCannotExposeOrMutateStorage(genericEnumerator, [first, second]);
+		AssertEnumeratorCannotExposeOrMutateStorage(nonGenericEnumerator, [first, second]);
+		Assert.Equal([first, second], result);
+	}
+
+	[Fact]
+	public void MultiassetBalanceQueryTracksTransitionsAndReplayWithoutMutation()
+	{
+		LiquidTransactionId receiveId = Tx('8');
+		LiquidOwnedOutput issued = Output(receiveId, 0, IssuedAsset, 77);
+		LiquidOwnedOutput pegged = Output(receiveId, 1, PeggedAsset, 88);
+		LiquidWalletState received = LiquidWalletState.Empty(PeggedAsset).Apply(
+			0,
+			Delta(receiveId, [], [issued, pegged]));
+		LiquidAssetId[] requested = [IssuedAsset, PeggedAsset, Asset(3)];
+		LiquidWalletReplaySnapshot replayBefore = received.ExportReplaySnapshot();
+		LiquidAssetAmount[] balancesBefore = received.GetBalances().GetAmounts().ToArray();
+		LiquidWalletCoinControlSnapshot coinControlBefore = received.GetCoinControlSnapshot();
+		string[] effectsBefore = TransactionEffectRows(received);
+		LiquidWalletAssetBalanceQueryResult before = received.QueryAssetBalances(1, requested);
+		LiquidAssetAmount[] beforeValues = before.ToArray();
+
+		LiquidWalletReplaySnapshot replayAfter = received.ExportReplaySnapshot();
+		AssertReplayEquivalent(replayBefore, replayAfter);
+		Assert.Equal(balancesBefore, received.GetBalances().GetAmounts());
+		AssertCoinControlEquivalent(coinControlBefore, received.GetCoinControlSnapshot());
+		Assert.Equal(effectsBefore, TransactionEffectRows(received));
+		AssertQueryResultUnchanged(before, beforeValues);
+
+		LiquidConfirmation confirmation = LiquidConfirmation.Create(BlockHash, 51);
+		LiquidWalletState confirmed = received.Confirm(1, receiveId, confirmation);
+		LiquidWalletAssetBalanceQueryResult afterConfirmation = confirmed.QueryAssetBalances(2, requested);
+		AssertEqualIndependentResults(before, afterConfirmation);
+		LiquidWalletState unconfirmed = confirmed.Unconfirm(2, receiveId, confirmation);
+		AssertEqualIndependentResults(
+			afterConfirmation,
+			unconfirmed.QueryAssetBalances(3, requested));
+
+		LiquidTransactionId unrelatedId = Tx('6');
+		LiquidOwnedOutput unrelatedOutput = Output(unrelatedId, 0, Asset(4), 99);
+		LiquidWalletState unrelated = unconfirmed.Apply(
+			3,
+			Delta(unrelatedId, [], [unrelatedOutput]));
+		LiquidWalletAssetBalanceQueryResult afterUnrelated = unrelated.QueryAssetBalances(4, requested);
+		AssertEqualIndependentResults(before, afterUnrelated);
+
+		LiquidTransactionId zeroNetId = Tx('5');
+		LiquidOwnedOutput replacement = Output(zeroNetId, 0, IssuedAsset, 77);
+		LiquidWalletState zeroNet = unrelated.Apply(
+			4,
+			Delta(zeroNetId, [issued.OutPoint], [replacement]));
+		LiquidWalletAssetBalanceQueryResult afterZeroNet = zeroNet.QueryAssetBalances(5, requested);
+		AssertEqualIndependentResults(afterUnrelated, afterZeroNet);
+
+		LiquidWalletState rolledBack = zeroNet.RollbackLast(5, zeroNetId);
+		LiquidWalletAssetBalanceQueryResult afterRollback = rolledBack.QueryAssetBalances(6, requested);
+		AssertEqualIndependentResults(afterZeroNet, afterRollback);
+
+		LiquidTransactionId spendId = Tx('4');
+		LiquidOwnedOutput change = Output(spendId, 0, IssuedAsset, 70);
+		LiquidWalletState spent = rolledBack.Apply(
+			6,
+			Delta(spendId, [issued.OutPoint], [change]));
+		LiquidWalletAssetBalanceQueryResult afterSpend = spent.QueryAssetBalances(7, requested);
+		Assert.Equal([70, 88, 0], afterSpend.Select(amount => amount.AtomicUnits));
+		AssertQueryResultUnchanged(before, beforeValues);
+
+		LiquidWalletState replayed = LiquidWalletState.RestoreReplaySnapshot(
+			received.ExportReplaySnapshot());
+		AssertEqualIndependentResults(before, replayed.QueryAssetBalances(1, requested));
+
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(
+			LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		byte[]? envelope = null;
+		try
+		{
+			LiquidWalletReplayProtectedPayload protectedPayload =
+				LiquidWalletReplayProtectedPayload.Seal(
+					received.ExportReplaySnapshot(),
+					91,
+					key,
+					context);
+			envelope = protectedPayload.GetBytes();
+			LiquidWalletReplayOpenResult opened = protectedPayload.Open(key, context);
+			LiquidWalletState protectedRestored = LiquidWalletState.RestoreReplaySnapshot(
+				opened.Snapshot);
+			Assert.Equal(91ul, opened.Generation);
+			AssertEqualIndependentResults(
+				before,
+				protectedRestored.QueryAssetBalances(1, requested));
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(key);
+			CryptographicOperations.ZeroMemory(context);
+			if (envelope is not null)
+			{
+				CryptographicOperations.ZeroMemory(envelope);
+			}
+		}
+	}
+
+	[Fact]
+	public void MultiassetBalanceQuerySelectsPositionsAcrossManyRetainedAssets()
+	{
+		const int AssetCount = 1_500;
+		LiquidTransactionId transactionId = Tx('7');
+		var outputs = new LiquidOwnedOutput[AssetCount];
+		for (int index = 0; index < outputs.Length; index++)
+		{
+			outputs[index] = Output(transactionId, (uint)index, Asset((uint)index + 1), index + 1);
+		}
+		LiquidWalletState state = LiquidWalletState.RestoreReplaySnapshot(
+			LiquidWalletReplaySnapshot.Create(
+				PeggedAsset,
+				1,
+				[Delta(transactionId, [], outputs)],
+				[]));
+		LiquidAssetId[] requested =
+		[
+			Asset(1),
+			Asset(751),
+			Asset(1_500),
+			Asset(751),
+			Asset(1_501),
+		];
+
+		LiquidWalletAssetBalanceQueryResult result = state.QueryAssetBalances(1, requested);
+
+		Assert.Equal([1, 751, 1_500, 751, 0], result.Select(amount => amount.AtomicUnits));
+		AssertEqualIndependentResults(result[1], result[3]);
+		for (int index = 0; index < result.Count; index++)
+		{
+			AssertFreshBalance(result[index], requested[index], state.PeggedAssetId, result[index].AtomicUnits);
+		}
+	}
 
 	[Fact]
 	public void AppliesIndependentMultiassetReceiveAndSpendAccounting()
@@ -689,6 +1135,233 @@ public class LiquidWalletStateTests
 	}
 
 	[Fact]
+	public void MultiassetBalanceQueryHasClosedBoundedDataflowAndResultSurface()
+	{
+		MethodInfo query = RequiredMethod(
+			typeof(LiquidWalletState),
+			nameof(LiquidWalletState.QueryAssetBalances),
+			typeof(ulong),
+			typeof(IReadOnlyList<LiquidAssetId>));
+		MethodInfo ensureRevision = RequiredMethod(
+			typeof(LiquidWalletState),
+			"EnsureRevision",
+			typeof(ulong));
+		MethodInfo revisionGetter = RequiredPropertyGetter(
+			typeof(LiquidWalletState),
+			nameof(LiquidWalletState.Revision));
+		MethodInfo peggedAssetGetter = RequiredPropertyGetter(
+			typeof(LiquidWalletState),
+			nameof(LiquidWalletState.PeggedAssetId));
+		MethodInfo throwIfNull = RequiredMethod(
+			typeof(ArgumentNullException),
+			nameof(ArgumentNullException.ThrowIfNull),
+			typeof(object),
+			typeof(string));
+		MethodInfo countGetter = RequiredPropertyGetter(
+			typeof(IReadOnlyCollection<LiquidAssetId>),
+			nameof(IReadOnlyCollection<LiquidAssetId>.Count));
+		MethodInfo indexerGetter = RequiredPropertyGetter(
+			typeof(IReadOnlyList<LiquidAssetId>),
+			"Item");
+		ConstructorInfo rangeConstructor = typeof(ArgumentOutOfRangeException).GetConstructor(
+			[typeof(string), typeof(object), typeof(string)])!;
+		ConstructorInfo argumentConstructor = typeof(ArgumentException).GetConstructor(
+			[typeof(string), typeof(string)])!;
+		MethodInfo getAmountOrZero = RequiredMethod(
+			typeof(LiquidAssetBalanceMap),
+			nameof(LiquidAssetBalanceMap.GetAmountOrZero),
+			typeof(LiquidAssetId));
+		MethodInfo toConsensusBytes = RequiredMethod(
+			typeof(LiquidAssetId),
+			nameof(LiquidAssetId.ToConsensusBytes));
+		MethodInfo byteArrayToReadOnlySpan = RequiredMethod(
+			typeof(ReadOnlySpan<byte>),
+			"op_Implicit",
+			typeof(byte[]));
+		MethodInfo parseConsensusBytes = RequiredMethod(
+			typeof(LiquidAssetId),
+			nameof(LiquidAssetId.ParseConsensusBytes),
+			typeof(ReadOnlySpan<byte>),
+			typeof(string));
+		MethodInfo atomicUnitsGetter = RequiredPropertyGetter(
+			typeof(LiquidAssetAmount),
+			nameof(LiquidAssetAmount.AtomicUnits));
+		MethodInfo createAmount = RequiredMethod(
+			typeof(LiquidAssetAmount),
+			nameof(LiquidAssetAmount.Create),
+			typeof(LiquidAssetId),
+			typeof(LiquidAssetId),
+			typeof(long));
+		ConstructorInfo resultConstructor = typeof(LiquidWalletAssetBalanceQueryResult).GetConstructor(
+			BindingFlags.Instance | BindingFlags.NonPublic,
+			binder: null,
+			[typeof(LiquidAssetAmount[])],
+			modifiers: null)!;
+		MethodInfo resultCountGetter = RequiredPropertyGetter(
+			typeof(LiquidWalletAssetBalanceQueryResult),
+			nameof(LiquidWalletAssetBalanceQueryResult.Count));
+		MethodInfo resultIndexerGetter = RequiredPropertyGetter(
+			typeof(LiquidWalletAssetBalanceQueryResult),
+			"Item");
+		MethodInfo genericEnumerator = RequiredMethod(
+			typeof(LiquidWalletAssetBalanceQueryResult),
+			nameof(LiquidWalletAssetBalanceQueryResult.GetEnumerator));
+		MethodInfo nonGenericEnumerator = Assert.Single(
+			typeof(LiquidWalletAssetBalanceQueryResult).GetMethods(
+				BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly),
+			method => method.Name == "System.Collections.IEnumerable.GetEnumerator");
+		MethodInfo toString = RequiredMethod(
+			typeof(LiquidWalletAssetBalanceQueryResult),
+			nameof(LiquidWalletAssetBalanceQueryResult.ToString));
+
+		Assert.Equal(
+			new MethodBase[]
+			{
+				ensureRevision,
+				throwIfNull,
+				countGetter,
+				rangeConstructor,
+				indexerGetter,
+				argumentConstructor,
+				getAmountOrZero,
+				toConsensusBytes,
+				byteArrayToReadOnlySpan,
+				parseConsensusBytes,
+				peggedAssetGetter,
+				toConsensusBytes,
+				byteArrayToReadOnlySpan,
+				parseConsensusBytes,
+				atomicUnitsGetter,
+				createAmount,
+				resultConstructor,
+			},
+			GetReferencedMethods(query));
+		Assert.Equal(
+			[RequiredField(typeof(LiquidWalletState), "_balances")],
+			GetReferencedFields(query));
+		Assert.Equal(
+			2,
+			GetIlInstructions(query).Count(instruction => instruction.OpCode == OpCodes.Newarr));
+		Assert.Empty(query.GetMethodBody()!.ExceptionHandlingClauses);
+		Assert.DoesNotContain(
+			GetIlInstructions(query),
+			instruction => instruction.OpCode is var opCode &&
+				(opCode == OpCodes.Stfld || opCode == OpCodes.Stsfld || opCode == OpCodes.Switch ||
+				 opCode == OpCodes.Calli || opCode == OpCodes.Localloc || IsIndirectWrite(opCode)));
+		AssertFullInputLoopsDominateFirstLookup(query, indexerGetter, argumentConstructor, getAmountOrZero);
+
+		Assert.Equal(
+			new MethodBase[]
+			{
+				typeof(object).GetConstructor(Type.EmptyTypes)!,
+				throwIfNull,
+				argumentConstructor,
+			},
+			GetReferencedMethods(resultConstructor));
+		Assert.Equal(
+			[RequiredField(typeof(LiquidWalletAssetBalanceQueryResult), "_amounts")],
+			GetReferencedFields(resultConstructor));
+		Assert.Equal(
+			1,
+			GetIlInstructions(resultConstructor).Count(instruction => instruction.OpCode == OpCodes.Newarr));
+		Assert.Equal(
+			1,
+			GetIlInstructions(resultConstructor).Count(instruction => instruction.OpCode == OpCodes.Stfld));
+		Assert.Empty(resultConstructor.GetMethodBody()!.ExceptionHandlingClauses);
+
+		FieldInfo amountsField = RequiredField(
+			typeof(LiquidWalletAssetBalanceQueryResult),
+			"_amounts");
+		Assert.Equal([amountsField], GetReferencedFields(resultCountGetter));
+		Assert.Equal([amountsField], GetReferencedFields(resultIndexerGetter));
+		Assert.Equal([amountsField], GetReferencedFields(genericEnumerator));
+		Assert.Empty(GetReferencedFields(nonGenericEnumerator));
+		Assert.Empty(GetReferencedFields(toString));
+		Assert.Empty(GetReferencedMethods(resultCountGetter));
+		Assert.Empty(GetReferencedMethods(resultIndexerGetter));
+		Assert.Single(GetReferencedMethods(genericEnumerator));
+		Assert.Equal([genericEnumerator], GetReferencedMethods(nonGenericEnumerator));
+		Assert.Empty(GetReferencedMethods(toString));
+
+		MethodBase[] resultConstructorCallers = typeof(LiquidWalletState).Assembly.GetTypes()
+			.SelectMany(type => type.GetMethods(
+					BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public |
+					BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+				.Cast<MethodBase>()
+				.Concat(type.GetConstructors(
+					BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public |
+					BindingFlags.NonPublic | BindingFlags.DeclaredOnly)))
+			.Where(method => method.GetMethodBody() is not null &&
+				GetReferencedMethods(method).Contains(resultConstructor))
+			.ToArray();
+		Assert.Equal([query], resultConstructorCallers);
+
+		Assert.Equal(
+			ExpectedMultiassetBalanceQueryGraphManifestSha256,
+			Sha256Utf8(BuildClosedGraphManifest(
+				query,
+				ensureRevision,
+				revisionGetter,
+				resultConstructor,
+				resultCountGetter,
+				resultIndexerGetter,
+				genericEnumerator,
+				nonGenericEnumerator,
+				toString)));
+	}
+
+	[Fact]
+	public void MultiassetBalanceQueryDirectDependencySourcesRemainExact()
+	{
+		string root = FindRepositoryRoot();
+		AssertSourceSha256(
+			root,
+			"WalletWasabi/Liquid/Amounts/LiquidAssetBalanceMap.cs",
+			"c95631f4f642002dd95cc684e549fdc567540d3c2f3ca4b0e5cdfb3f89522acb");
+		AssertSourceSha256(
+			root,
+			"WalletWasabi/Liquid/Amounts/LiquidAssetAmount.cs",
+			"8c3b2a403b8139f1e7bcc0689c8ca3e45499dfdd1364283d739cd40e93e249e4");
+		AssertSourceSha256(
+			root,
+			"WalletWasabi/Liquid/Assets/LiquidAssetId.cs",
+			"806fd6bb70d9b326385eae70f1ec99882aba04d4e0a31f38c6fc6a150266ba2b");
+	}
+
+	[Fact]
+	public void MechanicallyAdjustedSubjectsRemainTokenNormalizedEqualToBase()
+	{
+		string root = FindRepositoryRoot();
+		AssertSourceSha256(
+			root,
+			"WalletWasabi/Liquid/Wallet/LiquidSuppliedConfidentialDestination.cs",
+			"ce73126abb53838790e9254658552641f908fd48ce0504c2bb3fbc7e9fbd65f5");
+		AssertSourceSha256(
+			root,
+			"WalletWasabi/Liquid/Wallet/LiquidSuppliedConfidentialDestinationBatch.cs",
+			"23e5b1017e25ba35be85b012f2faac9cc819f67596e4fba1161569901871661e");
+		AssertSourceSha256(
+			root,
+			"WalletWasabi/Liquid/Wallet/LiquidWalletLabelSet.cs",
+			"e94c502ceaaa54afca0266b092dacf5c88216e1c92586c46a248ef95ab147fe1");
+#if DEBUG
+		Assert.Equal("a7cafd4d5d94c44d87fd9f20a41c3e3d23599f2caecd65c02d657e471bd58cb4", Sha256Utf8(
+			BuildTokenNormalizedTypeManifest(typeof(LiquidSuppliedConfidentialDestination))));
+		Assert.Equal("3b47193e64f9bef4574838a1a214e35535614445f314036074db0f503049c030", Sha256Utf8(
+			BuildTokenNormalizedTypeManifest(typeof(LiquidSuppliedConfidentialDestinationBatch))));
+		Assert.Equal("c3a3d10e56e7efb85d25f751f1e8fb2d4e34650d45b5a5dadb4da247de74fa2b", Sha256Utf8(
+			BuildTokenNormalizedTypeManifest(typeof(LiquidWalletLabelSet))));
+#else
+		Assert.Equal("52a87300c11d118eae8789e66f8f14628aa85fcf550658678ad424b17d3663c9", Sha256Utf8(
+			BuildTokenNormalizedTypeManifest(typeof(LiquidSuppliedConfidentialDestination))));
+		Assert.Equal("fd9305850967d4a9b9f5e67cc0d20db28359604919d6e37ed0b1247d450e0656", Sha256Utf8(
+			BuildTokenNormalizedTypeManifest(typeof(LiquidSuppliedConfidentialDestinationBatch))));
+		Assert.Equal("c036d5f129a882a89ef54c2863ab16c99bfe451828a56c239f0501c0cacce3b3", Sha256Utf8(
+			BuildTokenNormalizedTypeManifest(typeof(LiquidWalletLabelSet))));
+#endif
+	}
+
+	[Fact]
 	public void RedactsWalletFactsFromStringsAndErrors()
 	{
 		LiquidTransactionId transactionId = Tx('a');
@@ -757,6 +1430,20 @@ public class LiquidWalletStateTests
 		IEnumerable<LiquidOwnedOutput> created) =>
 		LiquidWalletTransactionDelta.Create(transactionId, spent, created);
 
+	private static string[] TransactionEffectRows(LiquidWalletState state) =>
+		state.GetTransactionEffectSnapshot().GetEffects()
+			.Select(effect => string.Join(
+				'|',
+				effect.TransactionId.CanonicalRpcHex,
+				effect.PeggedAssetId.CanonicalRpcHex,
+				effect.Confirmation?.CanonicalBlockHash ?? string.Empty,
+				effect.Confirmation?.Height.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+				string.Join(
+					',',
+					effect.GetAssetNetChanges().Select(change =>
+						$"{change.AssetId.CanonicalRpcHex}:{change.NetAtomicUnits}"))))
+			.ToArray();
+
 	private static void AssertFreshBalance(
 		LiquidAssetAmount actual,
 		LiquidAssetId queriedAsset,
@@ -786,6 +1473,264 @@ public class LiquidWalletStateTests
 	{
 		Assert.Equal(first, second);
 		AssertIndependentResults(first, second);
+	}
+
+	private static void AssertEqualIndependentResults(
+		LiquidWalletAssetBalanceQueryResult first,
+		LiquidWalletAssetBalanceQueryResult second)
+	{
+		Assert.NotSame(first, second);
+		Assert.Equal(first.Count, second.Count);
+		for (int index = 0; index < first.Count; index++)
+		{
+			AssertEqualIndependentResults(first[index], second[index]);
+		}
+	}
+
+	private static void AssertEnumeratorCannotExposeOrMutateStorage(
+		IEnumerator enumerator,
+		IReadOnlyList<LiquidAssetAmount> expected)
+	{
+		object boxedEnumerator = enumerator;
+		IEnumerator<LiquidAssetAmount> genericView =
+			Assert.IsAssignableFrom<IEnumerator<LiquidAssetAmount>>(boxedEnumerator);
+		Assert.False(boxedEnumerator.GetType().IsArray);
+		Assert.False(boxedEnumerator is IEnumerable);
+		Assert.False(boxedEnumerator is IList);
+		Assert.False(boxedEnumerator is ICollection);
+		Assert.False(boxedEnumerator is IList<LiquidAssetAmount>);
+		Assert.False(boxedEnumerator is ICollection<LiquidAssetAmount>);
+		Assert.False(boxedEnumerator is List<LiquidAssetAmount>);
+		Assert.False(boxedEnumerator is ArraySegment<LiquidAssetAmount>);
+		Assert.False(boxedEnumerator is Memory<LiquidAssetAmount>);
+		Assert.False(boxedEnumerator is ReadOnlyMemory<LiquidAssetAmount>);
+		Assert.Equal(
+			new[]
+			{
+				typeof(IEnumerator<LiquidAssetAmount>),
+				typeof(IDisposable),
+				typeof(IEnumerator),
+			}.OrderBy(type => type.FullName, StringComparer.Ordinal),
+			boxedEnumerator.GetType().GetInterfaces()
+				.OrderBy(type => type.FullName, StringComparer.Ordinal));
+		Assert.Empty(boxedEnumerator.GetType().GetFields(
+			BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static));
+		Assert.DoesNotContain(
+			boxedEnumerator.GetType().GetProperties(
+				BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static),
+			property => property.Name == "SyncRoot" || IsMutableStorageType(property.PropertyType));
+		Assert.DoesNotContain(
+			boxedEnumerator.GetType().GetMethods(
+				BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static),
+			method => IsMutableStorageType(method.ReturnType) ||
+				method.GetParameters().Any(parameter => parameter.IsOut &&
+					IsMutableStorageType(parameter.ParameterType.GetElementType()!)));
+		foreach (Type interfaceType in boxedEnumerator.GetType().GetInterfaces())
+		{
+			InterfaceMapping map = boxedEnumerator.GetType().GetInterfaceMap(interfaceType);
+			Assert.Equal(map.InterfaceMethods.Length, map.TargetMethods.Length);
+			for (int index = 0; index < map.InterfaceMethods.Length; index++)
+			{
+				MethodInfo interfaceMethod = map.InterfaceMethods[index];
+				MethodInfo targetMethod = map.TargetMethods[index];
+				Assert.True(targetMethod.DeclaringType!.IsAssignableFrom(boxedEnumerator.GetType()));
+				Assert.False(IsMutableStorageType(interfaceMethod.ReturnType));
+				Assert.False(IsMutableStorageType(targetMethod.ReturnType));
+				Assert.DoesNotContain(
+					interfaceMethod.GetParameters().Concat(targetMethod.GetParameters()),
+					parameter => parameter.ParameterType.IsByRef &&
+						IsMutableStorageType(parameter.ParameterType.GetElementType()!));
+			}
+		}
+
+		var observed = new List<LiquidAssetAmount>();
+		while (enumerator.MoveNext())
+		{
+			LiquidAssetAmount current = genericView.Current;
+			Assert.Same(current, Assert.IsType<LiquidAssetAmount>(enumerator.Current));
+			Assert.Same(expected[observed.Count], current);
+			observed.Add(current);
+		}
+		Assert.Equal(expected, observed);
+		Assert.False(enumerator.MoveNext());
+		enumerator.Reset();
+		Assert.True(enumerator.MoveNext());
+		Assert.Same(expected[0], genericView.Current);
+		Assert.Same(genericView.Current, Assert.IsType<LiquidAssetAmount>(enumerator.Current));
+		genericView.Dispose();
+	}
+
+	private static bool IsMutableStorageType(Type type)
+	{
+		Type candidate = type.IsByRef ? type.GetElementType()! : type;
+		if (candidate.IsArray || candidate == typeof(Array) ||
+			type == typeof(IList) || type == typeof(ICollection))
+		{
+			return true;
+		}
+
+		return candidate.IsGenericType &&
+			(candidate.GetGenericTypeDefinition() == typeof(List<>) ||
+			 candidate.GetGenericTypeDefinition() == typeof(IList<>) ||
+			 candidate.GetGenericTypeDefinition() == typeof(ICollection<>) ||
+			 candidate.GetGenericTypeDefinition() == typeof(ArraySegment<>) ||
+			 candidate.GetGenericTypeDefinition() == typeof(Memory<>) ||
+			 candidate.GetGenericTypeDefinition() == typeof(ReadOnlyMemory<>));
+	}
+
+	private static void AssertReplayEquivalent(
+		LiquidWalletReplaySnapshot expected,
+		LiquidWalletReplaySnapshot actual)
+	{
+		Assert.Equal(expected.PeggedAssetId, actual.PeggedAssetId);
+		Assert.Equal(expected.Revision, actual.Revision);
+		IReadOnlyList<LiquidWalletTransactionDelta> expectedDeltas = expected.GetDeltas();
+		IReadOnlyList<LiquidWalletTransactionDelta> actualDeltas = actual.GetDeltas();
+		Assert.Equal(expectedDeltas.Count, actualDeltas.Count);
+		for (int index = 0; index < expectedDeltas.Count; index++)
+		{
+			Assert.Equal(expectedDeltas[index].TransactionId, actualDeltas[index].TransactionId);
+			Assert.Equal(expectedDeltas[index].GetSpentOutPoints(), actualDeltas[index].GetSpentOutPoints());
+			Assert.Equal(expectedDeltas[index].GetCreatedOutputs(), actualDeltas[index].GetCreatedOutputs());
+		}
+		Assert.Equal(expected.GetConfirmations(), actual.GetConfirmations());
+	}
+
+	private static void AssertCoinControlEquivalent(
+		LiquidWalletCoinControlSnapshot expected,
+		LiquidWalletCoinControlSnapshot actual)
+	{
+		Assert.Equal(expected.PeggedAssetId, actual.PeggedAssetId);
+		Assert.Equal(expected.Revision, actual.Revision);
+		IReadOnlyList<LiquidWalletCoinControlEntry> expectedEntries = expected.GetEntries();
+		IReadOnlyList<LiquidWalletCoinControlEntry> actualEntries = actual.GetEntries();
+		Assert.Equal(expectedEntries.Count, actualEntries.Count);
+		for (int index = 0; index < expectedEntries.Count; index++)
+		{
+			Assert.Equal(expectedEntries[index].OutPoint, actualEntries[index].OutPoint);
+			Assert.Equal(expectedEntries[index].Amount, actualEntries[index].Amount);
+			Assert.Equal(expectedEntries[index].PeggedAssetId, actualEntries[index].PeggedAssetId);
+			Assert.Equal(expectedEntries[index].Confirmation, actualEntries[index].Confirmation);
+		}
+	}
+
+	private static void AssertQueryResultUnchanged(
+		LiquidWalletAssetBalanceQueryResult result,
+		IReadOnlyList<LiquidAssetAmount> expected)
+	{
+		Assert.Equal(expected.Count, result.Count);
+		for (int index = 0; index < expected.Count; index++)
+		{
+			Assert.Same(expected[index], result[index]);
+			Assert.Equal(expected[index], result[index]);
+		}
+	}
+
+	private static void AssertOwnedPrivateFailure(
+		Exception failure,
+		string expectedMessage,
+		IReadOnlyList<object> suppliedValues,
+		IReadOnlyList<string> additionalCanaries)
+	{
+		Assert.Equal(expectedMessage, failure.Message);
+		Assert.Null(failure.InnerException);
+		Assert.Empty(failure.Data);
+		var sensitiveText = new List<string>(additionalCanaries);
+		foreach (LiquidAssetId assetId in suppliedValues.OfType<LiquidAssetId>())
+		{
+			sensitiveText.Add(assetId.CanonicalRpcHex);
+			sensitiveText.Add(Convert.ToHexString(assetId.ToConsensusBytes()));
+		}
+		foreach (string canary in sensitiveText)
+		{
+			Assert.DoesNotContain(canary, failure.Message, StringComparison.OrdinalIgnoreCase);
+			Assert.DoesNotContain(canary, failure.ToString(), StringComparison.OrdinalIgnoreCase);
+		}
+
+		if (failure is ArgumentOutOfRangeException rangeFailure)
+		{
+			Assert.Null(rangeFailure.ActualValue);
+		}
+
+		foreach (object? retained in GetDirectExceptionValues(failure))
+		{
+			Assert.DoesNotContain(suppliedValues, supplied => ReferenceEquals(supplied, retained));
+		}
+	}
+
+	private static IEnumerable<object?> GetDirectExceptionValues(Exception failure)
+	{
+		for (Type? type = failure.GetType(); type is not null; type = type.BaseType)
+		{
+			foreach (FieldInfo field in type.GetFields(
+				BindingFlags.Instance | BindingFlags.Public |
+				BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+			{
+				yield return field.GetValue(failure);
+			}
+		}
+
+		foreach (PropertyInfo property in failure.GetType().GetProperties(
+			BindingFlags.Instance | BindingFlags.Public))
+		{
+			if (property.GetMethod is not null && property.GetIndexParameters().Length == 0)
+			{
+				yield return property.GetValue(failure);
+			}
+		}
+	}
+
+	private sealed class IndexedAssetList : IReadOnlyList<LiquidAssetId>
+	{
+		private readonly LiquidAssetId[] _values;
+		private readonly bool _throwOnCount;
+		private readonly string _renderingCanary;
+
+		public IndexedAssetList(
+			LiquidAssetId[] values,
+			bool throwOnCount = false,
+			string renderingCanary = "private-indexed-list-canary-159307")
+		{
+			_values = values;
+			_throwOnCount = throwOnCount;
+			_renderingCanary = renderingCanary;
+		}
+
+		public int Count
+		{
+			get
+			{
+				CountReads++;
+				if (_throwOnCount)
+				{
+					throw new InvalidOperationException("The hostile request count was inspected.");
+				}
+				return _values.Length;
+			}
+		}
+
+		public LiquidAssetId this[int index]
+		{
+			get
+			{
+				IndexReads.Add(index);
+				return _values[index];
+			}
+		}
+
+		public int CountReads { get; private set; }
+		public List<int> IndexReads { get; } = [];
+		public int EnumerationRequests { get; private set; }
+
+		public IEnumerator<LiquidAssetId> GetEnumerator()
+		{
+			EnumerationRequests++;
+			return ((IEnumerable<LiquidAssetId>)_values).GetEnumerator();
+		}
+
+		IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+		public override string ToString() => _renderingCanary;
 	}
 
 	private static void AssertPrivateFailure(Exception failure, LiquidAssetId canaryAsset)
@@ -819,6 +1764,166 @@ public class LiquidWalletStateTests
 				Assert.False(ReferenceEquals(canaryAsset, property.GetValue(failure)));
 			}
 		}
+	}
+
+	private static void AssertFullInputLoopsDominateFirstLookup(
+		MethodInfo query,
+		MethodInfo indexerGetter,
+		ConstructorInfo argumentConstructor,
+		MethodInfo getAmountOrZero)
+	{
+		var instructions = GetIlInstructions(query).ToArray();
+		var lookup = Assert.Single(
+			instructions,
+			instruction => Equals(instruction.Member, getAmountOrZero));
+		var backwardBranches = instructions
+			.Where(instruction =>
+				instruction.Offset < lookup.Offset &&
+				instruction.BranchTarget is int target &&
+				target < instruction.Offset &&
+				IsConditionalControlTransfer(instruction.OpCode))
+			.OrderBy(instruction => instruction.Offset)
+			.ToArray();
+		Assert.Equal(2, backwardBranches.Length);
+
+		var dominators = BuildDominators(instructions);
+		foreach (var branch in backwardBranches)
+		{
+			Assert.Contains(branch.Offset, dominators[lookup.Offset]);
+			Assert.Contains(branch.NextOffset, dominators[lookup.Offset]);
+		}
+
+		int snapshotLoopStart = backwardBranches[0].BranchTarget!.Value;
+		int snapshotLoopEnd = backwardBranches[0].NextOffset;
+		Assert.Single(
+			instructions,
+			instruction => instruction.Offset >= snapshotLoopStart &&
+				instruction.Offset < snapshotLoopEnd &&
+				Equals(instruction.Member, indexerGetter));
+
+		int nullLoopStart = backwardBranches[1].BranchTarget!.Value;
+		int nullLoopEnd = backwardBranches[1].NextOffset;
+		var nullFailureConstruction = Assert.Single(
+			instructions,
+			instruction => instruction.Offset >= nullLoopStart &&
+				instruction.Offset < nullLoopEnd &&
+				Equals(instruction.Member, argumentConstructor));
+		var nullThrow = Assert.Single(
+			instructions,
+			instruction => instruction.Offset == nullFailureConstruction.NextOffset);
+		Assert.Equal(OpCodes.Throw, nullThrow.OpCode);
+		Assert.True(snapshotLoopEnd < nullLoopStart);
+		Assert.True(nullLoopEnd < lookup.Offset);
+	}
+
+	private static Dictionary<int, HashSet<int>> BuildDominators(
+		IReadOnlyList<(
+			int Offset,
+			int NextOffset,
+			OpCode OpCode,
+			MemberInfo? Member,
+			string OperandIdentity,
+			int? BranchTarget)> instructions)
+	{
+		var byOffset = instructions.ToDictionary(instruction => instruction.Offset);
+		var successors = instructions.ToDictionary(
+			instruction => instruction.Offset,
+			instruction =>
+			{
+				var next = new List<int>();
+				if (instruction.OpCode.FlowControl is FlowControl.Return or FlowControl.Throw)
+				{
+					return next;
+				}
+				if (instruction.OpCode.FlowControl == FlowControl.Branch)
+				{
+					next.Add(Assert.IsType<int>(instruction.BranchTarget));
+					return next;
+				}
+				if (instruction.OpCode.FlowControl == FlowControl.Cond_Branch)
+				{
+					next.Add(Assert.IsType<int>(instruction.BranchTarget));
+				}
+				if (byOffset.ContainsKey(instruction.NextOffset))
+				{
+					next.Add(instruction.NextOffset);
+				}
+				return next;
+			});
+		int entry = instructions[0].Offset;
+		var reachable = new HashSet<int> { entry };
+		var pending = new Stack<int>();
+		pending.Push(entry);
+		while (pending.TryPop(out int current))
+		{
+			foreach (int successor in successors[current])
+			{
+				if (reachable.Add(successor))
+				{
+					pending.Push(successor);
+				}
+			}
+		}
+
+		var predecessors = reachable.ToDictionary(offset => offset, _ => new List<int>());
+		foreach (int source in reachable)
+		{
+			foreach (int target in successors[source].Where(reachable.Contains))
+			{
+				predecessors[target].Add(source);
+			}
+		}
+
+		var dominators = reachable.ToDictionary(
+			offset => offset,
+			offset => offset == entry ? new HashSet<int> { entry } : new HashSet<int>(reachable));
+		bool changed;
+		do
+		{
+			changed = false;
+			foreach (int offset in reachable.Where(value => value != entry).Order())
+			{
+				List<int> incoming = predecessors[offset];
+				var updated = incoming.Count == 0
+					? []
+					: new HashSet<int>(dominators[incoming[0]]);
+				foreach (int predecessor in incoming.Skip(1))
+				{
+					updated.IntersectWith(dominators[predecessor]);
+				}
+				updated.Add(offset);
+				if (!updated.SetEquals(dominators[offset]))
+				{
+					dominators[offset] = updated;
+					changed = true;
+				}
+			}
+		}
+		while (changed);
+
+		return dominators;
+	}
+
+	private static string FindRepositoryRoot()
+	{
+		for (DirectoryInfo? directory = new(AppContext.BaseDirectory);
+			directory is not null;
+			directory = directory.Parent)
+		{
+			if (File.Exists(Path.Combine(directory.FullName, "WalletWasabi.slnx")))
+			{
+				return directory.FullName;
+			}
+		}
+
+		throw new DirectoryNotFoundException("The repository root could not be located.");
+	}
+
+	private static void AssertSourceSha256(string root, string relativePath, string expected)
+	{
+		string actual = Convert.ToHexString(SHA256.HashData(
+			File.ReadAllBytes(Path.Combine(root, relativePath)))).ToLowerInvariant();
+		Assert.Equal(expected, actual);
 	}
 
 	private static MethodInfo RequiredMethod(Type type, string name, params Type[] parameterTypes) =>
@@ -923,10 +2028,16 @@ public class LiquidWalletStateTests
 			}
 			foreach (ExceptionHandlingClause clause in body.ExceptionHandlingClauses)
 			{
+				int filterOffset = clause.Flags == ExceptionHandlingClauseOptions.Filter
+					? clause.FilterOffset
+					: -1;
+				Type? catchType = clause.Flags == ExceptionHandlingClauseOptions.Clause
+					? clause.CatchType
+					: null;
 				rows.Add(
 					$"EH|{(int)clause.Flags}|{clause.TryOffset}|{clause.TryLength}|" +
-					$"{clause.HandlerOffset}|{clause.HandlerLength}|{clause.FilterOffset}|" +
-					TypeIdentity(clause.CatchType));
+					$"{clause.HandlerOffset}|{clause.HandlerLength}|{filterOffset}|" +
+					TypeIdentity(catchType));
 			}
 			foreach (var instruction in GetIlInstructions(method))
 			{
@@ -934,6 +2045,40 @@ public class LiquidWalletStateTests
 					$"IL|{instruction.Offset}|{instruction.NextOffset}|{instruction.OpCode.Value}|" +
 					$"{instruction.OpCode.Name}|{instruction.OperandIdentity}");
 			}
+		}
+		return string.Join('\n', rows) + "\n";
+	}
+
+	private static string BuildTokenNormalizedTypeManifest(Type type)
+	{
+		const BindingFlags Declared = BindingFlags.Public | BindingFlags.NonPublic |
+			BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+		var rows = new List<string>
+		{
+			$"TYPE|{TypeIdentity(type)}|{(int)type.Attributes}",
+		};
+		foreach (FieldInfo field in type.GetFields(Declared).OrderBy(field => field.Name, StringComparer.Ordinal))
+		{
+			object? constant = field.IsLiteral ? field.GetRawConstantValue() : null;
+			rows.Add(
+				$"FIELD|{field.Name}|{TypeIdentity(field.FieldType)}|{(int)field.Attributes}|" +
+				$"{constant ?? "null"}");
+		}
+		foreach (PropertyInfo property in type.GetProperties(Declared)
+			.OrderBy(property => property.Name, StringComparer.Ordinal))
+		{
+			rows.Add(
+				$"PROPERTY|{property.Name}|{TypeIdentity(property.PropertyType)}|" +
+				$"{(int)property.Attributes}|{property.GetMethod?.Name}|{property.SetMethod?.Name}");
+		}
+		IEnumerable<MethodBase> methods = type.GetConstructors(Declared).Cast<MethodBase>()
+			.Concat(type.GetMethods(Declared));
+		foreach (MethodBase method in methods.OrderBy(MethodIdentity, StringComparer.Ordinal))
+		{
+			rows.Add(
+				$"METHOD-ATTRIBUTES|{MethodIdentity(method)}|{(int)method.Attributes}|" +
+				$"{(int)method.GetMethodImplementationFlags()}|{(int)method.CallingConvention}");
+			rows.Add(BuildClosedGraphManifest(method));
 		}
 		return string.Join('\n', rows) + "\n";
 	}
@@ -1042,5 +2187,104 @@ public class LiquidWalletStateTests
 			OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, operandOffset),
 			_ => throw new Xunit.Sdk.XunitException($"Unsupported operand type {operandType}.")
 		};
+
+	[Fact]
+	public void MultiassetBalanceQueryAddsOnlyPermittedAssemblyTypes()
+	{
+		string[] removedTestTypes =
+		[
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass14_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass19_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass20_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass22_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass30_0",
+		];
+		string[] addedTestTypes =
+		[
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>O",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass24_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass25_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass26_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass27_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass28_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass29_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass31_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass32_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass39_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass42_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass60_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass64_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass65_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<GetDirectExceptionValues>d__61",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+IndexedAssetList",
+		];
+#if DEBUG
+		AssertReconstructedTypeManifest(
+			typeof(LiquidWalletState).Assembly,
+			"WalletWasabi",
+			1_706,
+			"e5610b069c1dfe11a7ddc201d2f0e60a250a3305a47018a1abe5eb3983234022",
+			[],
+			["WalletWasabi.Liquid.Wallet.LiquidWalletAssetBalanceQueryResult"]);
+		AssertReconstructedTypeManifest(
+			typeof(LiquidWalletStateTests).Assembly,
+			"WalletWasabi.Tests",
+			1_739,
+			"3672905579f6f0594c4827f6beaf3844b9e9d668ecca2da34981c2b417502476",
+			removedTestTypes,
+			addedTestTypes);
+#else
+		AssertReconstructedTypeManifest(
+			typeof(LiquidWalletState).Assembly,
+			"WalletWasabi",
+			1_703,
+			"552d9f8e4423a1d3ea02a0dc63e3198d812a4c02e370d798868cfef0234f7173",
+			[],
+			["WalletWasabi.Liquid.Wallet.LiquidWalletAssetBalanceQueryResult"]);
+		AssertReconstructedTypeManifest(
+			typeof(LiquidWalletStateTests).Assembly,
+			"WalletWasabi.Tests",
+			1_734,
+			"88f028ca20723e0ee26a859f24897c7f3df542abc2cdc8ff509543e9375a78ff",
+			removedTestTypes,
+			addedTestTypes);
+#endif
+	}
+
+	private static void AssertReconstructedTypeManifest(
+		Assembly currentAssembly,
+		string expectedSimpleName,
+		int expectedBaseCount,
+		string expectedBaseSha256,
+		IReadOnlyList<string> removedFromBase,
+		IReadOnlyList<string> addedToCurrent)
+	{
+		var reconstructedBase = new HashSet<string>(StringComparer.Ordinal);
+		foreach (Type type in currentAssembly.GetTypes())
+		{
+			Assert.True(reconstructedBase.Add(Assert.IsType<string>(type.FullName)));
+		}
+		foreach (string added in addedToCurrent)
+		{
+			Assert.True(reconstructedBase.Remove(added), $"Missing expected added type: {added}");
+		}
+		foreach (string removed in removedFromBase)
+		{
+			Assert.True(reconstructedBase.Add(removed), $"Unexpected retained base type: {removed}");
+		}
+
+		Assert.Equal(expectedBaseCount, reconstructedBase.Count);
+		var rows = new List<string>(reconstructedBase);
+		rows.Sort(StringComparer.Ordinal);
+		var manifest = new StringBuilder(expectedSimpleName).Append('\0');
+		foreach (string row in rows)
+		{
+			manifest.Append(row).Append('\0');
+		}
+		Assert.Equal(
+			expectedBaseSha256,
+			Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(manifest.ToString())))
+				.ToLowerInvariant());
+	}
 
 }
