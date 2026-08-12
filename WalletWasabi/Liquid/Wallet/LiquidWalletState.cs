@@ -470,42 +470,45 @@ internal sealed class LiquidWalletState
 		for (int historyIndex = 0; historyIndex < _history.Count; historyIndex++)
 		{
 			AppliedDelta applied = _history[historyIndex];
-			var totals = new Dictionary<string, TransactionEffectTotals>(StringComparer.Ordinal);
-			foreach (LiquidOwnedOutput spentOutput in applied.SpentOutputs)
-			{
-				AccumulateTransactionEffectAmount(totals, spentOutput.Amount, isSpent: true);
-			}
-
-			foreach (LiquidOwnedOutput createdOutput in
-				applied.Delta.GetRetainedCreatedOutputsForStateProjection())
-			{
-				AccumulateTransactionEffectAmount(totals, createdOutput.Amount, isSpent: false);
-			}
-
-			var changes = new List<LiquidWalletAssetNetChange>(totals.Count);
-			foreach (TransactionEffectTotals assetTotals in totals.Values)
-			{
-				long netAtomicUnits = assetTotals.CreatedAtomicUnits >= assetTotals.SpentAtomicUnits
-					? assetTotals.CreatedAtomicUnits - assetTotals.SpentAtomicUnits
-					: -(assetTotals.SpentAtomicUnits - assetTotals.CreatedAtomicUnits);
-				if (netAtomicUnits != 0)
-				{
-					changes.Add(LiquidWalletAssetNetChange.Create(
-						assetTotals.AssetId,
-						PeggedAssetId,
-						netAtomicUnits));
-				}
-			}
-
-			changes.Sort(static (left, right) => StringComparer.Ordinal.Compare(
-				left.AssetId.CanonicalRpcHex,
-				right.AssetId.CanonicalRpcHex));
 			_confirmations.TryGetValue(applied.Delta.TransactionId, out LiquidConfirmation? confirmation);
-			effects[historyIndex] = new LiquidWalletTransactionEffect(
+			effects[historyIndex] = CreateTransactionEffect(
 				applied.Delta.TransactionId,
+				applied.SpentOutputs,
+				applied.Delta.GetRetainedCreatedOutputsForStateProjection(),
 				PeggedAssetId,
-				confirmation,
-				changes);
+				confirmation);
+		}
+
+		return LiquidWalletTransactionEffectSnapshot.TakeOwnershipFromState(
+			PeggedAssetId,
+			Revision,
+			effects);
+	}
+
+	public LiquidWalletTransactionEffectSnapshot QueryTransactionEffect(
+		ulong expectedRevision,
+		LiquidTransactionId transactionId)
+	{
+		EnsureRevision(expectedRevision);
+		ArgumentNullException.ThrowIfNull(transactionId);
+		if (transactionId.IsZero)
+		{
+			throw new ArgumentException(
+				"A nonzero Liquid transaction identifier is required.",
+				nameof(transactionId));
+		}
+
+		AppliedDelta? applied = FindAppliedDeltaForTransactionEffectQuery(transactionId);
+		var effects = new LiquidWalletTransactionEffect[applied is null ? 0 : 1];
+		if (applied is not null)
+		{
+			_confirmations.TryGetValue(transactionId, out LiquidConfirmation? confirmation);
+			effects[0] = CreateTransactionEffect(
+				applied.Delta.TransactionId,
+				applied.SpentOutputs,
+				applied.Delta.GetRetainedCreatedOutputsForStateProjection(),
+				PeggedAssetId,
+				confirmation);
 		}
 
 		return LiquidWalletTransactionEffectSnapshot.TakeOwnershipFromState(
@@ -627,12 +630,80 @@ internal sealed class LiquidWalletState
 			: left.OutPoint.OutputIndex.CompareTo(right.OutPoint.OutputIndex);
 	}
 
-	private void AccumulateTransactionEffectAmount(
+	private AppliedDelta? FindAppliedDeltaForTransactionEffectQuery(
+		LiquidTransactionId transactionId)
+	{
+		AppliedDelta? match = null;
+		for (int historyIndex = 0; historyIndex < _history.Count; historyIndex++)
+		{
+			AppliedDelta candidate = _history[historyIndex];
+			if (candidate.Delta.TransactionId == transactionId)
+			{
+				match = candidate;
+			}
+		}
+
+		return match;
+	}
+
+	private static LiquidWalletTransactionEffect CreateTransactionEffect(
+		LiquidTransactionId transactionId,
+		ReadOnlySpan<LiquidOwnedOutput> spentOutputs,
+		ReadOnlySpan<LiquidOwnedOutput> createdOutputs,
+		LiquidAssetId peggedAssetId,
+		LiquidConfirmation? confirmation)
+	{
+		var totals = new Dictionary<string, TransactionEffectTotals>(StringComparer.Ordinal);
+		foreach (LiquidOwnedOutput spentOutput in spentOutputs)
+		{
+			AccumulateTransactionEffectAmount(
+				totals,
+				spentOutput.Amount,
+				peggedAssetId,
+				isSpent: true);
+		}
+
+		foreach (LiquidOwnedOutput createdOutput in createdOutputs)
+		{
+			AccumulateTransactionEffectAmount(
+				totals,
+				createdOutput.Amount,
+				peggedAssetId,
+				isSpent: false);
+		}
+
+		var changes = new List<LiquidWalletAssetNetChange>();
+		foreach (TransactionEffectTotals assetTotals in totals.Values)
+		{
+			long netAtomicUnits = assetTotals.CreatedAtomicUnits >= assetTotals.SpentAtomicUnits
+				? assetTotals.CreatedAtomicUnits - assetTotals.SpentAtomicUnits
+				: -(assetTotals.SpentAtomicUnits - assetTotals.CreatedAtomicUnits);
+			if (netAtomicUnits != 0)
+			{
+				changes.Add(LiquidWalletAssetNetChange.Create(
+					assetTotals.AssetId,
+					peggedAssetId,
+					netAtomicUnits));
+			}
+		}
+
+		changes.Sort(static (left, right) => StringComparer.Ordinal.Compare(
+			left.AssetId.CanonicalRpcHex,
+			right.AssetId.CanonicalRpcHex));
+		return new LiquidWalletTransactionEffect(
+			transactionId,
+			peggedAssetId,
+			confirmation,
+			changes);
+	}
+
+	private static void AccumulateTransactionEffectAmount(
 		Dictionary<string, TransactionEffectTotals> totals,
 		LiquidAssetAmount amount,
+		LiquidAssetId peggedAssetId,
 		bool isSpent)
 	{
-		if (amount.PeggedAssetId != PeggedAssetId)
+		if (amount.PeggedAssetId != peggedAssetId)
 		{
 			throw new InvalidOperationException(
 				"A Liquid wallet transaction effect belongs to a different pegged-asset context.");
