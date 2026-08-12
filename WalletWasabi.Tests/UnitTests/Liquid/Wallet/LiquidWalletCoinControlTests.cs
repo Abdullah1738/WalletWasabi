@@ -578,6 +578,13 @@ public class LiquidWalletCoinControlTests
 			typeof(LiquidWalletState),
 			nameof(LiquidWalletState.CreateCoinControlSelection),
 			BindingFlags.Public | BindingFlags.Instance);
+		MethodInfo stateSelectionCore = RequiredMethod(
+			typeof(LiquidWalletState),
+			"CreateCoinControlSelectionCore",
+			BindingFlags.NonPublic | BindingFlags.Instance,
+			typeof(ulong),
+			typeof(IReadOnlyList<LiquidOutPoint>),
+			typeof(int?));
 		MethodInfo selectionCore = RequiredMethod(
 			typeof(LiquidWalletCoinControlSelection),
 			"ValidateAndAggregate",
@@ -650,6 +657,8 @@ public class LiquidWalletCoinControlTests
 
 		IReadOnlyList<IlReference> projectionDirect = GetIlReferences(projection).ToArray();
 		IReadOnlyList<IlReference> selectionDirect = GetIlReferences(selection).ToArray();
+		IReadOnlyList<IlReference> stateSelectionCoreDirect =
+			GetIlReferences(stateSelectionCore).ToArray();
 		IReadOnlyList<IlReference> snapshotOwnershipDirect =
 			GetIlReferences(snapshotOwnership).ToArray();
 		IReadOnlyList<IlReference> snapshotOwnershipConstructorDirect =
@@ -659,10 +668,12 @@ public class LiquidWalletCoinControlTests
 			GetIlReferences(selectionOwnershipConstructor).ToArray();
 		IReadOnlyList<IlReference> coreDirect = GetIlReferences(selectionCore).ToArray();
 		Assert.Contains(projectionDirect, reference => reference.Member == snapshotOwnership);
-		Assert.Contains(selectionDirect, reference => reference.Member == selectionOwnership);
+		Assert.Contains(selectionDirect, reference => reference.Member == stateSelectionCore);
+		Assert.Contains(stateSelectionCoreDirect, reference => reference.Member == selectionOwnership);
 		Assert.Equal(1, CountEntryArrayAllocations(projectionDirect));
-		Assert.Equal(1, CountEntryArrayAllocations(selectionDirect));
-		Assert.Equal(1, selectionDirect.Count(reference =>
+		Assert.Equal(0, CountEntryArrayAllocations(selectionDirect));
+		Assert.Equal(1, CountEntryArrayAllocations(stateSelectionCoreDirect));
+		Assert.Equal(1, stateSelectionCoreDirect.Count(reference =>
 			reference.Member is MethodBase method &&
 			method.DeclaringType == typeof(Array) &&
 			method.Name == nameof(Array.Sort)));
@@ -1630,6 +1641,7 @@ public class LiquidWalletCoinControlTests
 			{
 				"public instance GetCoinControlSnapshot/0 () -> LiquidWalletCoinControlSnapshot",
 				"public instance CreateCoinControlSelection/0 (value ulong, value IReadOnlyList<LiquidOutPoint>) -> LiquidWalletCoinControlSelection",
+				"public instance CreateExactOrdinaryWalletSpendPlan/0 (value ulong, value IReadOnlyList<LiquidOutPoint>, value LiquidSuppliedConfidentialDestinationBatch, value LiquidAssetAmount) -> LiquidOrdinaryWalletExactSpendPlan",
 				"public instance ContainsUnspent/0 (value LiquidOutPoint) -> bool",
 				"public instance QueryUnspentCoinControlEntry/0 (value ulong, value LiquidOutPoint) -> LiquidWalletCoinControlSnapshot",
 			};
@@ -4747,24 +4759,24 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_707,
-			"0f6c563b6d53469fa87b55f2c8b9386d718c7633ea694a3157e898eebb8e673c");
+			1_708,
+			"884c371cc84077c33a08a5674287c0c1090ba3b757aa9dd72c3c1c9cb2a9b56a");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
-			1_750,
-			"fef5ddc748ca61063f4a362d89ff2131c160cf12db1a397f49aec7d8fe98d201");
+			1_763,
+			"5c7d6ba66b53d8bf611a55f0efa85c6053f027b334702e60606bf0659f544db8");
 #else
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_704,
-			"f6038a4dea20ee4b87dd7458e6bfacef21934e8c693f0fbeadd32a0f1632bbc2");
+			1_705,
+			"67b1d0a3a1aa229725381eb97fdcbb25024a6bd6585592ae9670d8f3e43495fd");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
-			1_745,
-			"55d8c7e9287e9446b101e2e2d607d2c9a3ce1981c5fcae46f0cc3354863973b9");
+			1_758,
+			"60d4db31070f730923ea48d1b71bec9b690f545ec20030973c38f8133cf54298");
 #endif
 	}
 

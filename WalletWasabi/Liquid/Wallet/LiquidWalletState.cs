@@ -620,7 +620,26 @@ internal sealed class LiquidWalletState
 
 	public LiquidWalletCoinControlSelection CreateCoinControlSelection(
 		ulong expectedRevision,
-		IReadOnlyList<LiquidOutPoint> selectedOutPoints)
+		IReadOnlyList<LiquidOutPoint> selectedOutPoints) =>
+		CreateCoinControlSelectionCore(expectedRevision, selectedOutPoints, null);
+
+	public LiquidOrdinaryWalletExactSpendPlan CreateExactOrdinaryWalletSpendPlan(
+		ulong expectedRevision,
+		IReadOnlyList<LiquidOutPoint> selectedOutPoints,
+		LiquidSuppliedConfidentialDestinationBatch destinations,
+		LiquidAssetAmount explicitFee)
+	{
+		LiquidWalletCoinControlSelection selection = CreateCoinControlSelectionCore(
+			expectedRevision,
+			selectedOutPoints,
+			LiquidOrdinaryWalletExactSpendPlan.MaximumSelectedInputCount);
+		return LiquidOrdinaryWalletExactSpendPlan.Create(selection, destinations, explicitFee);
+	}
+
+	private LiquidWalletCoinControlSelection CreateCoinControlSelectionCore(
+		ulong expectedRevision,
+		IReadOnlyList<LiquidOutPoint> selectedOutPoints,
+		int? maximumSelectedInputCount)
 	{
 		EnsureRevision(expectedRevision);
 		ArgumentNullException.ThrowIfNull(selectedOutPoints);
@@ -630,6 +649,13 @@ internal sealed class LiquidWalletState
 			throw new ArgumentException(
 				"A Liquid coin-control selection requires at least one outpoint.",
 				nameof(selectedOutPoints));
+		}
+		if (maximumSelectedInputCount is int maximum &&
+			(selectedCount < 0 || selectedCount > maximum))
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(selectedOutPoints),
+				"The exact Liquid ordinary-wallet input selection could not be accepted.");
 		}
 		if (selectedCount > _unspentOutputs.Count)
 		{

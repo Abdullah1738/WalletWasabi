@@ -2201,6 +2201,19 @@ public class LiquidWalletStateTests
 		];
 		string[] addedTestTypes =
 		[
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c__DisplayClass17_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c__DisplayClass18_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c__DisplayClass19_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c__DisplayClass21_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c__DisplayClass23_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c__DisplayClass24_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c__DisplayClass25_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c__DisplayClass25_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c__DisplayClass26_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+CountedHostileSelectionList",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+HostileSelectionInspectedException",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>O",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass24_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass25_0",
@@ -2225,7 +2238,10 @@ public class LiquidWalletStateTests
 			1_706,
 			"e5610b069c1dfe11a7ddc201d2f0e60a250a3305a47018a1abe5eb3983234022",
 			[],
-			["WalletWasabi.Liquid.Wallet.LiquidWalletAssetBalanceQueryResult"]);
+			[
+				"WalletWasabi.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlan",
+				"WalletWasabi.Liquid.Wallet.LiquidWalletAssetBalanceQueryResult",
+			]);
 		AssertReconstructedTypeManifest(
 			typeof(LiquidWalletStateTests).Assembly,
 			"WalletWasabi.Tests",
@@ -2240,7 +2256,10 @@ public class LiquidWalletStateTests
 			1_703,
 			"552d9f8e4423a1d3ea02a0dc63e3198d812a4c02e370d798868cfef0234f7173",
 			[],
-			["WalletWasabi.Liquid.Wallet.LiquidWalletAssetBalanceQueryResult"]);
+			[
+				"WalletWasabi.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlan",
+				"WalletWasabi.Liquid.Wallet.LiquidWalletAssetBalanceQueryResult",
+			]);
 		AssertReconstructedTypeManifest(
 			typeof(LiquidWalletStateTests).Assembly,
 			"WalletWasabi.Tests",
