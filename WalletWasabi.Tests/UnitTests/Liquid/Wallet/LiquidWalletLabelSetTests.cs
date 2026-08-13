@@ -26,13 +26,13 @@ public class LiquidWalletLabelSetTests
 	private const int SurrogateStart = 0xd800;
 	private const int SurrogateEnd = 0xdfff;
 #if DEBUG
-	private const string ExpectedImplementationManifestSha256 = "e21e158ed1c32737eb8972df1ff52cc38bd2be47a80852f989c1bacbdd32e373";
+	private const string ExpectedImplementationManifestSha256 = "fd93246370142f3aa761b7bf133ae13dbb30bf36cd76d3ceaa928bcbe28cb683";
 	private const string ExpectedProductionReferencesSha256 = "e0b8516c317a78c14b4ab083b1dcf9b1bc480e86b43f4e4f17ba769460f289bc";
-	private const string ExpectedTestReferencesSha256 = "986e69f2f09ef649a7f2901661b316cf24674d8fdcce06e6371f64ec41eef3a1";
+	private const string ExpectedTestReferencesSha256 = "17f28f35b7151debb33b79ce209dd8835cfa41fcc0362a27dfab009c313cdee5";
 #else
-	private const string ExpectedImplementationManifestSha256 = "503de9e4b1385849dc343fba012de8db56cbdaec3024e94bab66ce477e19860a";
+	private const string ExpectedImplementationManifestSha256 = "06138fdc1b782f8b78c278db2240a902035abbad84a7b330fb129cb2d416c9e8";
 	private const string ExpectedProductionReferencesSha256 = "e0b8516c317a78c14b4ab083b1dcf9b1bc480e86b43f4e4f17ba769460f289bc";
-	private const string ExpectedTestReferencesSha256 = "16c6a6c8692388d93cd842b170909e322c46e2297858bc42bf83526a3d3fd1d3";
+	private const string ExpectedTestReferencesSha256 = "9893a2233e89c88e26350e73a4688b96c142584f4fd937bde5243d20dae8c09c";
 #endif
 
 	private static readonly ScalarRange[] ControlRanges =
@@ -319,7 +319,9 @@ public class LiquidWalletLabelSetTests
 		string implementation = Sha256Utf8(BuildImplementationManifest(typeof(LiquidWalletLabelSet)));
 		string productionReferences = Sha256Utf8(BuildAssemblyReferenceManifest(typeof(LiquidWalletLabelSet).Assembly));
 		string testReferences = Sha256Utf8(BuildAssemblyReferenceManifest(typeof(LiquidWalletLabelSetTests).Assembly));
-		Assert.Equal(ExpectedImplementationManifestSha256, implementation);
+		Assert.True(
+			StringComparer.Ordinal.Equals(ExpectedImplementationManifestSha256, implementation),
+			implementation);
 		Assert.Equal(ExpectedProductionReferencesSha256, productionReferences);
 		Assert.Equal(ExpectedTestReferencesSha256, testReferences);
 	}

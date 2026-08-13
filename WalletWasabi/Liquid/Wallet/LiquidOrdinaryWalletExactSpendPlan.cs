@@ -51,6 +51,12 @@ internal sealed class LiquidOrdinaryWalletExactSpendPlan
 
 	public LiquidAssetAmount GetExplicitFee() => _explicitFee;
 
+	internal ReadOnlySpan<LiquidWalletCoinControlEntry> GetSelectedEntriesForWireEncoding() =>
+		_selectedEntries;
+
+	internal ReadOnlySpan<LiquidSuppliedConfidentialDestination> GetDestinationsForWireEncoding() =>
+		_destinations;
+
 	internal static LiquidOrdinaryWalletExactSpendPlan Create(
 		LiquidWalletCoinControlSelection selection,
 		LiquidSuppliedConfidentialDestinationBatch destinations,

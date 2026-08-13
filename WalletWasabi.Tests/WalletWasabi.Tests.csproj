@@ -13,6 +13,14 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<Reference Include="Microsoft.Build">
+			<HintPath>$(MSBuildToolsPath)\Microsoft.Build.dll</HintPath>
+			<Private>true</Private>
+		</Reference>
+		<Reference Include="Microsoft.Build.Framework">
+			<HintPath>$(MSBuildToolsPath)\Microsoft.Build.Framework.dll</HintPath>
+			<Private>true</Private>
+		</Reference>
 		<PackageReference Include="coverlet.collector">
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 			<PrivateAssets>all</PrivateAssets>

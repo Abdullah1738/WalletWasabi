@@ -4759,24 +4759,24 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_708,
-			"884c371cc84077c33a08a5674287c0c1090ba3b757aa9dd72c3c1c9cb2a9b56a");
+			1_716,
+			"294cef0781d25c417d381a3d453b61ed146f359ba81402cabd520f5d5b036882");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
-			1_763,
-			"5c7d6ba66b53d8bf611a55f0efa85c6053f027b334702e60606bf0659f544db8");
+			1_827,
+			"9f2ce539db7ff395f7f5ac96c958aa3d04ad5f70fcad0d094c49452ab41909d6");
 #else
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_705,
-			"67b1d0a3a1aa229725381eb97fdcbb25024a6bd6585592ae9670d8f3e43495fd");
+			1_713,
+			"8d7dba535d1e0618cb768a802d61b5bcf7375f4292fd312514c4025f33c515a4");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
-			1_758,
-			"60d4db31070f730923ea48d1b71bec9b690f545ec20030973c38f8133cf54298");
+			1_822,
+			"9d311b57b4f6b1b5585dfb3998b894989de5989b5a70fa9b91944b4247acde4f");
 #endif
 	}
 
@@ -4804,9 +4804,8 @@ public class LiquidWalletCoinControlTests
 		}
 		byte[] manifest = System.Text.Encoding.UTF8.GetBytes(
 			expectedSimpleName + "\0" + string.Concat(rows.Select(row => row + "\0")));
-		Assert.Equal(
-			expectedSha256,
-			Convert.ToHexString(SHA256.HashData(manifest)).ToLowerInvariant());
+		string actualSha256 = Convert.ToHexString(SHA256.HashData(manifest)).ToLowerInvariant();
+		Assert.True(StringComparer.Ordinal.Equals(expectedSha256, actualSha256), actualSha256);
 	}
 
 	private static bool ContainsForbiddenExecutionSurface(MemberInfo member)
