@@ -277,6 +277,188 @@ public class LiquidOrdinaryWalletPlanWireTests
 				AssertCanonicalCompilerInputAuthorityManifest(
 					CreateCompilerManifestWithInvalidAuxiliaryPrefix(presentAuxiliaryManifest)));
 
+			var syntheticAnalyzerEntries = new[]
+			{
+				(Identity: "DOTNET|packs/example/analyzers/First.dll",
+					ContentSha256: SyntheticSha256,
+					Provenance: "DOTNET|sdk/10.0.100/Sdks/Example/targets/First.targets"),
+				(Identity: "NUGET|example.analyzers/1.0.0/analyzers/dotnet/Second.dll",
+					ContentSha256: new string('a', 64),
+					Provenance: "DOTNET|sdk/10.0.100/Sdks/Example/targets/Second.targets"),
+			};
+			string syntheticAnalyzerManifest = BuildCanonicalAnalyzerAuthorityManifest(
+				syntheticAnalyzerEntries);
+			string syntheticAnalyzerSha256 = Sha256Text(syntheticAnalyzerManifest);
+			Assert.Equal(2, AssertCanonicalAnalyzerAuthorityManifest(syntheticAnalyzerManifest).Length);
+			AssertExactAnalyzerAuthoritySha256(syntheticAnalyzerSha256, syntheticAnalyzerManifest);
+			Assert.Equal(
+				syntheticAnalyzerManifest,
+				BuildCanonicalAnalyzerAuthorityManifest(syntheticAnalyzerEntries.Reverse()));
+			Assert.Equal(
+				"PENDING-MACOS-ARM64-ANALYZER-AUTHORITY-V2",
+				GetExpectedAnalyzerAuthoritySha256(true, false, Architecture.Arm64));
+			Assert.Equal(
+				"PENDING-LINUX-X64-ANALYZER-AUTHORITY-V2",
+				GetExpectedAnalyzerAuthoritySha256(false, true, Architecture.X64));
+			Assert.NotEqual(
+				"PENDING-MACOS-ARM64-ANALYZER-AUTHORITY-V2",
+				"PENDING-LINUX-X64-ANALYZER-AUTHORITY-V2");
+			AssertAnalyzerAuthorityPlatformRejected(true, true, Architecture.Arm64);
+			AssertAnalyzerAuthorityPlatformRejected(false, false, Architecture.X64);
+			AssertAnalyzerAuthorityPlatformRejected(true, false, Architecture.X64);
+			AssertAnalyzerAuthorityPlatformRejected(false, true, Architecture.Arm64);
+
+			var mutatedAnalyzerContent = syntheticAnalyzerEntries.ToArray();
+			mutatedAnalyzerContent[0] = (
+				mutatedAnalyzerContent[0].Identity,
+				new string('1', 64),
+				mutatedAnalyzerContent[0].Provenance);
+			var mutatedAnalyzerIdentity = syntheticAnalyzerEntries.ToArray();
+			mutatedAnalyzerIdentity[0] = (
+				"DOTNET|packs/example/analyzers/First-mutated.dll",
+				mutatedAnalyzerIdentity[0].ContentSha256,
+				mutatedAnalyzerIdentity[0].Provenance);
+			var mutatedAnalyzerProvenance = syntheticAnalyzerEntries.ToArray();
+			mutatedAnalyzerProvenance[0] = (
+				mutatedAnalyzerProvenance[0].Identity,
+				mutatedAnalyzerProvenance[0].ContentSha256,
+				"DOTNET|sdk/10.0.100/Sdks/Example/targets/First-mutated.targets");
+			string[] canonicalAnalyzerMutations =
+			[
+				BuildCanonicalAnalyzerAuthorityManifest(mutatedAnalyzerContent),
+				BuildCanonicalAnalyzerAuthorityManifest(mutatedAnalyzerIdentity),
+				BuildCanonicalAnalyzerAuthorityManifest(mutatedAnalyzerProvenance),
+				BuildCanonicalAnalyzerAuthorityManifest(syntheticAnalyzerEntries.Take(1)),
+				BuildCanonicalAnalyzerAuthorityManifest(syntheticAnalyzerEntries.Append((
+					"NUGET|example.analyzers/1.0.0/analyzers/dotnet/Third.dll",
+					new string('b', 64),
+					"DOTNET|sdk/10.0.100/Sdks/Example/targets/Third.targets"))),
+			];
+			foreach (string analyzerMutation in canonicalAnalyzerMutations)
+			{
+				_ = AssertCanonicalAnalyzerAuthorityManifest(analyzerMutation);
+				Assert.NotEqual(syntheticAnalyzerManifest, analyzerMutation);
+				AssertExactAnalyzerAuthorityRejected(syntheticAnalyzerSha256, analyzerMutation);
+			}
+			AssertAnalyzerAuthorityBuildRejected(
+				syntheticAnalyzerEntries.Append(syntheticAnalyzerEntries[0]));
+			string caseAliasedAnalyzerIdentity = syntheticAnalyzerEntries[0].Identity.Replace(
+				"/First.dll",
+				"/first.dll",
+				StringComparison.Ordinal);
+			Assert.StartsWith("DOTNET|", caseAliasedAnalyzerIdentity, StringComparison.Ordinal);
+			AssertCanonicalAnalyzerAuthorityPath(caseAliasedAnalyzerIdentity, allowPackage: true);
+			Assert.False(StringComparer.Ordinal.Equals(
+				syntheticAnalyzerEntries[0].Identity,
+				caseAliasedAnalyzerIdentity));
+			Assert.True(StringComparer.OrdinalIgnoreCase.Equals(
+				syntheticAnalyzerEntries[0].Identity,
+				caseAliasedAnalyzerIdentity));
+			AssertAnalyzerAuthorityBuildRejected(
+				syntheticAnalyzerEntries.Append((
+					caseAliasedAnalyzerIdentity,
+					new string('c', 64),
+					syntheticAnalyzerEntries[0].Provenance)));
+
+			string[] swappedAnalyzerLines = syntheticAnalyzerManifest.Split('\n', StringSplitOptions.None);
+			string[] firstAnalyzerFields = ParseCanonicalAuthorityManifestRow(
+				swappedAnalyzerLines[1],
+				"ANALYZER_V2",
+				4);
+			string[] secondAnalyzerFields = ParseCanonicalAuthorityManifestRow(
+				swappedAnalyzerLines[2],
+				"ANALYZER_V2",
+				4);
+			for (int fieldIndex = 1; fieldIndex < firstAnalyzerFields.Length; fieldIndex++)
+			{
+				(firstAnalyzerFields[fieldIndex], secondAnalyzerFields[fieldIndex]) =
+					(secondAnalyzerFields[fieldIndex], firstAnalyzerFields[fieldIndex]);
+			}
+			swappedAnalyzerLines[1] = BuildCanonicalAuthorityManifestRow(
+				"ANALYZER_V2",
+				firstAnalyzerFields);
+			swappedAnalyzerLines[2] = BuildCanonicalAuthorityManifestRow(
+				"ANALYZER_V2",
+				secondAnalyzerFields);
+			AssertAnalyzerAuthorityManifestRejected(string.Join('\n', swappedAnalyzerLines));
+
+			AssertAnalyzerAuthorityManifestRejected(syntheticAnalyzerManifest[..^1]);
+			AssertAnalyzerAuthorityManifestRejected(syntheticAnalyzerManifest + "\n");
+			AssertAnalyzerAuthorityManifestRejected(
+				syntheticAnalyzerManifest.Replace("\n", "\r\n", StringComparison.Ordinal));
+			AssertAnalyzerAuthorityManifestRejected(
+				syntheticAnalyzerManifest.Replace(
+					"ANALYZER_AUTHORITY_V2",
+					"ANALYZER_AUTHORITY_V1",
+					StringComparison.Ordinal));
+			string[] malformedAnalyzerLines = syntheticAnalyzerManifest.Split('\n', StringSplitOptions.None);
+			malformedAnalyzerLines[1] = malformedAnalyzerLines[1].Replace("|[", "|[ ", StringComparison.Ordinal);
+			AssertAnalyzerAuthorityManifestRejected(string.Join('\n', malformedAnalyzerLines));
+			malformedAnalyzerLines = syntheticAnalyzerManifest.Split('\n', StringSplitOptions.None);
+			firstAnalyzerFields = ParseCanonicalAuthorityManifestRow(
+				malformedAnalyzerLines[1],
+				"ANALYZER_V2",
+				4);
+			malformedAnalyzerLines[1] = "ANALYZER_V2|" + JsonSerializer.Serialize(
+				new object[]
+				{
+					0,
+					firstAnalyzerFields[1],
+					firstAnalyzerFields[2],
+					firstAnalyzerFields[3],
+				});
+			AssertAnalyzerAuthorityManifestRejected(string.Join('\n', malformedAnalyzerLines));
+			foreach ((int fieldIndex, string invalidValue) in new[]
+			{
+				(1, "REPO|outside/analyzer.dll"),
+				(1, "DOTNET|../outside/analyzer.dll"),
+				(2, new string('A', 64)),
+				(3, "NUGET|example/targets/Example.targets"),
+			})
+			{
+				malformedAnalyzerLines = syntheticAnalyzerManifest.Split('\n', StringSplitOptions.None);
+				firstAnalyzerFields = ParseCanonicalAuthorityManifestRow(
+					malformedAnalyzerLines[1],
+					"ANALYZER_V2",
+					4);
+				firstAnalyzerFields[fieldIndex] = invalidValue;
+				malformedAnalyzerLines[1] = BuildCanonicalAuthorityManifestRow(
+					"ANALYZER_V2",
+					firstAnalyzerFields);
+				AssertAnalyzerAuthorityManifestRejected(string.Join('\n', malformedAnalyzerLines));
+			}
+
+			Xunit.Sdk.XunitException analyzerDiagnostics = GetExactAnalyzerAuthorityRejection(
+				new string('f', 64),
+				syntheticAnalyzerManifest);
+			Assert.StartsWith(syntheticAnalyzerSha256, analyzerDiagnostics.Message, StringComparison.Ordinal);
+			Assert.Contains("\nCOUNT|2", analyzerDiagnostics.Message, StringComparison.Ordinal);
+			Assert.Contains("\nROW|000|ROW_SHA256|", analyzerDiagnostics.Message, StringComparison.Ordinal);
+			Assert.Contains("\nROW|001|ROW_SHA256|", analyzerDiagnostics.Message, StringComparison.Ordinal);
+			Assert.Contains("\nSORTED_ENTRIES_SHA256|", analyzerDiagnostics.Message, StringComparison.Ordinal);
+			Assert.DoesNotContain("EXPECTED HEX", analyzerDiagnostics.Message, StringComparison.Ordinal);
+			foreach ((string identity, string _, string provenance) in syntheticAnalyzerEntries)
+			{
+				Assert.Contains(
+					$"PATH_SHA256|{Sha256Text(identity)}",
+					analyzerDiagnostics.Message,
+					StringComparison.Ordinal);
+				Assert.Contains(
+					$"PROVENANCE_SHA256|{Sha256Text(provenance)}",
+					analyzerDiagnostics.Message,
+					StringComparison.Ordinal);
+				Assert.DoesNotContain(identity, analyzerDiagnostics.Message, StringComparison.Ordinal);
+				Assert.DoesNotContain(provenance, analyzerDiagnostics.Message, StringComparison.Ordinal);
+				Assert.DoesNotContain(
+					Convert.ToHexString(Encoding.UTF8.GetBytes(identity)),
+					analyzerDiagnostics.Message,
+					StringComparison.OrdinalIgnoreCase);
+				Assert.DoesNotContain(
+					Convert.ToHexString(Encoding.UTF8.GetBytes(provenance)),
+					analyzerDiagnostics.Message,
+					StringComparison.OrdinalIgnoreCase);
+			}
+
 			string syntheticToolchainManifest = BuildCanonicalToolchainFileAuthorityManifest(
 				[
 					("dotnet", SyntheticSha256),
@@ -8827,52 +9009,52 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string dotnetRoot,
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
 	{
-		string[] expected =
-		[
-			"DOTNET|packs/Microsoft.NETCore.App.Ref/10.0.0/analyzers/dotnet/cs/Microsoft.Interop.ComInterfaceGenerator.dll|SHA256|051a9f8bfee1842ec53d40e329ea068d498de8a60da2be29cceb2dac65e19561|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-			"DOTNET|packs/Microsoft.NETCore.App.Ref/10.0.0/analyzers/dotnet/cs/Microsoft.Interop.JavaScript.JSImportGenerator.dll|SHA256|f7096596857e0d473488436131de7ff1bd401244ca7f8d1e8b5c856438e2b409|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-			"DOTNET|packs/Microsoft.NETCore.App.Ref/10.0.0/analyzers/dotnet/cs/Microsoft.Interop.LibraryImportGenerator.dll|SHA256|cd136ba1cbed48e1b3252ab608b3cc8bd8392ac2187cadfe1b610bde751ab5ee|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-			"DOTNET|packs/Microsoft.NETCore.App.Ref/10.0.0/analyzers/dotnet/cs/Microsoft.Interop.SourceGeneration.dll|SHA256|f183345ed20cd0416c2ab8bd439e2938bc2ccf0b0688be91f5b474a29bdd42a5|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-			"DOTNET|packs/Microsoft.NETCore.App.Ref/10.0.0/analyzers/dotnet/cs/System.Text.Json.SourceGeneration.dll|SHA256|94372eebcff48adff1272f295d0bd0a8f2186ea6f94003cbdde4c2aaa26a1a31|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-			"DOTNET|packs/Microsoft.NETCore.App.Ref/10.0.0/analyzers/dotnet/cs/System.Text.RegularExpressions.Generator.dll|SHA256|87382d87a6f801acde7176a21d6e58b0fe395f4fc8b420624dea538a537358f2|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-			"DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/analyzers/Microsoft.CodeAnalysis.CSharp.NetAnalyzers.dll|SHA256|53046380d99a25e32cc436bc6e89678813e5108511836a2b488699a0910d9e12|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-			"DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/analyzers/Microsoft.CodeAnalysis.NetAnalyzers.dll|SHA256|04736be5b1476c9ef2e08f0530e02672cdb8d3891c418a0ac2b48decec81cab1|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-			"NUGET|microsoft.codeanalysis.bannedapianalyzers/4.14.0/analyzers/dotnet/cs/Microsoft.CodeAnalysis.BannedApiAnalyzers.dll|SHA256|1d2972c0ee11dcc950f84cd97f1d9ada503d07ec93379232a46129dc723df5ad|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-			"NUGET|microsoft.codeanalysis.bannedapianalyzers/4.14.0/analyzers/dotnet/cs/Microsoft.CodeAnalysis.CSharp.BannedApiAnalyzers.dll|SHA256|350d4f564d49d8a0fb8d3189d15aa7fd086618974de182e89423afd828c11150|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-			"NUGET|microsoft.extensions.logging.abstractions/10.0.2/analyzers/dotnet/roslyn4.4/cs/Microsoft.Extensions.Logging.Generators.dll|SHA256|88139b918cc7fab679feef0c4fd4a25ba3773082d2ae1c6cf485f9cc92cdc6f6|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-			"NUGET|microsoft.extensions.options/10.0.2/analyzers/dotnet/roslyn4.4/cs/Microsoft.Extensions.Options.SourceGeneration.dll|SHA256|c0f9fc70a18c42637f8801a6ee7af722943fb7093731c95e85269f29198c7608|PROVENANCE|DOTNET|sdk/10.0.100/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.ConflictResolution.targets",
-		];
-		string[] actual = analyzers.Select(analyzer =>
+		int sourceIndex = -1;
+		List<(string Identity, string ContentSha256, string Provenance)> entries = analyzers.Select(
+			analyzer =>
 		{
-			string definingProject = Path.GetFullPath(analyzer.DefiningProjectFullPath);
-			Assert.True(IsPathWithin(definingProject, dotnetRoot));
-			Assert.True(File.Exists(definingProject), $"Analyzer provenance does not exist: {definingProject}");
-			string provenance = "|PROVENANCE|DOTNET|" +
-				NormalizeRelativePath(Path.GetRelativePath(dotnetRoot, definingProject));
-			string fullPath = Path.GetFullPath(analyzer.FullPath);
-			Assert.True(File.Exists(fullPath), $"Analyzer does not exist: {fullPath}");
-			string sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(fullPath))).ToLowerInvariant();
-			if (IsPathWithin(fullPath, dotnetRoot))
+			sourceIndex++;
+			try
 			{
-				return "DOTNET|" + NormalizeRelativePath(Path.GetRelativePath(dotnetRoot, fullPath)) +
-					"|SHA256|" + sha256 + provenance;
+				string definingProject = Path.GetFullPath(analyzer.DefiningProjectFullPath);
+				Assert.True(IsPathWithin(definingProject, dotnetRoot));
+				AssertRegularAuthorityFile(definingProject, "analyzer provenance");
+				string provenance = "DOTNET|" +
+					NormalizeRelativePath(Path.GetRelativePath(dotnetRoot, definingProject));
+				string fullPath = Path.GetFullPath(analyzer.FullPath);
+				AssertRegularAuthorityFile(fullPath, "analyzer");
+				string identity;
+				if (IsPathWithin(fullPath, dotnetRoot))
+				{
+					identity = "DOTNET|" +
+						NormalizeRelativePath(Path.GetRelativePath(dotnetRoot, fullPath));
+				}
+				else
+				{
+					Assert.True(TryNormalizePackageAuthorityPath(
+						fullPath,
+						packageAuthority,
+						out identity));
+				}
+				return (identity, Sha256File(fullPath), provenance);
 			}
+			catch (Exception)
+			{
+				throw new Xunit.Sdk.XunitException(
+					$"Analyzer authority input {sourceIndex:D3} was rejected.\n" +
+					$"PATH_SHA256|{Sha256Text(analyzer.FullPath)}\n" +
+					$"PROVENANCE_SHA256|{Sha256Text(analyzer.DefiningProjectFullPath)}");
+			}
+		}).ToList();
 
-			Assert.True(
-				TryNormalizePackageAuthorityPath(fullPath, packageAuthority, out string normalizedPackagePath),
-				$"Analyzer is outside approved SDK and package roots: {fullPath}");
-			return normalizedPackagePath +
-				"|SHA256|" + sha256 + provenance;
-		}).Order(StringComparer.Ordinal).ToArray();
-		string[] orderedExpected = expected.Order(StringComparer.Ordinal).ToArray();
-		Assert.Equal(orderedExpected.Length, actual.Length);
-		for (int index = 0; index < actual.Length; index++)
-		{
-			Assert.True(
-				StringComparer.Ordinal.Equals(orderedExpected[index], actual[index]),
-				$"Analyzer authority mismatch at {index}.\nEXPECTED HEX {Convert.ToHexString(Encoding.UTF8.GetBytes(orderedExpected[index]))}\n" +
-				$"ACTUAL HEX {Convert.ToHexString(Encoding.UTF8.GetBytes(actual[index]))}");
-		}
+		string manifest = BuildCanonicalAnalyzerAuthorityManifest(entries);
+		string[] rows = AssertCanonicalAnalyzerAuthorityManifest(manifest);
+		Assert.Equal(12, rows.Length);
+		string expectedSha256 = GetExpectedAnalyzerAuthoritySha256(
+			OperatingSystem.IsMacOS(),
+			OperatingSystem.IsLinux(),
+			RuntimeInformation.OSArchitecture);
+		AssertExactAnalyzerAuthoritySha256(expectedSha256, manifest);
 	}
 
 	private static bool IsPathWithin(string candidate, string root)
@@ -11195,7 +11377,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 	{
 		Assert.True(prefix is
 			"IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2" or "COMPILER_INPUT_V2" or
-			"TOOLCHAIN_FILE_V2");
+			"TOOLCHAIN_FILE_V2" or "ANALYZER_V2");
 		var values = new string[fields.Count];
 		var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 		for (int index = 0; index < fields.Count; index++)
@@ -11227,7 +11409,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 	{
 		Assert.True(expectedPrefix is
 			"IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2" or "COMPILER_INPUT_V2" or
-			"TOOLCHAIN_FILE_V2");
+			"TOOLCHAIN_FILE_V2" or "ANALYZER_V2");
 		string prefix = expectedPrefix + "|";
 		Assert.StartsWith(prefix, row, StringComparison.Ordinal);
 		string payload = row[prefix.Length..];
@@ -12453,5 +12635,222 @@ public class LiquidOrdinaryWalletPlanWireTests
 		}
 		Assert.NotNull(rejection);
 		Assert.Contains(expectedFailure, rejection.Message, StringComparison.Ordinal);
+	}
+
+	private static string BuildCanonicalAnalyzerAuthorityManifest(
+		IEnumerable<(string Identity, string ContentSha256, string Provenance)> analyzers)
+	{
+		var entries = new List<string[]>();
+		foreach ((string identity, string contentSha256, string provenance) in analyzers)
+		{
+			entries.Add([identity, contentSha256, provenance]);
+		}
+		Assert.NotEmpty(entries);
+		for (int index = 1; index < entries.Count; index++)
+		{
+			string[] current = entries[index];
+			string currentKey = JsonSerializer.Serialize(current);
+			int insertion = index;
+			while (insertion > 0 && StringComparer.Ordinal.Compare(
+				JsonSerializer.Serialize(entries[insertion - 1]),
+				currentKey) > 0)
+			{
+				entries[insertion] = entries[insertion - 1];
+				insertion--;
+			}
+			entries[insertion] = current;
+		}
+
+		var manifest = new StringBuilder("ANALYZER_AUTHORITY_V2\n");
+		for (int index = 0; index < entries.Count; index++)
+		{
+			manifest.Append(BuildCanonicalAuthorityManifestRow(
+				"ANALYZER_V2",
+				[
+					index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+					entries[index][0],
+					entries[index][1],
+					entries[index][2],
+				]));
+			manifest.Append('\n');
+		}
+		string result = manifest.ToString();
+		_ = AssertCanonicalAnalyzerAuthorityManifest(result);
+		return result;
+	}
+
+	private static string[] AssertCanonicalAnalyzerAuthorityManifest(string manifest)
+	{
+		if (manifest.Contains('\r') || !manifest.EndsWith('\n'))
+		{
+			throw new Xunit.Sdk.XunitException(
+				$"Analyzer authority framing is not canonical. MANIFEST_SHA256|{Sha256Text(manifest)}");
+		}
+		string[] lines = manifest.Split('\n', StringSplitOptions.None);
+		if (lines.Length < 3 || lines[^1] != "")
+		{
+			throw new Xunit.Sdk.XunitException(
+				$"Analyzer authority terminal structure is not canonical. MANIFEST_SHA256|{Sha256Text(manifest)}");
+		}
+		if (!StringComparer.Ordinal.Equals(lines[0], "ANALYZER_AUTHORITY_V2"))
+		{
+			throw new Xunit.Sdk.XunitException(
+				$"Analyzer authority header is not canonical. HEADER_SHA256|{Sha256Text(lines[0])}");
+		}
+
+		var rows = new string[lines.Length - 2];
+		var identities = new HashSet<string>(StringComparer.Ordinal);
+		var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		string? priorEntry = null;
+		for (int lineIndex = 1; lineIndex < lines.Length - 1; lineIndex++)
+		{
+			string row = lines[lineIndex];
+			try
+			{
+				Assert.False(string.IsNullOrEmpty(row));
+				string[] fields = ParseCanonicalAuthorityManifestRow(row, "ANALYZER_V2", 4);
+				Assert.Equal(
+					(lineIndex - 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+					fields[0]);
+				AssertCanonicalAnalyzerAuthorityPath(fields[1], allowPackage: true);
+				Assert.Matches("^[0-9a-f]{64}$", fields[2]);
+				AssertCanonicalAnalyzerAuthorityPath(fields[3], allowPackage: false);
+				Assert.True(identities.Add(fields[1]));
+				Assert.True(aliases.Add(fields[1]));
+				string entry = JsonSerializer.Serialize(fields[1..]);
+				Assert.True(priorEntry is null || StringComparer.Ordinal.Compare(priorEntry, entry) < 0);
+				priorEntry = entry;
+				rows[lineIndex - 1] = row;
+			}
+			catch (Exception)
+			{
+				throw new Xunit.Sdk.XunitException(
+					$"Analyzer authority row {lineIndex - 1:D3} is not canonical. ROW_SHA256|{Sha256Text(row)}");
+			}
+		}
+		return rows;
+	}
+
+	private static void AssertCanonicalAnalyzerAuthorityPath(string value, bool allowPackage)
+	{
+		Assert.True(value.StartsWith("DOTNET|", StringComparison.Ordinal) ||
+			(allowPackage && value.StartsWith("NUGET|", StringComparison.Ordinal)));
+		int delimiter = value.IndexOf('|');
+		Assert.True(delimiter > 0 && delimiter < value.Length - 1);
+		Assert.DoesNotContain(value, char.IsControl);
+		AssertSafePackageRelativePath(value[(delimiter + 1)..]);
+	}
+
+	private static void AssertExactAnalyzerAuthoritySha256(string expectedSha256, string manifest)
+	{
+		string[] rows = AssertCanonicalAnalyzerAuthorityManifest(manifest);
+		string actualSha256 = Sha256Text(manifest);
+		if (StringComparer.Ordinal.Equals(expectedSha256, actualSha256))
+		{
+			return;
+		}
+
+		var diagnostics = new StringBuilder(actualSha256);
+		diagnostics.Append("\nCOUNT|").Append(rows.Length);
+		var entries = new string[rows.Length];
+		for (int index = 0; index < rows.Length; index++)
+		{
+			string[] fields = ParseCanonicalAuthorityManifestRow(rows[index], "ANALYZER_V2", 4);
+			diagnostics.Append("\nROW|").Append(index.ToString("D3", System.Globalization.CultureInfo.InvariantCulture));
+			diagnostics.Append("|ROW_SHA256|").Append(Sha256Text(rows[index]));
+			diagnostics.Append("|PATH_SHA256|").Append(Sha256Text(fields[1]));
+			diagnostics.Append("|CONTENT_SHA256|").Append(fields[2]);
+			diagnostics.Append("|PROVENANCE_SHA256|").Append(Sha256Text(fields[3]));
+			entries[index] = JsonSerializer.Serialize(fields[1..]);
+		}
+		Array.Sort(entries, StringComparer.Ordinal);
+		diagnostics.Append("\nSORTED_ENTRIES_SHA256|")
+			.Append(Sha256Text(string.Join('\n', entries) + "\n"));
+		throw new Xunit.Sdk.XunitException(diagnostics.ToString());
+	}
+
+	private static string GetExpectedAnalyzerAuthoritySha256(
+		bool isMacOs,
+		bool isLinux,
+		Architecture architecture)
+	{
+		if (isMacOs && !isLinux && architecture == Architecture.Arm64)
+		{
+			return "PENDING-MACOS-ARM64-ANALYZER-AUTHORITY-V2";
+		}
+		if (isLinux && !isMacOs && architecture == Architecture.X64)
+		{
+			return "PENDING-LINUX-X64-ANALYZER-AUTHORITY-V2";
+		}
+		throw new Xunit.Sdk.XunitException(
+			$"Unsupported analyzer authority platform flags/architecture: {isMacOs}/{isLinux}/{architecture}");
+	}
+
+	private static void AssertAnalyzerAuthorityPlatformRejected(
+		bool isMacOs,
+		bool isLinux,
+		Architecture architecture)
+	{
+		Xunit.Sdk.XunitException? rejection = null;
+		try
+		{
+			_ = GetExpectedAnalyzerAuthoritySha256(isMacOs, isLinux, architecture);
+		}
+		catch (Xunit.Sdk.XunitException exception)
+		{
+			rejection = exception;
+		}
+		Assert.NotNull(rejection);
+	}
+
+	private static void AssertAnalyzerAuthorityBuildRejected(
+		IEnumerable<(string Identity, string ContentSha256, string Provenance)> analyzers)
+	{
+		Xunit.Sdk.XunitException? rejection = null;
+		try
+		{
+			_ = BuildCanonicalAnalyzerAuthorityManifest(analyzers);
+		}
+		catch (Xunit.Sdk.XunitException exception)
+		{
+			rejection = exception;
+		}
+		Assert.NotNull(rejection);
+	}
+
+	private static void AssertAnalyzerAuthorityManifestRejected(string manifest)
+	{
+		Xunit.Sdk.XunitException? rejection = null;
+		try
+		{
+			_ = AssertCanonicalAnalyzerAuthorityManifest(manifest);
+		}
+		catch (Xunit.Sdk.XunitException exception)
+		{
+			rejection = exception;
+		}
+		Assert.NotNull(rejection);
+	}
+
+	private static void AssertExactAnalyzerAuthorityRejected(string expectedSha256, string manifest)
+	{
+		_ = GetExactAnalyzerAuthorityRejection(expectedSha256, manifest);
+	}
+
+	private static Xunit.Sdk.XunitException GetExactAnalyzerAuthorityRejection(
+		string expectedSha256,
+		string manifest)
+	{
+		Xunit.Sdk.XunitException? rejection = null;
+		try
+		{
+			AssertExactAnalyzerAuthoritySha256(expectedSha256, manifest);
+		}
+		catch (Xunit.Sdk.XunitException exception)
+		{
+			rejection = exception;
+		}
+		Assert.NotNull(rejection);
+		return rejection;
 	}
 }
