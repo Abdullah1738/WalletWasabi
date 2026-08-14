@@ -1460,6 +1460,14 @@ public class LiquidOrdinaryWalletPlanWireTests
 	{
 		const string currentRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 		const string otherRevision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+		const string numericRevision = "37647bc08a1af3de43979429880e40f14de20290";
+		const string filteredNumericRevision = "70000a12bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+		const string retainedBoundaryRevision = "65534abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+		const string filteredBoundaryRevision = "65535a12bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+		const string zeroPaddedRevision = "00001abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+		Assert.Equal(40, retainedBoundaryRevision.Length);
+		Assert.Equal(40, filteredBoundaryRevision.Length);
+		Assert.Equal(40, zeroPaddedRevision.Length);
 		Assert.Equal(
 			"1.2.3+release",
 			RemoveSdkSourceRevisionSuffix("1.2.3+release", "", currentRevision));
@@ -1524,6 +1532,30 @@ public class LiquidOrdinaryWalletPlanWireTests
 			"2.0.0-beta",
 			currentRevision,
 			pinnedNixProfile: false);
+		AssertLoadedProductBuildIdentityAuthority(
+			"2.0.0.0",
+			"2.0.0.0",
+			$"2.0.0-20260812-{currentRevision}",
+			currentRevision,
+			pinnedNixProfile: true);
+		AssertLoadedProductBuildIdentityAuthority(
+			"2.0.0.37647",
+			"2.0.0.37647",
+			$"2.0.0-20260812-{numericRevision}+{numericRevision}",
+			numericRevision,
+			pinnedNixProfile: true);
+		Assert.Equal(
+			"2.0.0.12",
+			GetPinnedNixVersionForDotnet($"2.0.0-20260812-{filteredNumericRevision}"));
+		Assert.Equal(
+			"2.0.0.65534",
+			GetPinnedNixVersionForDotnet($"2.0.0-20260812-{retainedBoundaryRevision}"));
+		Assert.Equal(
+			"2.0.0.12",
+			GetPinnedNixVersionForDotnet($"2.0.0-20260812-{filteredBoundaryRevision}"));
+		Assert.Equal(
+			"2.0.0.1",
+			GetPinnedNixVersionForDotnet($"2.0.0-20260812-{zeroPaddedRevision}"));
 		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
 			AssertLoadedProductBuildIdentityAuthority(
 				"1.2.3.4",
@@ -9435,8 +9467,62 @@ public class LiquidOrdinaryWalletPlanWireTests
 		Assert.Equal(fileVersion, parsedFileVersion.ToString());
 		if (pinnedNixProfile)
 		{
-			Assert.Equal("2.0.0.0", assemblyVersion);
+			Assert.Equal(GetPinnedNixVersionForDotnet(informationalVersion), assemblyVersion);
 			Assert.Equal(assemblyVersion, fileVersion);
 		}
+	}
+
+	private static string GetPinnedNixVersionForDotnet(string informationalVersion)
+	{
+		int metadataSeparator = informationalVersion.IndexOf('+', StringComparison.Ordinal);
+		string nixVersion = metadataSeparator < 0
+			? informationalVersion
+			: informationalVersion[..metadataSeparator];
+		var numericComponents = new List<string>();
+		int index = 0;
+		while (index < nixVersion.Length)
+		{
+			while (index < nixVersion.Length && nixVersion[index] is '.' or '-')
+			{
+				index++;
+			}
+			if (index == nixVersion.Length)
+			{
+				break;
+			}
+			int start = index;
+			if (char.IsAsciiDigit(nixVersion[index]))
+			{
+				while (index < nixVersion.Length && char.IsAsciiDigit(nixVersion[index]))
+				{
+					index++;
+				}
+				string component = nixVersion[start..index];
+				string canonical = component.TrimStart('0');
+				canonical = canonical.Length == 0 ? "0" : canonical;
+				if (canonical.Length < 5 ||
+					(canonical.Length == 5 && StringComparer.Ordinal.Compare(canonical, "65535") < 0))
+				{
+					numericComponents.Add(component);
+				}
+			}
+			else
+			{
+				while (index < nixVersion.Length &&
+					!char.IsAsciiDigit(nixVersion[index]) &&
+					nixVersion[index] is not ('.' or '-'))
+				{
+					index++;
+				}
+			}
+		}
+		Assert.NotEmpty(numericComponents);
+		while (numericComponents.Count < 4)
+		{
+			numericComponents.Add("0");
+		}
+		string versionProperty = string.Join('.', numericComponents.Take(4));
+		Assert.True(Version.TryParse(versionProperty, out Version? parsedVersion));
+		return parsedVersion.ToString();
 	}
 }
