@@ -60,9 +60,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private const string ExpectedDebugGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
 	private const string ExpectedReleaseGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedDebugImportClosureSha256 =
-		("48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6", "PENDING-LINUX-X64-DEBUG-IMPORT-AUTHORITY");
+		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "PENDING-LINUX-X64-DEBUG-IMPORT-AUTHORITY-V2");
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseImportClosureSha256 =
-		("48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6", "aac51133d8c7c0fbb471660161e3cf56df09947222958e7096bb2770ce73fed3");
+		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "PENDING-LINUX-X64-RELEASE-IMPORT-AUTHORITY-V2");
 	private const string ExpectedDebugReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
 	private const string ExpectedReleaseReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
 	private const string ExpectedDebugCompilerInputAuthoritySha256 = "bfea856edbef7d0f63be9ff1793d652ae55b86be1eeb626989b1675145c0d4da";
@@ -1106,7 +1106,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				buildAuthority.InvocationArguments));
 		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
 			AssertConfiguredAuthorityHashes(
-				buildAuthority.ImportClosureManifest + "IMPORT_EVENT|DUPLICATE\n",
+				buildAuthority.ImportClosureManifest + "IMPORT_EVENT_V2|[]\n",
 				buildAuthority.ReferenceAuthorityManifest,
 				buildAuthority.CompilerInputAuthorityManifest,
 				buildAuthority.ToolchainAuthorityManifest));
@@ -1116,15 +1116,76 @@ public class LiquidOrdinaryWalletPlanWireTests
 				buildAuthority.ReferenceAuthorityManifest,
 				buildAuthority.CompilerInputAuthorityManifest,
 				buildAuthority.ToolchainAuthorityManifest));
+		string mutatedImportAssetPath = buildAuthority.ImportClosureManifest.Replace(
+			"project.assets.json",
+			"project.assets.MUTATED.json",
+			StringComparison.Ordinal);
+		Assert.NotEqual(buildAuthority.ImportClosureManifest, mutatedImportAssetPath);
 		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
 			AssertConfiguredAuthorityHashes(
-				buildAuthority.ImportClosureManifest.Replace(
-					"project.assets.json|",
-					"project.assets.json|MUTATED-BYTE|",
-					StringComparison.Ordinal),
+				mutatedImportAssetPath,
 				buildAuthority.ReferenceAuthorityManifest,
 				buildAuthority.CompilerInputAuthorityManifest,
 				buildAuthority.ToolchainAuthorityManifest));
+		string blankImportRow = buildAuthority.ImportClosureManifest.Replace(
+			"\nPIN_V2|",
+			"\n\nPIN_V2|",
+			StringComparison.Ordinal);
+		Assert.NotEqual(buildAuthority.ImportClosureManifest, blankImportRow);
+		AssertConfiguredAuthorityHashesRejects(
+			blankImportRow,
+			buildAuthority.ReferenceAuthorityManifest,
+			buildAuthority.CompilerInputAuthorityManifest,
+			buildAuthority.ToolchainAuthorityManifest);
+		AssertConfiguredAuthorityHashesRejects(
+			buildAuthority.ImportClosureManifest[..^1],
+			buildAuthority.ReferenceAuthorityManifest,
+			buildAuthority.CompilerInputAuthorityManifest,
+			buildAuthority.ToolchainAuthorityManifest);
+		AssertConfiguredAuthorityHashesRejects(
+			buildAuthority.ImportClosureManifest + "\n",
+			buildAuthority.ReferenceAuthorityManifest,
+			buildAuthority.CompilerInputAuthorityManifest,
+			buildAuthority.ToolchainAuthorityManifest);
+		AssertConfiguredAuthorityHashesRejects(
+			buildAuthority.ImportClosureManifest.Replace("\n", "\r\n", StringComparison.Ordinal),
+			buildAuthority.ReferenceAuthorityManifest,
+			buildAuthority.CompilerInputAuthorityManifest,
+			buildAuthority.ToolchainAuthorityManifest);
+		foreach (string canonicalRowMutation in new[]
+		{
+			CreateImportManifestWithDuplicatedLastImport(buildAuthority.ImportClosureManifest),
+			CreateImportManifestWithoutLastImport(buildAuthority.ImportClosureManifest),
+			CreateImportManifestWithSwappedFirstImports(buildAuthority.ImportClosureManifest),
+			CreateImportManifestWithDuplicatedFirstPin(buildAuthority.ImportClosureManifest),
+			CreateImportManifestWithMutatedFirstImportField(
+				buildAuthority.ImportClosureManifest,
+				2,
+				"{REPO}/../outside.props"),
+			CreateImportManifestWithMutatedFirstImportField(
+				buildAuthority.ImportClosureManifest,
+				2,
+				"{REPO}\\..\\outside.props"),
+			CreateImportManifestWithMutatedFirstImportField(
+				buildAuthority.ImportClosureManifest,
+				2,
+				"$([MSBuild]::NormalizePath(`/tmp/unapproved.props`))"),
+			CreateImportManifestWithMutatedFirstImportField(
+				buildAuthority.ImportClosureManifest,
+				3,
+				"REPO|../outside.props"),
+			CreateImportManifestWithMutatedFirstImportField(
+				buildAuthority.ImportClosureManifest,
+				3,
+				"REPO|/absolute.props"),
+		})
+		{
+			AssertConfiguredAuthorityHashesRejects(
+				canonicalRowMutation,
+				buildAuthority.ReferenceAuthorityManifest,
+				buildAuthority.CompilerInputAuthorityManifest,
+				buildAuthority.ToolchainAuthorityManifest);
+		}
 
 		string packageMutationRoot = Path.Combine(
 			Path.GetTempPath(),
@@ -1257,20 +1318,197 @@ public class LiquidOrdinaryWalletPlanWireTests
 				$"/reference:{fallbackPackageRoot}-undeclared/{relativePackageFile}",
 				multiRoot);
 			Assert.DoesNotContain("{NUGET}", adjacentRootLookalike, StringComparison.Ordinal);
-			string normalizedImportExpression = NormalizeAuthorityStringWithPackages(
+			string normalizedImportExpression = NormalizeAndValidateUnexpandedImportProject(
 				$"$(ImportRoot)={buildAuthority.RepositoryRoot}/Directory.Build.props",
 				multiRoot,
-				("{REPO}", buildAuthority.RepositoryRoot),
-				("{DOTNET}", buildAuthority.DotnetRoot),
-				("{AUTHORITY}", nestedPackageRoot));
+				buildAuthority.RepositoryRoot,
+				buildAuthority.DotnetRoot,
+				undeclaredPackageRoot);
 			Assert.Equal("$(ImportRoot)={REPO}/Directory.Build.props", normalizedImportExpression);
-			string adjacentRepositoryLookalike = NormalizeAuthorityStringWithPackages(
+			Assert.Equal(
+				"$(ImportRoot)={NUGET}/example.props",
+				NormalizeAndValidateUnexpandedImportProject(
+					$"$(ImportRoot)={fallbackPackageRoot}/example.props",
+					multiRoot,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					undeclaredPackageRoot));
+			Assert.Equal(
+				"$(ImportRoot)={DOTNET}/sdk/example.props",
+				NormalizeAndValidateUnexpandedImportProject(
+					$"$(ImportRoot)={buildAuthority.DotnetRoot}/sdk/example.props",
+					multiRoot,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					undeclaredPackageRoot));
+			Assert.Equal(
+				"$(ImportRoot)={AUTHORITY}/example.props",
+				NormalizeAndValidateUnexpandedImportProject(
+					$"$(ImportRoot)={undeclaredPackageRoot}/example.props",
+					multiRoot,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					undeclaredPackageRoot));
+			Assert.Equal(
+				"$(MSBuildToolsPath)/Microsoft.Common.props",
+				NormalizeAndValidateUnexpandedImportProject(
+					"$(MSBuildToolsPath)/Microsoft.Common.props",
+					multiRoot,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					undeclaredPackageRoot));
+			Assert.Equal(
+				"$(Root)/x;../y",
+				NormalizeAndValidateUnexpandedImportProject(
+					"$(Root)/x;../y",
+					multiRoot,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					undeclaredPackageRoot));
+			Assert.Equal(
+				"$(MSBuildThisFileDirectory)../x.props",
+				NormalizeAndValidateUnexpandedImportProject(
+					"$(MSBuildThisFileDirectory)../x.props",
+					multiRoot,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					undeclaredPackageRoot));
+			Assert.Equal(
+				"$([MSBuild]::GetToolsDirectory32())/../x.props",
+				NormalizeAndValidateUnexpandedImportProject(
+					"$([MSBuild]::GetToolsDirectory32())/../x.props",
+					multiRoot,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					undeclaredPackageRoot));
+			Assert.Equal(
+				"$(Root)/packages+/x.props",
+				NormalizeAndValidateUnexpandedImportProject(
+					"$(Root)/packages+/x.props",
+					multiRoot,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					undeclaredPackageRoot));
+			Assert.Equal(
+				"$(Root)/foo?/x.props",
+				NormalizeAndValidateUnexpandedImportProject(
+					"$(Root)/foo?/x.props",
+					multiRoot,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					undeclaredPackageRoot));
+			foreach (string punctuationPath in new[]
+			{
+				"$(Root)/packages,/x.props",
+				"$(Root)/packages(/x.props",
+				"$(Root)/packages[/x.props",
+			})
+			{
+				Assert.Equal(
+					punctuationPath,
+					NormalizeAndValidateUnexpandedImportProject(
+						punctuationPath,
+						multiRoot,
+						buildAuthority.RepositoryRoot,
+						buildAuthority.DotnetRoot,
+						undeclaredPackageRoot));
+			}
+			Assert.Equal(
+				"{REPO}/nested/../inside.props",
+				NormalizeAndValidateUnexpandedImportProject(
+					$"{buildAuthority.RepositoryRoot}/nested/../inside.props",
+					multiRoot,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					undeclaredPackageRoot));
+			foreach (string rejectedImportExpression in new[]
+			{
+				"/tmp/unapproved.props",
+				"//server/share/unapproved.props",
+				"\\\\server\\share\\unapproved.props",
+				"C:\\temp\\unapproved.props",
+				"file:///tmp/unapproved.props",
+				"https://example.invalid/unapproved.props",
+				"$([MSBuild]::NormalizePath(`/tmp/unapproved.props`))",
+				"$([System.IO.Path]::Combine(a/b,/tmp/unapproved.props))",
+				"$(ImportRoot)=/tmp/unapproved.props",
+				$"{buildAuthority.RepositoryRoot}/../outside.props",
+				$"{buildAuthority.RepositoryRoot}/nested/../../outside.props",
+				$"{buildAuthority.DotnetRoot}/../outside.props",
+				$"{fallbackPackageRoot}/../outside.props",
+				$"{undeclaredPackageRoot}/../outside.props",
 				$"$(ImportRoot)={buildAuthority.RepositoryRoot}-undeclared/Directory.Build.props",
+				$"$(ImportRoot)={fallbackPackageRoot}-undeclared/example.props",
+				"{REPO}/literal-token.props",
+				"{DOTNET}/literal-token.props",
+				"{AUTHORITY}/literal-token.props",
+				"{NUGET}/literal-token.props",
+			})
+			{
+				Xunit.Sdk.XunitException exception = AssertUnexpandedImportProjectRejected(
+					rejectedImportExpression,
+					multiRoot,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					undeclaredPackageRoot);
+				Assert.DoesNotContain(rejectedImportExpression, exception.Message, StringComparison.Ordinal);
+			}
+
+			string hostileImportValue = "x|SOURCE|forged\nPIN_V2|[\"spoof\"]\r\\\"";
+			string hostileImportRow = BuildCanonicalImportManifestRow(
+				"IMPORT_EVENT_V2",
+				["0", "0", hostileImportValue, "REPO|Directory.Build.props", "1", "1", "null", "", ""]);
+			Assert.DoesNotContain('\n', hostileImportRow);
+			Assert.DoesNotContain('\r', hostileImportRow);
+			Assert.Equal(
+				hostileImportValue,
+				ParseCanonicalImportManifestRow(hostileImportRow, "IMPORT_EVENT_V2", 9)[2]);
+			string optionalImportExpression = NormalizeAndValidateUnexpandedImportProject(
+				"$(OptionalImport)/x.props",
 				multiRoot,
-				("{REPO}", buildAuthority.RepositoryRoot),
-				("{DOTNET}", buildAuthority.DotnetRoot),
-				("{AUTHORITY}", nestedPackageRoot));
-			Assert.DoesNotContain("{REPO}", adjacentRepositoryLookalike, StringComparison.Ordinal);
+				buildAuthority.RepositoryRoot,
+				buildAuthority.DotnetRoot,
+				undeclaredPackageRoot);
+			string skippedImportRow = BuildCanonicalImportManifestRow(
+				"IMPORT_EVENT_V2",
+				["0", "1", optionalImportExpression, "REPO|Directory.Build.props", "1", "1", "null", "", ""]);
+			string[] skippedImportFields = ParseCanonicalImportManifestRow(skippedImportRow, "IMPORT_EVENT_V2", 9);
+			Assert.Equal("$(OptionalImport)/x.props", skippedImportFields[2]);
+			Assert.Equal("null", skippedImportFields[6]);
+			Assert.Equal("", skippedImportFields[7]);
+			Assert.Equal("", skippedImportFields[8]);
+			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+				ParseCanonicalImportManifestRow("IMPORT_EVENT_V2|[\"0\"]", "IMPORT_EVENT_V2", 9));
+			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+				ParseCanonicalImportManifestRow(
+					"IMPORT_EVENT_V2|[0,\"0\",\"A\",\"REPO|x\",\"1\",\"1\",\"null\",\"\",\"\"]",
+					"IMPORT_EVENT_V2",
+					9));
+			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+				ParseCanonicalImportManifestRow(
+					"IMPORT_EVENT_V2|[ \"0\",\"0\",\"A\",\"REPO|x\",\"1\",\"1\",\"null\",\"\",\"\"]",
+					"IMPORT_EVENT_V2",
+					9));
+			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+				BuildCanonicalImportManifestRow(
+					"IMPORT_EVENT_V2",
+					["0", "0", "\ud800", "REPO|x", "1", "1", "null", "", ""]));
+			string repeatedA0 = BuildCanonicalImportManifestRow(
+				"IMPORT_EVENT_V2",
+				["0", "0", "A", "REPO|Directory.Build.props", "1", "1", "null", "", ""]);
+			string distinctB1 = BuildCanonicalImportManifestRow(
+				"IMPORT_EVENT_V2",
+				["1", "0", "B", "REPO|Directory.Build.props", "1", "1", "null", "", ""]);
+			string repeatedA2 = BuildCanonicalImportManifestRow(
+				"IMPORT_EVENT_V2",
+				["2", "0", "A", "REPO|Directory.Build.props", "1", "1", "null", "", ""]);
+			string orderedRepeatedImports = string.Join('\n', repeatedA0, distinctB1, repeatedA2);
+			Assert.NotEqual(
+				Sha256Text(orderedRepeatedImports),
+				Sha256Text(string.Join('\n', distinctB1, repeatedA0, repeatedA2)));
+			Assert.Equal(
+				"A",
+				ParseCanonicalImportManifestRow(repeatedA2, "IMPORT_EVENT_V2", 9)[2]);
 
 			File.WriteAllBytes(fallbackPackageFile, [1, 2, 3, 5]);
 			AssertPackagePathRejected(
@@ -5057,33 +5295,63 @@ public class LiquidOrdinaryWalletPlanWireTests
 		for (int index = 0; index < imports.Count; index++)
 		{
 			ProjectImportedEventArgs imported = imports[index];
-			string importedPath = imported.ImportedProjectFile ?? "";
-			string unexpandedProject = NormalizeAuthorityStringWithPackages(
-				imported.UnexpandedProject ?? "",
+			string rawUnexpandedProject = Assert.IsType<string>(imported.UnexpandedProject);
+			Assert.False(string.IsNullOrWhiteSpace(rawUnexpandedProject));
+			string unexpandedProject = NormalizeAndValidateUnexpandedImportProject(
+				rawUnexpandedProject,
 				packageAuthority,
-				("{REPO}", repositoryRoot),
-				("{DOTNET}", dotnetRoot),
-				("{AUTHORITY}", authorityRoot));
-			string rowPrefix = $"IMPORT_EVENT|{index:D3}|IGNORED|{imported.ImportIgnored}|UNEXPANDED|{unexpandedProject}|" +
-				$"SOURCE|{NormalizeOptionalAuthorityPath(imported.ProjectFile, repositoryRoot, dotnetRoot, packageAuthority)}|" +
-				$"LOCATION|{imported.LineNumber}:{imported.ColumnNumber}";
-			if (string.IsNullOrWhiteSpace(importedPath))
+				repositoryRoot,
+				dotnetRoot,
+				authorityRoot);
+			string sourcePath = Assert.IsType<string>(imported.ProjectFile);
+			Assert.False(string.IsNullOrWhiteSpace(sourcePath));
+			sourcePath = NormalizeAuthorityPath(sourcePath, repositoryRoot, dotnetRoot, packageAuthority);
+
+			string resolvedState;
+			string resolvedPath;
+			string resolvedSha256;
+			if (imported.ImportedProjectFile is null)
 			{
-				rows.Add(rowPrefix + "|RESOLVED|EMPTY");
-				continue;
+				resolvedState = "null";
+				resolvedPath = "";
+				resolvedSha256 = "";
 			}
-			string path = Path.GetFullPath(importedPath);
-			AssertRegularAuthorityFile(path, "captured import");
-			paths.Add(path);
-			rows.Add(rowPrefix + $"|RESOLVED|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority)}|SHA256|" +
-				GetBuildAuthorityFileSha256(
+			else if (imported.ImportedProjectFile.Length == 0)
+			{
+				resolvedState = "empty";
+				resolvedPath = "";
+				resolvedSha256 = "";
+			}
+			else
+			{
+				Assert.False(string.IsNullOrWhiteSpace(imported.ImportedProjectFile));
+				string path = Path.GetFullPath(imported.ImportedProjectFile);
+				AssertRegularAuthorityFile(path, "captured import");
+				paths.Add(path);
+				resolvedState = "file";
+				resolvedPath = NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority);
+				resolvedSha256 = GetBuildAuthorityFileSha256(
 					path,
 					projectAssetsFile,
 					packagesLockFile,
 					ExpectedTargetFramework,
 					repositoryRoot,
 					dotnetRoot,
-					packageAuthority));
+					packageAuthority);
+			}
+			rows.Add(BuildCanonicalImportManifestRow(
+				"IMPORT_EVENT_V2",
+				[
+					index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+					imported.ImportIgnored ? "1" : "0",
+					unexpandedProject,
+					sourcePath,
+					imported.LineNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+					imported.ColumnNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+					resolvedState,
+					resolvedPath,
+					resolvedSha256,
+				]));
 		}
 		Assert.NotEmpty(imports);
 
@@ -5101,15 +5369,19 @@ public class LiquidOrdinaryWalletPlanWireTests
 		foreach (string path in independentlyPinned)
 		{
 			AssertRegularAuthorityFile(path, "pinned build-authority file");
-			rows.Add($"PIN|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority)}|" +
-				GetBuildAuthorityFileSha256(
-					path,
-					projectAssetsFile,
-					packagesLockFile,
-					ExpectedTargetFramework,
-					repositoryRoot,
-					dotnetRoot,
-					packageAuthority));
+			rows.Add(BuildCanonicalImportManifestRow(
+				"PIN_V2",
+				[
+					NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority),
+					GetBuildAuthorityFileSha256(
+						path,
+						projectAssetsFile,
+						packagesLockFile,
+						ExpectedTargetFramework,
+						repositoryRoot,
+						dotnetRoot,
+						packageAuthority),
+				]));
 		}
 		string[] cscInputRows = inputs
 			.OrderBy(input => input.ParameterName ?? "", StringComparer.Ordinal)
@@ -5137,7 +5409,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 			orderedArgs,
 			taskInputs,
 			paths.ToArray(),
-			string.Join('\n', rows) + "\n",
+			"IMPORT_AUTHORITY_V2\n" + string.Join('\n', rows) + "\n",
 			cscManifest);
 	}
 
@@ -9566,32 +9838,480 @@ public class LiquidOrdinaryWalletPlanWireTests
 			$"Unsupported import authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
 	}
 
+	private static string NormalizeAndValidateUnexpandedImportProject(
+		string value,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		string repositoryRoot,
+		string dotnetRoot,
+		string authorityRoot)
+	{
+		foreach (string token in new[] { "{REPO}", "{DOTNET}", "{AUTHORITY}", "{NUGET}" })
+		{
+			int tokenOffset = value.IndexOf(token, StringComparison.Ordinal);
+			if (tokenOffset >= 0)
+			{
+				throw new Xunit.Sdk.XunitException(
+					$"Reserved import authority token at offset {tokenOffset}; expression SHA256 {Sha256Text(value)}.");
+			}
+		}
+		string normalized = NormalizeAuthorityStringWithPackages(
+			value,
+			packageAuthority,
+			("{REPO}", repositoryRoot),
+			("{DOTNET}", dotnetRoot),
+			("{AUTHORITY}", authorityRoot));
+		AssertCanonicalUnexpandedImportProject(normalized);
+		return normalized;
+	}
+
+	private static void AssertCanonicalUnexpandedImportProject(string value)
+	{
+		int backslashOffset = value.IndexOf('\\');
+		if (backslashOffset >= 0)
+		{
+			throw new Xunit.Sdk.XunitException(
+				$"Noncanonical import path separator at offset {backslashOffset}; expression SHA256 {Sha256Text(value)}.");
+		}
+		AssertNoUnapprovedAbsoluteImportPath(value);
+		foreach (string token in new[] { "{REPO}", "{DOTNET}", "{AUTHORITY}", "{NUGET}" })
+		{
+			int searchOffset = 0;
+			while (searchOffset < value.Length)
+			{
+				int tokenOffset = value.IndexOf(token, searchOffset, StringComparison.Ordinal);
+				if (tokenOffset < 0)
+				{
+					break;
+				}
+				AssertTokenRelativeImportPathDoesNotEscape(value, tokenOffset + token.Length);
+				searchOffset = tokenOffset + token.Length;
+			}
+		}
+	}
+
+	private static void AssertTokenRelativeImportPathDoesNotEscape(string value, int tokenEndOffset)
+	{
+		if (tokenEndOffset >= value.Length || value[tokenEndOffset] != '/')
+		{
+			return;
+		}
+
+		int depth = 0;
+		int componentStart = tokenEndOffset + 1;
+		for (int index = componentStart; index <= value.Length; index++)
+		{
+			bool atEnd = index == value.Length;
+			bool atSeparator = !atEnd && value[index] == '/';
+			bool atBoundary = !atEnd && IsLiteralImportPathTerminator(value, index);
+			if (!atEnd && !atSeparator && !atBoundary)
+			{
+				continue;
+			}
+
+			ReadOnlySpan<char> component = value.AsSpan(componentStart, index - componentStart);
+			if (component.SequenceEqual(".."))
+			{
+				if (depth == 0)
+				{
+					throw new Xunit.Sdk.XunitException(
+						$"Import authority path escapes its normalized root at offset {componentStart}; expression SHA256 {Sha256Text(value)}.");
+				}
+				depth--;
+			}
+			else if (component.Length > 0 && !component.SequenceEqual("."))
+			{
+				depth++;
+			}
+			if (atEnd || atBoundary)
+			{
+				return;
+			}
+			componentStart = index + 1;
+		}
+	}
+
+	private static void AssertNoUnapprovedAbsoluteImportPath(string value)
+	{
+		for (int index = 0; index < value.Length; index++)
+		{
+			bool atBoundary = IsRootedImportPathStart(value, index);
+			bool rootedSlash = value[index] == '/' && atBoundary;
+			bool rootedBackslash = value[index] == '\\' && atBoundary;
+			bool rootedDrive = index + 2 < value.Length &&
+				char.IsAsciiLetter(value[index]) && value[index + 1] == ':' && value[index + 2] is '/' or '\\' && atBoundary;
+			if (rootedSlash || rootedBackslash || rootedDrive)
+			{
+				throw new Xunit.Sdk.XunitException(
+					$"Unapproved absolute import path at offset {index}; expression SHA256 {Sha256Text(value)}.");
+			}
+		}
+	}
+
+	private static bool IsRootedImportPathStart(string value, int offset)
+	{
+		if (offset == 0)
+		{
+			return true;
+		}
+		char previous = value[offset - 1];
+		if (char.IsWhiteSpace(previous) || previous is '"' or '\'' or '`' or ':' or ';')
+		{
+			return true;
+		}
+		if (previous is ',' or '(')
+		{
+			return IsInsideActiveMsBuildExpression(value, offset - 1);
+		}
+		return previous == '=' && !HasPriorImportPathSeparatorInExpression(value, offset);
+	}
+
+	private static bool HasPriorImportPathSeparatorInExpression(string value, int exclusiveEndOffset)
+	{
+		for (int index = exclusiveEndOffset - 1; index >= 0; index--)
+		{
+			if (value[index] is '/' or '\\')
+			{
+				return true;
+			}
+			if (char.IsWhiteSpace(value[index]) || value[index] is '"' or '\'' or '`' or ';')
+			{
+				return false;
+			}
+		}
+		return false;
+	}
+
+	private static bool IsInsideActiveMsBuildExpression(string value, int exclusiveEndOffset)
+	{
+		int expressionDepth = 0;
+		char quote = '\0';
+		for (int index = 0; index < exclusiveEndOffset; index++)
+		{
+			char character = value[index];
+			if (quote != '\0')
+			{
+				if (character == quote)
+				{
+					quote = '\0';
+				}
+				continue;
+			}
+			if (character is '"' or '\'' or '`')
+			{
+				quote = character;
+				continue;
+			}
+			if (character == '$' && index + 1 < exclusiveEndOffset && value[index + 1] == '(')
+			{
+				expressionDepth++;
+				index++;
+				continue;
+			}
+			if (expressionDepth > 0 && character == '(')
+			{
+				expressionDepth++;
+			}
+			else if (expressionDepth > 0 && character == ')')
+			{
+				expressionDepth--;
+			}
+		}
+		return expressionDepth > 0 && quote == '\0';
+	}
+
+	private static bool IsLiteralImportPathTerminator(string value, int offset)
+	{
+		char character = value[offset];
+		return char.IsWhiteSpace(character) ||
+			character is '"' or '\'' or '`' or ';' ||
+			(character == ',' && IsInsideActiveMsBuildExpression(value, offset));
+	}
+
+	private static string BuildCanonicalImportManifestRow(string prefix, IReadOnlyList<string> fields)
+	{
+		Assert.True(prefix is "IMPORT_EVENT_V2" or "PIN_V2");
+		var values = new string[fields.Count];
+		var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+		for (int index = 0; index < fields.Count; index++)
+		{
+			string value = Assert.IsType<string>(fields[index]);
+			try
+			{
+				_ = strictUtf8.GetByteCount(value);
+			}
+			catch (EncoderFallbackException)
+			{
+				throw new Xunit.Sdk.XunitException($"Import manifest field {index} is not valid UTF-8 text.");
+			}
+			values[index] = value;
+		}
+		return prefix + "|" + JsonSerializer.Serialize(values);
+	}
+
+	private static string[] ParseCanonicalImportManifestRow(string row, string expectedPrefix, int expectedFieldCount)
+	{
+		string prefix = expectedPrefix + "|";
+		Assert.StartsWith(prefix, row, StringComparison.Ordinal);
+		string payload = row[prefix.Length..];
+		using JsonDocument document = JsonDocument.Parse(
+			payload,
+			new JsonDocumentOptions
+			{
+				AllowTrailingCommas = false,
+				CommentHandling = JsonCommentHandling.Disallow,
+				MaxDepth = 4,
+			});
+		Assert.Equal(JsonValueKind.Array, document.RootElement.ValueKind);
+		Assert.Equal(expectedFieldCount, document.RootElement.GetArrayLength());
+		var fields = new string[expectedFieldCount];
+		for (int index = 0; index < fields.Length; index++)
+		{
+			JsonElement field = document.RootElement[index];
+			Assert.Equal(JsonValueKind.String, field.ValueKind);
+			fields[index] = Assert.IsType<string>(field.GetString());
+		}
+		Assert.Equal(payload, JsonSerializer.Serialize(fields));
+		return fields;
+	}
+
+	private static string[] AssertCanonicalImportAuthorityManifest(string manifest)
+	{
+		Assert.DoesNotContain('\r', manifest);
+		Assert.True(manifest.EndsWith('\n'));
+		string[] lines = manifest.Split('\n', StringSplitOptions.None);
+		Assert.True(lines.Length >= 3);
+		Assert.Equal("", lines[^1]);
+		Assert.Equal("IMPORT_AUTHORITY_V2", lines[0]);
+		var rows = new string[lines.Length - 2];
+		int importCount = 0;
+		int pinCount = 0;
+		bool pinsStarted = false;
+		for (int lineIndex = 1; lineIndex < lines.Length - 1; lineIndex++)
+		{
+			string row = lines[lineIndex];
+			Assert.False(string.IsNullOrEmpty(row));
+			rows[lineIndex - 1] = row;
+			if (row.StartsWith("IMPORT_EVENT_V2|", StringComparison.Ordinal))
+			{
+				Assert.False(pinsStarted, "An import event appeared after the pinned-file section.");
+				string[] fields = ParseCanonicalImportManifestRow(row, "IMPORT_EVENT_V2", 9);
+				Assert.Equal(importCount.ToString(System.Globalization.CultureInfo.InvariantCulture), fields[0]);
+				Assert.True(fields[1] is "0" or "1");
+				Assert.False(string.IsNullOrWhiteSpace(fields[2]));
+				AssertCanonicalUnexpandedImportProject(fields[2]);
+				Assert.False(string.IsNullOrWhiteSpace(fields[3]));
+				AssertCanonicalNormalizedImportPath(fields[3]);
+				AssertCanonicalNonNegativeInteger(fields[4]);
+				AssertCanonicalNonNegativeInteger(fields[5]);
+				if (fields[6] is "null" or "empty")
+				{
+					Assert.Equal("", fields[7]);
+					Assert.Equal("", fields[8]);
+				}
+				else
+				{
+					Assert.Equal("file", fields[6]);
+					AssertCanonicalNormalizedImportPath(fields[7]);
+					Assert.Matches("^[0-9a-f]{64}$", fields[8]);
+				}
+				importCount++;
+			}
+			else
+			{
+				pinsStarted = true;
+				string[] fields = ParseCanonicalImportManifestRow(row, "PIN_V2", 2);
+				AssertCanonicalNormalizedImportPath(fields[0]);
+				Assert.Matches("^[0-9a-f]{64}$", fields[1]);
+				pinCount++;
+			}
+		}
+		Assert.True(importCount > 0);
+		Assert.Equal(8, pinCount);
+		return rows;
+	}
+
+	private static void AssertCanonicalNormalizedImportPath(string value)
+	{
+		Assert.True(
+			value.StartsWith("REPO|", StringComparison.Ordinal) ||
+			value.StartsWith("DOTNET|", StringComparison.Ordinal) ||
+			value.StartsWith("NUGET|", StringComparison.Ordinal));
+		int delimiter = value.IndexOf('|');
+		Assert.True(delimiter > 0 && delimiter < value.Length - 1);
+		Assert.DoesNotContain('\\', value);
+		Assert.DoesNotContain('\r', value);
+		Assert.DoesNotContain('\n', value);
+		AssertSafePackageRelativePath(value[(delimiter + 1)..]);
+	}
+
+	private static void AssertCanonicalNonNegativeInteger(string value)
+	{
+		Assert.True(int.TryParse(
+			value,
+			System.Globalization.NumberStyles.None,
+			System.Globalization.CultureInfo.InvariantCulture,
+			out int parsed));
+		Assert.True(parsed >= 0);
+		Assert.Equal(parsed.ToString(System.Globalization.CultureInfo.InvariantCulture), value);
+	}
+
+	private static void AssertConfiguredAuthorityHashesRejects(
+		string importManifest,
+		string referenceManifest,
+		string compilerManifest,
+		string toolchainManifest)
+	{
+		bool rejected = false;
+		try
+		{
+			AssertConfiguredAuthorityHashes(importManifest, referenceManifest, compilerManifest, toolchainManifest);
+		}
+		catch (Xunit.Sdk.XunitException)
+		{
+			rejected = true;
+		}
+		Assert.True(rejected, "The mutated import-authority manifest was accepted.");
+	}
+
+	private static string CreateImportManifestWithDuplicatedLastImport(string manifest)
+	{
+		string[] lines = SplitCanonicalImportAuthorityManifest(manifest);
+		int firstPinLineIndex = GetFirstPinManifestLineIndex(lines);
+		string[] duplicateFields = ParseCanonicalImportManifestRow(
+			lines[firstPinLineIndex - 1],
+			"IMPORT_EVENT_V2",
+			9);
+		duplicateFields[0] = (firstPinLineIndex - 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+		var mutatedLines = new List<string>(lines);
+		mutatedLines.Insert(
+			firstPinLineIndex,
+			BuildCanonicalImportManifestRow("IMPORT_EVENT_V2", duplicateFields));
+		string mutated = string.Join('\n', mutatedLines);
+		Assert.NotEqual(manifest, mutated);
+		_ = AssertCanonicalImportAuthorityManifest(mutated);
+		return mutated;
+	}
+
+	private static string CreateImportManifestWithoutLastImport(string manifest)
+	{
+		string[] lines = SplitCanonicalImportAuthorityManifest(manifest);
+		int firstPinLineIndex = GetFirstPinManifestLineIndex(lines);
+		var mutatedLines = new List<string>(lines);
+		mutatedLines.RemoveAt(firstPinLineIndex - 1);
+		string mutated = string.Join('\n', mutatedLines);
+		Assert.NotEqual(manifest, mutated);
+		_ = AssertCanonicalImportAuthorityManifest(mutated);
+		return mutated;
+	}
+
+	private static string CreateImportManifestWithSwappedFirstImports(string manifest)
+	{
+		string[] lines = SplitCanonicalImportAuthorityManifest(manifest);
+		int firstPinLineIndex = GetFirstPinManifestLineIndex(lines);
+		Assert.True(firstPinLineIndex >= 3);
+		string[] firstFields = ParseCanonicalImportManifestRow(lines[1], "IMPORT_EVENT_V2", 9);
+		string[] secondFields = ParseCanonicalImportManifestRow(lines[2], "IMPORT_EVENT_V2", 9);
+		for (int fieldIndex = 1; fieldIndex < firstFields.Length; fieldIndex++)
+		{
+			(firstFields[fieldIndex], secondFields[fieldIndex]) = (secondFields[fieldIndex], firstFields[fieldIndex]);
+		}
+		lines[1] = BuildCanonicalImportManifestRow("IMPORT_EVENT_V2", firstFields);
+		lines[2] = BuildCanonicalImportManifestRow("IMPORT_EVENT_V2", secondFields);
+		string mutated = string.Join('\n', lines);
+		Assert.NotEqual(manifest, mutated);
+		_ = AssertCanonicalImportAuthorityManifest(mutated);
+		return mutated;
+	}
+
+	private static string CreateImportManifestWithDuplicatedFirstPin(string manifest)
+	{
+		string[] lines = SplitCanonicalImportAuthorityManifest(manifest);
+		int firstPinLineIndex = GetFirstPinManifestLineIndex(lines);
+		var mutatedLines = new List<string>(lines);
+		mutatedLines.Insert(firstPinLineIndex, lines[firstPinLineIndex]);
+		string mutated = string.Join('\n', mutatedLines);
+		Assert.NotEqual(manifest, mutated);
+		return mutated;
+	}
+
+	private static string CreateImportManifestWithMutatedFirstImportField(
+		string manifest,
+		int fieldIndex,
+		string value)
+	{
+		string[] lines = SplitCanonicalImportAuthorityManifest(manifest);
+		string[] fields = ParseCanonicalImportManifestRow(lines[1], "IMPORT_EVENT_V2", 9);
+		Assert.InRange(fieldIndex, 0, fields.Length - 1);
+		fields[fieldIndex] = value;
+		lines[1] = BuildCanonicalImportManifestRow("IMPORT_EVENT_V2", fields);
+		string mutated = string.Join('\n', lines);
+		Assert.NotEqual(manifest, mutated);
+		return mutated;
+	}
+
+	private static string[] SplitCanonicalImportAuthorityManifest(string manifest)
+	{
+		_ = AssertCanonicalImportAuthorityManifest(manifest);
+		return manifest.Split('\n', StringSplitOptions.None);
+	}
+
+	private static int GetFirstPinManifestLineIndex(string[] lines)
+	{
+		for (int lineIndex = 1; lineIndex < lines.Length - 1; lineIndex++)
+		{
+			if (lines[lineIndex].StartsWith("PIN_V2|", StringComparison.Ordinal))
+			{
+				return lineIndex;
+			}
+		}
+		throw new Xunit.Sdk.XunitException("The canonical import-authority manifest has no pinned-file section.");
+	}
+
+	private static Xunit.Sdk.XunitException AssertUnexpandedImportProjectRejected(
+		string value,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		string repositoryRoot,
+		string dotnetRoot,
+		string authorityRoot)
+	{
+		try
+		{
+			_ = NormalizeAndValidateUnexpandedImportProject(
+				value,
+				packageAuthority,
+				repositoryRoot,
+				dotnetRoot,
+				authorityRoot);
+		}
+		catch (Xunit.Sdk.XunitException exception)
+		{
+			return exception;
+		}
+		throw new Xunit.Sdk.XunitException("The unapproved import expression was accepted.");
+	}
+
 	private static void AssertExactImportAuthoritySha256(string expectedSha256, string manifest)
 	{
+		string[] rows = AssertCanonicalImportAuthorityManifest(manifest);
 		string actualSha256 = Sha256Text(manifest);
 		if (StringComparer.Ordinal.Equals(expectedSha256, actualSha256))
 		{
 			return;
 		}
 
-		string[] rows = manifest.Split('\n', StringSplitOptions.RemoveEmptyEntries);
 		var importRows = new StringBuilder();
 		var pinRows = new StringBuilder();
 		var diagnostics = new StringBuilder(actualSha256);
 		for (int index = 0; index < rows.Length; index++)
 		{
 			string row = rows[index];
-			if (row.StartsWith("IMPORT_EVENT|", StringComparison.Ordinal))
+			if (row.StartsWith("IMPORT_EVENT_V2|", StringComparison.Ordinal))
 			{
 				importRows.Append(row).Append('\n');
 			}
-			else if (row.StartsWith("PIN|", StringComparison.Ordinal))
+			else if (row.StartsWith("PIN_V2|", StringComparison.Ordinal))
 			{
 				pinRows.Append(row).Append('\n');
-			}
-			else
-			{
-				throw new Xunit.Sdk.XunitException($"Unknown import-authority row category at index {index}.");
 			}
 			diagnostics.Append("\nROW_SHA256|");
 			diagnostics.Append(index.ToString("D3", System.Globalization.CultureInfo.InvariantCulture));
