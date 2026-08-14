@@ -221,6 +221,59 @@ public class LiquidOrdinaryWalletPlanWireTests
 					new string('0', 40)));
 			Assert.Equal("/resource:", resourceEntry.Identity);
 			Assert.Equal("REPO|modules/resource,with-comma.bin", resourceEntry.Detail);
+
+			const string SyntheticSha256 = "0000000000000000000000000000000000000000000000000000000000000000";
+			var requiredCompilerEntries = new List<CompilerAuthorityEntry>
+			{
+				CreateCompilerAuthorityEntry("ARG", "/noconfig"),
+				CreateCompilerAuthorityEntry("SOURCE", "REPO|source.cs", sha256: SyntheticSha256),
+				CreateCompilerAuthorityEntry("ANALYZER", "NUGET|analyzer.dll", sha256: SyntheticSha256),
+				CreateCompilerAuthorityEntry("REFERENCE", "DOTNET|reference.dll", sha256: SyntheticSha256),
+				CreateCompilerAuthorityEntry("ANALYZER_DEP", "NUGET|analyzer-dependency.dll", sha256: SyntheticSha256),
+				CreateCompilerAuthorityEntry("DIAGNOSTIC_TASK", "DOTNET|task.dll", sha256: SyntheticSha256),
+				CreateCompilerAuthorityEntry("DIAGNOSTIC_COMPILER", "DOTNET|csc", sha256: SyntheticSha256),
+			};
+			for (int index = 0; index < 7; index++)
+			{
+				requiredCompilerEntries.Add(CreateCompilerAuthorityEntry(
+					"DIAGNOSTIC_PARAMETER",
+					$"parameter-{index}"));
+			}
+			requiredCompilerEntries.Add(CreateCompilerAuthorityEntry(
+				"CSC_START",
+				"DOTNET|task.dll",
+				sha256: SyntheticSha256));
+			requiredCompilerEntries.Add(CreateCompilerAuthorityEntry(
+				"CSC_INPUT",
+				"Sources",
+				qualifier: "Compile",
+				values: JsonSerializer.Serialize(new[] { "REPO|source.cs" })));
+			requiredCompilerEntries.Add(CreateCompilerAuthorityEntry("CSC_ARG", "/noconfig"));
+
+			string zeroAuxiliaryManifest = BuildCanonicalCompilerInputAuthorityManifest(requiredCompilerEntries);
+			string[] zeroAuxiliaryRows = AssertCanonicalCompilerInputAuthorityManifest(zeroAuxiliaryManifest);
+			Assert.DoesNotContain(zeroAuxiliaryRows, row =>
+				ParseCanonicalAuthorityManifestRow(row, "COMPILER_INPUT_V2", 8)[1] == "AUX");
+
+			var presentAuxiliaryEntries = requiredCompilerEntries.ToList();
+			presentAuxiliaryEntries.Insert(
+				5,
+				CreateCompilerAuthorityEntry(
+					"AUX",
+					"/sourcelink:",
+					detail: "REPO|sourcelink.json",
+					sha256: SyntheticSha256));
+			string presentAuxiliaryManifest = BuildCanonicalCompilerInputAuthorityManifest(presentAuxiliaryEntries);
+			string mutatedAuxiliaryHashManifest =
+				CreateCompilerManifestWithMutatedFirstAuxiliarySha256(presentAuxiliaryManifest);
+			_ = AssertCanonicalCompilerInputAuthorityManifest(mutatedAuxiliaryHashManifest);
+			Assert.NotEqual(presentAuxiliaryManifest, mutatedAuxiliaryHashManifest);
+			Assert.NotEqual(
+				Sha256Text(presentAuxiliaryManifest),
+				Sha256Text(mutatedAuxiliaryHashManifest));
+			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+				AssertCanonicalCompilerInputAuthorityManifest(
+					CreateCompilerManifestWithInvalidAuxiliaryPrefix(presentAuxiliaryManifest)));
 		}
 		finally
 		{
@@ -1366,13 +1419,22 @@ public class LiquidOrdinaryWalletPlanWireTests
 			new[] { "left|right", "second\nline" },
 			ParseCanonicalCompilerAuthorityValues(hostileCompilerInputFields[6]));
 
-		foreach (string canonicalCompilerMutation in new[]
+		var canonicalCompilerMutations = new List<string>
 		{
 			CreateCompilerManifestWithoutFirstArgument(buildAuthority.CompilerInputAuthorityManifest),
 			CreateCompilerManifestWithDuplicatedFirstArgument(buildAuthority.CompilerInputAuthorityManifest),
 			CreateCompilerManifestWithSwappedFirstArguments(buildAuthority.CompilerInputAuthorityManifest),
-			CreateCompilerManifestWithMutatedFirstAuxiliarySha256(buildAuthority.CompilerInputAuthorityManifest),
-		})
+		};
+		bool hasCompilerAuxiliaryRow = AssertCanonicalCompilerInputAuthorityManifest(
+			buildAuthority.CompilerInputAuthorityManifest).Any(row =>
+				ParseCanonicalAuthorityManifestRow(row, "COMPILER_INPUT_V2", 8)[1] == "AUX");
+		if (hasCompilerAuxiliaryRow)
+		{
+			canonicalCompilerMutations.Add(
+				CreateCompilerManifestWithMutatedFirstAuxiliarySha256(
+					buildAuthority.CompilerInputAuthorityManifest));
+		}
+		foreach (string canonicalCompilerMutation in canonicalCompilerMutations)
 		{
 			Assert.NotEqual(buildAuthority.CompilerInputAuthorityManifest, canonicalCompilerMutation);
 			_ = AssertCanonicalCompilerInputAuthorityManifest(canonicalCompilerMutation);
@@ -1382,7 +1444,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				canonicalCompilerMutation,
 				buildAuthority.ToolchainAuthorityManifest);
 		}
-		foreach (string malformedCompilerMutation in new[]
+		var malformedCompilerMutations = new List<string>
 		{
 			buildAuthority.CompilerInputAuthorityManifest[..^1],
 			buildAuthority.CompilerInputAuthorityManifest + "\n",
@@ -1394,8 +1456,14 @@ public class LiquidOrdinaryWalletPlanWireTests
 			CreateCompilerManifestWithUnknownFirstSection(buildAuthority.CompilerInputAuthorityManifest),
 			CreateCompilerManifestWithExtraFirstField(buildAuthority.CompilerInputAuthorityManifest),
 			CreateCompilerManifestWithNumericFirstIndex(buildAuthority.CompilerInputAuthorityManifest),
-			CreateCompilerManifestWithInvalidAuxiliaryPrefix(buildAuthority.CompilerInputAuthorityManifest),
-		})
+		};
+		if (hasCompilerAuxiliaryRow)
+		{
+			malformedCompilerMutations.Add(
+				CreateCompilerManifestWithInvalidAuxiliaryPrefix(
+					buildAuthority.CompilerInputAuthorityManifest));
+		}
+		foreach (string malformedCompilerMutation in malformedCompilerMutations)
 		{
 			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
 				AssertCanonicalCompilerInputAuthorityManifest(malformedCompilerMutation));
@@ -6146,7 +6214,6 @@ public class LiquidOrdinaryWalletPlanWireTests
 		Assert.True(sectionCounts.GetValueOrDefault("ANALYZER") > 0);
 		Assert.True(sectionCounts.GetValueOrDefault("REFERENCE") > 0);
 		Assert.True(sectionCounts.GetValueOrDefault("ANALYZER_DEP") > 0);
-		Assert.True(sectionCounts.GetValueOrDefault("AUX") > 0);
 		Assert.Equal(1, sectionCounts.GetValueOrDefault("DIAGNOSTIC_TASK"));
 		Assert.Equal(1, sectionCounts.GetValueOrDefault("DIAGNOSTIC_COMPILER"));
 		Assert.Equal(7, sectionCounts.GetValueOrDefault("DIAGNOSTIC_PARAMETER"));
@@ -11068,9 +11135,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private static string CreateCompilerManifestWithMutatedFirstAuxiliarySha256(string manifest)
 	{
 		List<string[]> fields = ReadCanonicalCompilerAuthorityFields(manifest);
-		string[] auxiliary = Assert.Single(
-			fields,
-			row => row[1] == "AUX" && row[3] == "/sourcelink:");
+		int auxiliaryIndex = fields.FindIndex(row => row[1] == "AUX");
+		Assert.True(auxiliaryIndex >= 0);
+		string[] auxiliary = fields[auxiliaryIndex];
 		auxiliary[7] = auxiliary[7][0] == '0'
 			? "1" + auxiliary[7][1..]
 			: "0" + auxiliary[7][1..];
