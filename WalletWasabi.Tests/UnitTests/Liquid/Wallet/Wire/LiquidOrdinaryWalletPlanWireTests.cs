@@ -63,8 +63,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "PENDING-LINUX-X64-DEBUG-IMPORT-AUTHORITY-V2");
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseImportClosureSha256 =
 		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "98ded521ee2cdcc32e313eac442b46ede3e23bc22d5f8321e24135a60dfd9c05");
-	private const string ExpectedDebugReferenceAuthoritySha256 = "ef61142bc45c04415be4ee870ff4b4db9345dc8beb787c67ee67bc6c7d3d8fdb";
-	private const string ExpectedReleaseReferenceAuthoritySha256 = "ef61142bc45c04415be4ee870ff4b4db9345dc8beb787c67ee67bc6c7d3d8fdb";
+	private static readonly (string MacOsArm64, string LinuxX64) ExpectedDebugReferenceAuthoritySha256 =
+		("ef61142bc45c04415be4ee870ff4b4db9345dc8beb787c67ee67bc6c7d3d8fdb", "PENDING-LINUX-X64-DEBUG-REFERENCE-AUTHORITY-V2");
+	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseReferenceAuthoritySha256 =
+		("ef61142bc45c04415be4ee870ff4b4db9345dc8beb787c67ee67bc6c7d3d8fdb", "9e4db43c7921291756478b9a2fed358d8082a7d9ebaff84a6920dc51f71fead7");
 	private const string ExpectedDebugCompilerInputAuthoritySha256 = "bfea856edbef7d0f63be9ff1793d652ae55b86be1eeb626989b1675145c0d4da";
 	private const string ExpectedReleaseCompilerInputAuthoritySha256 = "8c6fb2e578c28bc89488be5e1b1cf638ea79c16554dd3b24def00d5bad2b8e99";
 	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 = "37cc68f484c4bcf067132754644d2644cd6750016d2a4ba3eaba08f7fb80dbc1";
@@ -5902,11 +5904,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 	{
 #if DEBUG
 		string expectedImport = GetExpectedImportClosureSha256(debug: true);
-		string expectedReferences = ExpectedDebugReferenceAuthoritySha256;
+		string expectedReferences = GetExpectedReferenceAuthoritySha256(debug: true);
 		string expectedCompiler = ExpectedDebugCompilerInputAuthoritySha256;
 #else
 		string expectedImport = GetExpectedImportClosureSha256(debug: false);
-		string expectedReferences = ExpectedReleaseReferenceAuthoritySha256;
+		string expectedReferences = GetExpectedReferenceAuthoritySha256(debug: false);
 		string expectedCompiler = ExpectedReleaseCompilerInputAuthoritySha256;
 #endif
 		AssertExactImportAuthoritySha256(expectedImport, importManifest);
@@ -10034,6 +10036,24 @@ public class LiquidOrdinaryWalletPlanWireTests
 		}
 		throw new Xunit.Sdk.XunitException(
 			$"Unsupported import authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
+	}
+
+	private static string GetExpectedReferenceAuthoritySha256(bool debug)
+	{
+		if (OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64)
+		{
+			return debug
+				? ExpectedDebugReferenceAuthoritySha256.MacOsArm64
+				: ExpectedReleaseReferenceAuthoritySha256.MacOsArm64;
+		}
+		if (OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64)
+		{
+			return debug
+				? ExpectedDebugReferenceAuthoritySha256.LinuxX64
+				: ExpectedReleaseReferenceAuthoritySha256.LinuxX64;
+		}
+		throw new Xunit.Sdk.XunitException(
+			$"Unsupported reference authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
 	}
 
 	private static string NormalizeAndValidateUnexpandedImportProject(
