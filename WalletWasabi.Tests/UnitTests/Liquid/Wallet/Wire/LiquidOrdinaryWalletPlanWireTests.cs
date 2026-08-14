@@ -74,7 +74,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 =
 		"PENDING-MACOS-ARM64-TOOLCHAIN-AUTHORITY-V2";
 	private const string ExpectedLinuxX64ToolchainDependencyAuthoritySha256 =
-		"PENDING-LINUX-X64-TOOLCHAIN-AUTHORITY-V2";
+		"8b677c4a014bc645d41520f40d538b91f42122489d05cdd3bd7080a4b5f6fabb";
 	private static readonly string[] CompilerAuthoritySectionOrder =
 	[
 		"ARG", "SOURCE", "ANALYZER", "REFERENCE", "ADDITIONAL", "ANALYZERCONFIG", "EMBED",
