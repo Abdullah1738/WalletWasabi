@@ -2230,6 +2230,8 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass65_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<GetDirectExceptionValues>d__61",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+IndexedAssetList",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireV1CorpusTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireV1CorpusTests+<>c__DisplayClass3_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>O",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c",
@@ -2294,6 +2296,9 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+StatefulPayloadList",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+StatefulRowList",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+ThrowingPayloadList",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus+<>c",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus+CorpusTree",
 		];
 		string[] addedProductionTypes =
 		[
