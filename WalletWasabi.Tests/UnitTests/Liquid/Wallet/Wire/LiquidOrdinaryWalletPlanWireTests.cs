@@ -23,6 +23,7 @@ using System.Xml;
 using System.Xml.Linq;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Logging;
+using NuGet.Versioning;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using WalletWasabi.Liquid.Addresses;
@@ -37,11 +38,13 @@ using Xunit;
 using LiquidOrdinaryWalletPlanEncodedFrame = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanEncodedFrame;
 using LiquidOrdinaryWalletPlanFundingBatch = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanFundingBatch;
 using LiquidOrdinaryWalletPlanFundingRow = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanFundingRow;
+using LockedPackageAuthority = (string Type, string? Requested, string ResolvedVersion, string ContentHash, System.Collections.Generic.IReadOnlyDictionary<string, string> Dependencies);
 
 namespace WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire;
 
 public class LiquidOrdinaryWalletPlanWireTests
 {
+	private const string LinuxX64TargetFramework = "net10.0/linux-x64";
 	private const string ExpectedDebugWireSurfaceSha256 = "fc58193325d4e920020d9b24e8f3caf9ca8a6da2275b7680a56d463e4e7e9de6";
 	private const string ExpectedReleaseWireSurfaceSha256 = "09609a26c51dc66d9b870f842cd98eac42843d28a31dca53dc9ed93e8e470fec";
 	private const string ExpectedDebugWireClosureSha256 = "014cf01f4bda42f8c36a7dd41cae78e5d464ad716f598256d0ff5642493a2c54";
@@ -56,13 +59,14 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private const string ExpectedReleaseAmbientClosureSha256 = "190c3955f0e3a75fcf1497e92604b514ce93769c31d601e66c54862da397deee";
 	private const string ExpectedDebugGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
 	private const string ExpectedReleaseGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
-	private const string ExpectedDebugImportClosureSha256 = "932584d307786452fe44a5582afb6c5eba174aa4500fd0ba7b3bc2e0ad6c3601";
-	private const string ExpectedReleaseImportClosureSha256 = "932584d307786452fe44a5582afb6c5eba174aa4500fd0ba7b3bc2e0ad6c3601";
-	private const string ExpectedDebugReferenceAuthoritySha256 = "ff62b53abb82dfe960380727580f4b800389ce3eed5a64ee8c6a80196c34b2eb";
-	private const string ExpectedReleaseReferenceAuthoritySha256 = "ff62b53abb82dfe960380727580f4b800389ce3eed5a64ee8c6a80196c34b2eb";
-	private const string ExpectedDebugCompilerInputAuthoritySha256 = "62ac04eeaf0a813c3ba77f7544250d222cb9ac387b899e82269d74356e600dfa";
-	private const string ExpectedReleaseCompilerInputAuthoritySha256 = "5e84372882fab8c2203eafab592644f935c59ae4aec7dce00dd454d6d9d31bee";
-	private const string ExpectedToolchainDependencyAuthoritySha256 = "76752a17554778c4a90942141dbc1f4ed23b5382d7dd54843767bd1df67ae08e";
+	private const string ExpectedDebugImportClosureSha256 = "9dd06e6189fca6349908bc42cd607b89d294f8db6e205a2d6d7722d48490de7e";
+	private const string ExpectedReleaseImportClosureSha256 = "9dd06e6189fca6349908bc42cd607b89d294f8db6e205a2d6d7722d48490de7e";
+	private const string ExpectedDebugReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
+	private const string ExpectedReleaseReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
+	private const string ExpectedDebugCompilerInputAuthoritySha256 = "bfea856edbef7d0f63be9ff1793d652ae55b86be1eeb626989b1675145c0d4da";
+	private const string ExpectedReleaseCompilerInputAuthoritySha256 = "8c6fb2e578c28bc89488be5e1b1cf638ea79c16554dd3b24def00d5bad2b8e99";
+	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 = "44c95f2e20ccce3f65ea9c5fecf8e2f72e6eb011d2a9b5822f3b2b3586a64643";
+	private const string ExpectedLinuxX64ToolchainDependencyAuthoritySha256 = "PENDING-LINUX-X64-TOOLCHAIN-AUTHORITY";
 	private const string IssuedAssetHex =
 		"2222222222222222222222222222222222222222222222222222222222222222";
 	private const string PublicKeyHex =
@@ -1263,6 +1267,41 @@ public class LiquidOrdinaryWalletPlanWireTests
 				buildAuthority.RepositoryRoot,
 				buildAuthority.DotnetRoot,
 				multiRoot);
+
+			string nestedAuthorityRoot = Path.Combine(packageMutationRoot, "specific-authority");
+			Directory.CreateDirectory(nestedAuthorityRoot);
+			string nestedAuthorityFile = Path.Combine(nestedAuthorityRoot, "input.txt");
+			File.WriteAllText(nestedAuthorityFile, "authority", Encoding.UTF8);
+			Assert.Equal(
+				"AUTHORITY|input.txt",
+				NormalizeAuthorityPath(
+					nestedAuthorityFile,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					multiRoot,
+					nestedAuthorityRoot));
+			Assert.Equal(
+				"DOTNET|dotnet",
+				NormalizeAuthorityPath(
+					Path.Combine(buildAuthority.DotnetRoot, "dotnet"),
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					multiRoot));
+			bool exactRootOverlapRejected = false;
+			try
+			{
+				_ = NormalizeAuthorityPath(
+					nestedAuthorityFile,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					multiRoot,
+					buildAuthority.RepositoryRoot);
+			}
+			catch (Xunit.Sdk.XunitException)
+			{
+				exactRootOverlapRejected = true;
+			}
+			Assert.True(exactRootOverlapRejected, "An exactly overlapping authority root was accepted.");
 		}
 		finally
 		{
@@ -1460,6 +1499,180 @@ public class LiquidOrdinaryWalletPlanWireTests
 			Directory.CreateDirectory(firstPrimary);
 			Directory.CreateDirectory(secondPrimary);
 			Directory.CreateDirectory(secondFallback);
+			string sourceLinkFixture = Path.Combine(firstRoot, "WalletWasabi.sourcelink.json");
+			string sourcePattern = firstRepository.Replace('\\', '/').TrimEnd('/') + "/*";
+			string sourceUri = $"https://raw.githubusercontent.com/Abdullah1738/WalletWasabi/{currentRevision}/*";
+			File.WriteAllText(
+				sourceLinkFixture,
+				$"{{\"documents\":{{{JsonSerializer.Serialize(sourcePattern)}:{JsonSerializer.Serialize(sourceUri)}}}}}",
+				Encoding.UTF8);
+			string canonicalSourceLink = GetCompilerAuxiliaryInputAuthoritySha256(
+				"/sourcelink:",
+				sourceLinkFixture,
+				firstRepository,
+				firstRoot,
+				currentRevision);
+			Assert.False(string.IsNullOrWhiteSpace(canonicalSourceLink));
+			File.WriteAllText(
+				sourceLinkFixture,
+				$"{{\"documents\":{{\"{{REPO}}/*\":{JsonSerializer.Serialize(sourceUri)}}}}}",
+				Encoding.UTF8);
+			bool reservedSourceLinkTokenRejected = false;
+			try
+			{
+				_ = GetCompilerAuxiliaryInputAuthoritySha256(
+					"/sourcelink:",
+					sourceLinkFixture,
+					firstRepository,
+					firstRoot,
+					currentRevision);
+			}
+			catch (Xunit.Sdk.XunitException)
+			{
+				reservedSourceLinkTokenRejected = true;
+			}
+			Assert.True(reservedSourceLinkTokenRejected, "A reserved SourceLink authority token was accepted as raw input.");
+
+			const string SystemEventsIdentity = "Microsoft.Win32.SystemEvents/10.0.2";
+			const string SqliteIdentity = "SQLitePCLRaw.lib.e_sqlite3/2.1.11";
+			const string LinuxNativeAsset = "runtimes/linux-x64/native/libe_sqlite3.so";
+			string systemEventsBase =
+				"{\"type\":\"package\",\"compile\":{},\"runtime\":{},\"build\":{},\"runtimeTargets\":{" +
+				$"\"runtimes/win/lib/net10.0/Microsoft.Win32.SystemEvents.dll\":{{\"assetType\":\"runtime\",\"rid\":\"win\"}}}}}}";
+			const string SystemEventsRid =
+				"{\"type\":\"package\",\"compile\":{},\"runtime\":{},\"build\":{}}";
+			string sqliteBase =
+				"{\"type\":\"package\",\"compile\":{},\"runtime\":{},\"build\":{},\"runtimeTargets\":{" +
+				$"{JsonSerializer.Serialize(LinuxNativeAsset)}:{{\"assetType\":\"native\",\"rid\":\"linux-x64\"}}}}}}";
+			string sqliteRid =
+				"{\"type\":\"package\",\"compile\":{},\"runtime\":{},\"native\":{" +
+				$"{JsonSerializer.Serialize(LinuxNativeAsset)}:{{}}}},\"build\":{{}}}}";
+			string baseRidTarget =
+				$"{{{JsonSerializer.Serialize(SystemEventsIdentity)}:{systemEventsBase}," +
+				$"{JsonSerializer.Serialize(SqliteIdentity)}:{sqliteBase}}}";
+			string exactRidTarget =
+				$"{{{JsonSerializer.Serialize(SystemEventsIdentity)}:{SystemEventsRid}," +
+				$"{JsonSerializer.Serialize(SqliteIdentity)}:{sqliteRid}}}";
+			const string ExactRidProject = "{\"runtimes\":{\"linux-x64\":{\"#import\":[]}}}";
+			using (JsonDocument ridFixture = JsonDocument.Parse(
+				$"{{\"base\":{baseRidTarget},\"rid\":{exactRidTarget},\"project\":{ExactRidProject}}}"))
+			{
+				AssertExactLinuxX64AssetsOverlay(
+					ridFixture.RootElement.GetProperty("base"),
+					ridFixture.RootElement.GetProperty("rid"),
+					ridFixture.RootElement.GetProperty("project"));
+			}
+			string extraRidTarget = exactRidTarget[..^1] + ",\"Extra.Package/1.0.0\":{\"type\":\"package\"}}";
+			bool extraRidIdentityRejected = false;
+			try
+			{
+				using JsonDocument mutation = JsonDocument.Parse(
+					$"{{\"base\":{baseRidTarget},\"rid\":{extraRidTarget},\"project\":{ExactRidProject}}}");
+				AssertExactLinuxX64AssetsOverlay(
+					mutation.RootElement.GetProperty("base"),
+					mutation.RootElement.GetProperty("rid"),
+					mutation.RootElement.GetProperty("project"));
+			}
+			catch (Xunit.Sdk.XunitException)
+			{
+				extraRidIdentityRejected = true;
+			}
+			Assert.True(extraRidIdentityRejected, "An extra linux-x64 target identity was accepted.");
+			bool missingRidIdentityRejected = false;
+			try
+			{
+				string missingRidTarget =
+					$"{{{JsonSerializer.Serialize(SystemEventsIdentity)}:{SystemEventsRid}}}";
+				using JsonDocument mutation = JsonDocument.Parse(
+					$"{{\"base\":{baseRidTarget},\"rid\":{missingRidTarget},\"project\":{ExactRidProject}}}");
+				AssertExactLinuxX64AssetsOverlay(
+					mutation.RootElement.GetProperty("base"),
+					mutation.RootElement.GetProperty("rid"),
+					mutation.RootElement.GetProperty("project"));
+			}
+			catch (Xunit.Sdk.XunitException)
+			{
+				missingRidIdentityRejected = true;
+			}
+			Assert.True(missingRidIdentityRejected, "A missing linux-x64 target identity was accepted.");
+			bool wrongRidRuntimeRejected = false;
+			try
+			{
+				const string WrongRidProject = "{\"runtimes\":{\"linux-arm64\":{\"#import\":[]}}}";
+				using JsonDocument mutation = JsonDocument.Parse(
+					$"{{\"base\":{baseRidTarget},\"rid\":{exactRidTarget},\"project\":{WrongRidProject}}}");
+				AssertExactLinuxX64AssetsOverlay(
+					mutation.RootElement.GetProperty("base"),
+					mutation.RootElement.GetProperty("rid"),
+					mutation.RootElement.GetProperty("project"));
+			}
+			catch (Xunit.Sdk.XunitException)
+			{
+				wrongRidRuntimeRejected = true;
+			}
+			Assert.True(wrongRidRuntimeRejected, "An unapproved project runtime was accepted.");
+			bool wrongNativeSelectionRejected = false;
+			try
+			{
+				string wrongSqliteRid = sqliteRid.Replace(
+					LinuxNativeAsset,
+					"runtimes/linux-arm64/native/libe_sqlite3.so",
+					StringComparison.Ordinal);
+				string wrongRidTarget =
+					$"{{{JsonSerializer.Serialize(SystemEventsIdentity)}:{SystemEventsRid}," +
+					$"{JsonSerializer.Serialize(SqliteIdentity)}:{wrongSqliteRid}}}";
+				using JsonDocument mutation = JsonDocument.Parse(
+					$"{{\"base\":{baseRidTarget},\"rid\":{wrongRidTarget},\"project\":{ExactRidProject}}}");
+				AssertExactLinuxX64AssetsOverlay(
+					mutation.RootElement.GetProperty("base"),
+					mutation.RootElement.GetProperty("rid"),
+					mutation.RootElement.GetProperty("project"));
+			}
+			catch (Xunit.Sdk.XunitException)
+			{
+				wrongNativeSelectionRejected = true;
+			}
+			Assert.True(wrongNativeSelectionRejected, "An altered SQLite native RID selection was accepted.");
+
+			string systemHash = CreateSemanticRestoreContentHash(9);
+			string sqliteHash = CreateSemanticRestoreContentHash(10);
+			string systemLock =
+				$"{{\"type\":\"Direct\",\"requested\":\"[10.0.2, )\",\"resolved\":\"10.0.2\",\"contentHash\":{JsonSerializer.Serialize(systemHash)}}}";
+			string sqliteLock =
+				$"{{\"type\":\"Transitive\",\"resolved\":\"2.1.11\",\"contentHash\":{JsonSerializer.Serialize(sqliteHash)}}}";
+			string lockBase =
+				$"{JsonSerializer.Serialize("Microsoft.Win32.SystemEvents")}:{systemLock}," +
+				$"{JsonSerializer.Serialize("SQLitePCLRaw.lib.e_sqlite3")}:{sqliteLock}";
+			string ridLockFixture = Path.Combine(firstRoot, "rid-packages.lock.json");
+			File.WriteAllText(
+				ridLockFixture,
+				$"{{\"version\":2,\"dependencies\":{{\"net10.0\":{{{lockBase}}}," +
+				$"\"{LinuxX64TargetFramework}\":{{{lockBase}}}}}}}",
+				Encoding.UTF8);
+			(IReadOnlyDictionary<string, LockedPackageAuthority> ridLockAuthority, bool hasRidLockOverlay) =
+				ReadLockedPackageAuthority(ridLockFixture, "net10.0");
+			Assert.True(hasRidLockOverlay);
+			Assert.Equal(2, ridLockAuthority.Count);
+			string mutatedSqliteLock = sqliteLock.Replace(
+				JsonSerializer.Serialize(sqliteHash),
+				JsonSerializer.Serialize(CreateSemanticRestoreContentHash(11)),
+				StringComparison.Ordinal);
+			bool mismatchedRidLockRejected = false;
+			try
+			{
+				File.WriteAllText(
+					ridLockFixture,
+					$"{{\"version\":2,\"dependencies\":{{\"net10.0\":{{{lockBase}}}," +
+					$"\"{LinuxX64TargetFramework}\":{{{JsonSerializer.Serialize("Microsoft.Win32.SystemEvents")}:{systemLock}," +
+					$"{JsonSerializer.Serialize("SQLitePCLRaw.lib.e_sqlite3")}:{mutatedSqliteLock}}}}}}}",
+					Encoding.UTF8);
+				_ = ReadLockedPackageAuthority(ridLockFixture, "net10.0");
+			}
+			catch (Xunit.Sdk.XunitException)
+			{
+				mismatchedRidLockRejected = true;
+			}
+			Assert.True(mismatchedRidLockRejected, "A divergent linux-x64 lock overlay was accepted.");
 
 			string detachedRepository = Path.Combine(fixtureRoot, "git-detached");
 			string detachedGitDirectory = Path.Combine(detachedRepository, ".git");
@@ -1504,6 +1717,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 
 			string firstImport = CreateSemanticRestorePackageImport(firstPrimary, [1, 2, 3, 4]);
 			string secondImport = CreateSemanticRestorePackageImport(secondFallback, [1, 2, 3, 4]);
+			string expectedContentHash = CreateSemanticRestoreContentHash(7);
 			string firstAssets = WriteSemanticRestoreFixture(
 				firstRepository,
 				firstDotnet,
@@ -1511,7 +1725,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				[firstPrimary],
 				firstImport,
 				"1.2.3",
-				CreateSemanticRestoreContentHash(7),
+				expectedContentHash,
 				"example.package/1.2.3");
 			string secondAssets = WriteSemanticRestoreFixture(
 				secondRepository,
@@ -1520,8 +1734,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 				[secondPrimary, secondFallback],
 				secondImport,
 				"1.2.3",
-				CreateSemanticRestoreContentHash(7),
-				"example.package/1.2.3");
+				expectedContentHash,
+				"example.package/1.2.3",
+				usePinnedNixFallbackProfile: true);
 			string secondOfflineSource = Path.Combine(secondRoot, "source");
 			Directory.CreateDirectory(secondOfflineSource);
 			File.WriteAllText(
@@ -1544,6 +1759,474 @@ public class LiquidOrdinaryWalletPlanWireTests
 				secondDotnet,
 				secondAuthority);
 			Assert.Equal(firstManifest, secondManifest);
+			string firstPayloadManifest = BuildPackagePayloadAuthorityManifest(firstAssets, firstAuthority);
+			string secondPayloadManifest = BuildPackagePayloadAuthorityManifest(secondAssets, secondAuthority);
+			Assert.Equal(firstPayloadManifest, secondPayloadManifest);
+			const string NativePayload = "runtimes/linux-x64/native/libexample.so";
+			string firstNativePayload = Path.Combine(
+				firstPrimary,
+				"example.package/1.2.3",
+				NativePayload.Replace('/', Path.DirectorySeparatorChar));
+			byte[] firstNativeBytes = File.ReadAllBytes(firstNativePayload);
+			firstNativeBytes[0] ^= 1;
+			File.WriteAllBytes(firstNativePayload, firstNativeBytes);
+			Assert.NotEqual(
+				firstPayloadManifest,
+				BuildPackagePayloadAuthorityManifest(firstAssets, firstAuthority));
+			firstNativeBytes[0] ^= 1;
+			File.WriteAllBytes(firstNativePayload, firstNativeBytes);
+			string secondNativePayload = Path.Combine(
+				secondFallback,
+				"example.package/1.2.3",
+				NativePayload.Replace('/', Path.DirectorySeparatorChar));
+			byte[] secondNativeBytes = File.ReadAllBytes(secondNativePayload);
+			secondNativeBytes[^1] ^= 1;
+			File.WriteAllBytes(secondNativePayload, secondNativeBytes);
+			Assert.NotEqual(
+				secondPayloadManifest,
+				BuildPackagePayloadAuthorityManifest(secondAssets, secondAuthority));
+			secondNativeBytes[^1] ^= 1;
+			File.WriteAllBytes(secondNativePayload, secondNativeBytes);
+			File.WriteAllText(
+				secondAssets,
+				File.ReadAllText(secondAssets).Replace(
+					"\"enableAudit\":\"true\"",
+					"\"enableAudit\":\"false\"",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			Assert.Equal(
+				firstManifest,
+				BuildSemanticRestoreFixtureManifest(
+					secondAssets,
+					secondRepository,
+					secondDotnet,
+					secondAuthority));
+
+			File.WriteAllText(
+				firstAssets,
+				File.ReadAllText(firstAssets).Replace(".signature.p7s", ".SIGNATURE.P7S", StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			File.WriteAllText(
+				firstAssets,
+				File.ReadAllText(firstAssets).Replace(
+					"\".signature.p7s\"",
+					"\".signature.p7s\",\".nix-patched\"",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			File.WriteAllText(
+				secondAssets,
+				File.ReadAllText(secondAssets).Replace(".nix-patched", ".NIX-PATCHED", StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			WriteSemanticRestoreFixture(
+				secondRepository,
+				secondDotnet,
+				secondPrimary,
+				[secondPrimary, secondFallback],
+				secondImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3",
+				usePinnedNixFallbackProfile: true);
+			string firstPackageDirectory = Path.Combine(firstPrimary, "example.package/1.2.3");
+			File.Delete(Path.Combine(firstPackageDirectory, ".signature.p7s"));
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			File.Delete(Path.Combine(firstPackageDirectory, "lib/net10.0/Example.Package.dll"));
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			string secondPackageDirectory = Path.Combine(secondFallback, "example.package/1.2.3");
+			File.WriteAllBytes(
+				Path.Combine(secondPackageDirectory, ".nupkg.metadata"),
+				Encoding.ASCII.GetBytes("{}"));
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			WriteSemanticRestoreFixture(
+				secondRepository,
+				secondDotnet,
+				secondPrimary,
+				[secondPrimary, secondFallback],
+				secondImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3",
+				usePinnedNixFallbackProfile: true);
+			File.Delete(Path.Combine(secondPackageDirectory, ".nix-patched"));
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			WriteSemanticRestoreFixture(
+				secondRepository,
+				secondDotnet,
+				secondPrimary,
+				[secondPrimary, secondFallback],
+				secondImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3",
+				usePinnedNixFallbackProfile: true);
+
+			string firstLock = Path.Combine(firstRepository, "WalletWasabi/packages.lock.json");
+			string normalHashProperty = $"\"sha512\":{JsonSerializer.Serialize(expectedContentHash)},";
+			string normalAssetsText = File.ReadAllText(firstAssets);
+			Assert.Contains(normalHashProperty, normalAssetsText, StringComparison.Ordinal);
+			File.WriteAllText(
+				firstAssets,
+				normalAssetsText.Replace(normalHashProperty, "", StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			File.WriteAllText(
+				firstAssets,
+				File.ReadAllText(firstAssets).Replace(
+					expectedContentHash,
+					CreateSemanticRestoreContentHash(8),
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			File.WriteAllText(
+				firstLock,
+				File.ReadAllText(firstLock).Replace(
+					JsonSerializer.Serialize(expectedContentHash),
+					JsonSerializer.Serialize("not-base64"),
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			File.WriteAllText(
+				firstLock,
+				File.ReadAllText(firstLock).Replace(
+					JsonSerializer.Serialize(expectedContentHash),
+					"42",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			WriteSemanticPackagesLockFixture(
+				firstLock,
+				"1.2.3",
+				expectedContentHash,
+				additionalPackageId: "example.package");
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticPackagesLockFixture(
+				firstLock,
+				"1.2.3",
+				expectedContentHash,
+				additionalPackageId: "Extra.Package");
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticPackagesLockFixture(
+				firstLock,
+				"1.2.3",
+				expectedContentHash,
+				dependencyId: "Missing.Package");
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticPackagesLockFixture(
+				firstLock,
+				"1.2.3",
+				expectedContentHash,
+				dependencyId: "Example.Package",
+				dependencyMinimumVersion: "9.0.0");
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticPackagesLockFixture(
+				firstLock,
+				"1.2.3",
+				expectedContentHash,
+				dependencyId: "Example.Package",
+				dependencyAliasId: "example.package");
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticPackagesLockFixture(firstLock, "1.2.3", expectedContentHash);
+			File.WriteAllText(
+				firstLock,
+				File.ReadAllText(firstLock).Replace("[1.2.3, )", "[1.2.4, )", StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticPackagesLockFixture(firstLock, "1.2.3", expectedContentHash);
+			File.WriteAllText(
+				firstLock,
+				File.ReadAllText(firstLock).Replace("[1.2.3, )", "not-a-range", StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			string prereleaseImport = CreateSemanticRestorePackageImport(
+				firstPrimary,
+				Convert.FromHexString("01020304"),
+				dependencyVersion: "1.2.3-alpha");
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				prereleaseImport,
+				"1.2.3-alpha",
+				expectedContentHash,
+				"example.package/1.2.3-alpha");
+			File.WriteAllText(
+				firstLock,
+				File.ReadAllText(firstLock).Replace(
+					"[1.2.3-alpha, )",
+					"[1.2.3, )",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				prereleaseImport,
+				"1.2.3-alpha",
+				expectedContentHash,
+				"example.package/1.2.3-alpha");
+			WriteSemanticPackagesLockFixture(
+				firstLock,
+				"1.2.3-alpha",
+				expectedContentHash,
+				dependencyId: "Example.Package",
+				dependencyMinimumVersion: "1.2.3-beta");
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticPackagesLockFixture(firstLock, "1.2.3", expectedContentHash);
+			normalAssetsText = File.ReadAllText(firstAssets);
+			int librariesStart = normalAssetsText.IndexOf("\"libraries\":{", StringComparison.Ordinal) +
+				"\"libraries\":{".Length;
+			int librariesEnd = normalAssetsText.IndexOf(
+				"},\"projectFileDependencyGroups\"",
+				librariesStart,
+				StringComparison.Ordinal);
+			Assert.True(librariesStart >= "\"libraries\":{".Length && librariesEnd > librariesStart);
+			File.WriteAllText(
+				firstAssets,
+				normalAssetsText[..librariesStart] + normalAssetsText[librariesEnd..],
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			File.WriteAllText(
+				firstAssets,
+				File.ReadAllText(firstAssets).Replace("\"type\":\"package\"", "\"type\":42", StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			File.WriteAllText(
+				firstLock,
+				File.ReadAllText(firstLock).Replace("\"resolved\":\"1.2.3\"", "\"resolved\":\"01.2.3\"", StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			File.WriteAllText(
+				firstLock,
+				File.ReadAllText(firstLock).Replace("\"version\":2,", "\"version\":2,\"version\":2,", StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
 
 			string secondFallbackProperty =
 				$"\"fallbackFolders\":[{JsonSerializer.Serialize(secondFallback)}],";
@@ -1576,12 +2259,16 @@ public class LiquidOrdinaryWalletPlanWireTests
 				firstDotnet,
 				firstAuthority);
 
+			string updatedVersionImport = CreateSemanticRestorePackageImport(
+				firstPrimary,
+				Convert.FromHexString("01020304"),
+				dependencyVersion: "1.2.4");
 			WriteSemanticRestoreFixture(
 				firstRepository,
 				firstDotnet,
 				firstPrimary,
 				[firstPrimary],
-				firstImport,
+				updatedVersionImport,
 				"1.2.4",
 				CreateSemanticRestoreContentHash(7),
 				"example.package/1.2.4");
@@ -1765,13 +2452,12 @@ public class LiquidOrdinaryWalletPlanWireTests
 				Path.Combine(firstRepository, "WalletWasabi/obj/WalletWasabi.csproj.nuget.g.props"),
 				[firstPrimary],
 				alternateImport);
-			Assert.NotEqual(
-				firstManifest,
-				BuildSemanticRestoreFixtureManifest(
-					firstAssets,
-					firstRepository,
-					firstDotnet,
-					GetPinnedPackageAuthority(firstAssets)));
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				GetPinnedPackageAuthority(firstAssets));
+			File.Delete(alternateImport);
 
 			WriteSemanticNuGetPropsFixture(
 				Path.Combine(firstRepository, "WalletWasabi/obj/WalletWasabi.csproj.nuget.g.props"),
@@ -3449,9 +4135,12 @@ public class LiquidOrdinaryWalletPlanWireTests
 				repositoryRoot,
 				dotnetRoot,
 				packageAuthority,
-				authorityRoot);
+				authorityRoot,
+				commitHash);
 			compilerInputAuthorityManifest += cscTraceManifest;
-			string toolchainAuthorityManifest = BuildToolchainAuthorityManifest(dotnetHost, dotnetRoot);
+			string toolchainAuthorityManifest =
+				BuildToolchainAuthorityManifest(dotnetHost, dotnetRoot) +
+				BuildPackagePayloadAuthorityManifest(projectAssetsFile, packageAuthority);
 			AssertConfiguredAuthorityHashes(
 				importClosureManifest,
 				referenceAuthorityManifest,
@@ -3856,6 +4545,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string projectPath,
 		string projectAssetsFile)
 	{
+		string packagesLockFile = Path.Combine(
+			Path.GetDirectoryName(projectPath)!,
+			"packages.lock.json");
+		const string ExpectedTargetFramework = "net10.0";
 		Assert.True(File.Exists(binaryLog), "The Rebuild binary trace is absent.");
 		var starts = new Dictionary<BuildContextKey, TaskStartedEventArgs>();
 		var finishes = new Dictionary<BuildContextKey, TaskFinishedEventArgs>();
@@ -3948,6 +4641,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 				GetBuildAuthorityFileSha256(
 					path,
 					projectAssetsFile,
+					packagesLockFile,
+					ExpectedTargetFramework,
 					repositoryRoot,
 					dotnetRoot,
 					packageAuthority));
@@ -3960,7 +4655,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 			Path.Combine(repositoryRoot, "Directory.Build.props"),
 			Path.Combine(repositoryRoot, "Directory.Packages.props"),
 			projectPath,
-			Path.Combine(Path.GetDirectoryName(projectPath)!, "packages.lock.json"),
+			packagesLockFile,
 			projectAssetsFile,
 			Path.Combine(Path.GetDirectoryName(projectAssetsFile)!, "WalletWasabi.csproj.nuget.g.props"),
 			Path.Combine(Path.GetDirectoryName(projectAssetsFile)!, "WalletWasabi.csproj.nuget.g.targets"),
@@ -3972,6 +4667,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 				GetBuildAuthorityFileSha256(
 					path,
 					projectAssetsFile,
+					packagesLockFile,
+					ExpectedTargetFramework,
 					repositoryRoot,
 					dotnetRoot,
 					packageAuthority));
@@ -4097,7 +4794,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string repositoryRoot,
 		string dotnetRoot,
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
-		string authorityRoot)
+		string authorityRoot,
+		string commitHash)
 	{
 		var rows = arguments.Select((argument, index) =>
 			$"ARG|{index:D4}|{NormalizeAuthorityStringWithPackages(argument, packageAuthority, ("{REPO}", repositoryRoot), ("{DOTNET}", dotnetRoot), ("{AUTHORITY}", authorityRoot))}")
@@ -4142,9 +4840,56 @@ public class LiquidOrdinaryWalletPlanWireTests
 			string value = argument[prefix.Length..].Trim('"').Split(',')[0];
 			string path = Path.GetFullPath(Path.IsPathRooted(value) ? value : Path.Combine(projectRoot, value));
 			Assert.True(File.Exists(path), $"Compiler auxiliary input is absent: {path}");
-			rows.Add($"AUX|{prefix}|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority, authorityRoot)}|{Sha256File(path)}");
+			rows.Add($"AUX|{prefix}|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority, authorityRoot)}|" +
+				GetCompilerAuxiliaryInputAuthoritySha256(prefix, path, repositoryRoot, authorityRoot, commitHash));
 		}
 		return string.Join('\n', rows) + "\n";
+	}
+
+	private static string GetCompilerAuxiliaryInputAuthoritySha256(
+		string prefix,
+		string path,
+		string repositoryRoot,
+		string authorityRoot,
+		string commitHash)
+	{
+		if (!StringComparer.Ordinal.Equals(prefix, "/sourcelink:"))
+		{
+			return Sha256File(path);
+		}
+
+		AssertRegularAuthorityFile(path, "generated SourceLink authority");
+		Assert.Matches("^[0-9a-f]{40}$", commitHash);
+		using JsonDocument document = JsonDocument.Parse(
+			File.ReadAllText(path),
+			new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow, MaxDepth = 8 });
+		JsonElement root = document.RootElement;
+		AssertExactJsonProperties(root, ["documents"]);
+		JsonElement documents = root.GetProperty("documents");
+		Assert.Equal(JsonValueKind.Object, documents.ValueKind);
+		JsonProperty mapping = Assert.Single(documents.EnumerateObject());
+		Assert.DoesNotContain("{REPO}", mapping.Name, StringComparison.Ordinal);
+		Assert.DoesNotContain("{AUTHORITY}", mapping.Name, StringComparison.Ordinal);
+		Assert.DoesNotContain("{COMMIT_HASH}", mapping.Name, StringComparison.Ordinal);
+		string expectedSourcePattern = Path.GetFullPath(repositoryRoot).Replace('\\', '/').TrimEnd('/') + "/*";
+		Assert.Equal(expectedSourcePattern, mapping.Name.Replace('\\', '/'));
+		string normalizedSourcePattern = NormalizeAuthorityString(
+			mapping.Name,
+			("{REPO}", repositoryRoot),
+			("{AUTHORITY}", authorityRoot));
+		Assert.Equal("{REPO}/*", normalizedSourcePattern);
+		string uriPattern = GetRequiredJsonString(mapping.Value, "SourceLink URI pattern");
+		string revisionSegment = $"/{commitHash}/";
+		Assert.Equal(2, uriPattern.Split(revisionSegment, StringSplitOptions.None).Length);
+		Assert.EndsWith("/*", uriPattern, StringComparison.Ordinal);
+		string canonicalUriPattern = uriPattern.Replace(
+			revisionSegment,
+			"/{COMMIT_HASH}/",
+			StringComparison.Ordinal);
+		return Sha256Text(
+			"SOURCELINK_SEMANTIC_V1|" +
+			JsonSerializer.Serialize(normalizedSourcePattern) + "|" +
+			JsonSerializer.Serialize(canonicalUriPattern));
 	}
 
 	private static string GetCompilerInputAuthoritySha256(string path, string authorityRoot)
@@ -4217,6 +4962,82 @@ public class LiquidOrdinaryWalletPlanWireTests
 		})) + "\n";
 	}
 
+	private static string BuildPackagePayloadAuthorityManifest(
+		string projectAssetsFile,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		AssertRegularAuthorityFile(projectAssetsFile, "package-payload project assets authority");
+		using JsonDocument document = JsonDocument.Parse(
+			File.ReadAllText(projectAssetsFile),
+			new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow, MaxDepth = 128 });
+		JsonElement libraries = document.RootElement.GetProperty("libraries");
+		Assert.Equal(JsonValueKind.Object, libraries.ValueKind);
+		JsonProperty[] packages = libraries.EnumerateObject().ToArray();
+		SortJsonProperties(packages);
+		var identities = new HashSet<string>(StringComparer.Ordinal);
+		var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		var manifest = new StringBuilder("PACKAGE_PAYLOAD_AUTHORITY_V1\n");
+		foreach (JsonProperty package in packages)
+		{
+			Assert.True(identities.Add(package.Name), $"Duplicate package-payload identity: {package.Name}");
+			Assert.True(aliases.Add(package.Name), $"Duplicate or case-aliased package-payload identity: {package.Name}");
+			JsonElement library = package.Value;
+			string packagePath = GetRequiredJsonString(
+				library.GetProperty("path"),
+				$"package-payload path for {package.Name}");
+			AssertSafePackageRelativePath(packagePath);
+			string? selectedPackageDirectory = null;
+			foreach (string packageRoot in packageAuthority.OrderedRoots)
+			{
+				string candidate = Path.GetFullPath(Path.Combine(
+					packageRoot,
+					packagePath.Replace('/', Path.DirectorySeparatorChar)));
+				if (Directory.Exists(candidate))
+				{
+					AssertRegularAuthorityDirectory(candidate, $"package-payload directory for {package.Name}");
+					selectedPackageDirectory = candidate;
+					break;
+				}
+			}
+			Assert.NotNull(selectedPackageDirectory);
+			JsonElement files = library.GetProperty("files");
+			Assert.Equal(JsonValueKind.Array, files.ValueKind);
+			string expectedSidecar = packagePath.Replace('/', '.') + ".nupkg.sha512";
+			var payloadFiles = new List<string>();
+			foreach (JsonElement fileElement in files.EnumerateArray())
+			{
+				string relativeFile = GetRequiredJsonString(
+					fileElement,
+					$"package-payload file for {package.Name}");
+				AssertSafePackageRelativePath(relativeFile);
+				if (relativeFile is ".nupkg.metadata" or ".signature.p7s" or ".nix-patched" ||
+					StringComparer.Ordinal.Equals(relativeFile, expectedSidecar))
+				{
+					continue;
+				}
+				payloadFiles.Add(relativeFile);
+			}
+			Assert.NotEmpty(payloadFiles);
+			payloadFiles.Sort(StringComparer.Ordinal);
+			foreach (string relativeFile in payloadFiles)
+			{
+				string physicalFile = Path.GetFullPath(Path.Combine(
+					selectedPackageDirectory,
+					relativeFile.Replace('/', Path.DirectorySeparatorChar)));
+				Assert.True(IsPathWithin(physicalFile, selectedPackageDirectory));
+				manifest.Append("PAYLOAD|");
+				manifest.Append(JsonSerializer.Serialize(package.Name));
+				manifest.Append('|');
+				manifest.Append(JsonSerializer.Serialize(relativeFile));
+				manifest.Append('|');
+				manifest.Append(Sha256File(physicalFile));
+				manifest.Append('\n');
+			}
+		}
+		Assert.NotEmpty(identities);
+		return manifest.ToString();
+	}
+
 	private static void AssertConfiguredAuthorityHashes(
 		string importManifest,
 		string referenceManifest,
@@ -4235,7 +5056,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 		AssertExactSha256(expectedImport, importManifest);
 		AssertExactSha256(expectedReferences, referenceManifest);
 		AssertExactSha256(expectedCompiler, compilerManifest);
-		AssertExactSha256(ExpectedToolchainDependencyAuthoritySha256, toolchainManifest);
+		string expectedToolchain = OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64
+			? ExpectedMacOsArm64ToolchainDependencyAuthoritySha256
+			: OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
+				? ExpectedLinuxX64ToolchainDependencyAuthoritySha256
+				: throw new Xunit.Sdk.XunitException(
+					$"Unsupported toolchain authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
+		AssertExactSha256(expectedToolchain, toolchainManifest);
 	}
 
 	private static string NormalizeAuthorityPath(
@@ -4250,14 +5077,25 @@ public class LiquidOrdinaryWalletPlanWireTests
 		{
 			return normalizedPackagePath;
 		}
-		foreach ((string token, string root) in new[]
+		(string Token, string Root)[] roots =
 		{
-			("REPO", repositoryRoot),
-			("DOTNET", dotnetRoot),
-			("AUTHORITY", authorityRoot ?? Path.Combine(Path.GetTempPath(), "authority-not-present")),
-		})
+			("REPO", Path.GetFullPath(repositoryRoot)),
+			("DOTNET", Path.GetFullPath(dotnetRoot)),
+			("AUTHORITY", Path.GetFullPath(authorityRoot ?? Path.Combine(Path.GetTempPath(), "authority-not-present"))),
+		};
+		for (int left = 0; left < roots.Length; left++)
 		{
-			if (IsPathWithin(fullPath, root) || StringComparer.Ordinal.Equals(fullPath, Path.GetFullPath(root)))
+			for (int right = left + 1; right < roots.Length; right++)
+			{
+				Assert.False(
+					PackagePathComparer.Equals(roots[left].Root, roots[right].Root),
+					$"Authority roots overlap exactly: {roots[left].Token}/{roots[right].Token}");
+			}
+		}
+		SortAuthorityRootsMostSpecific(roots);
+		foreach ((string token, string root) in roots)
+		{
+			if (IsPathWithin(fullPath, root) || PackagePathComparer.Equals(fullPath, root))
 			{
 				return $"{token}|{NormalizeRelativePath(Path.GetRelativePath(root, fullPath))}";
 			}
@@ -4270,11 +5108,31 @@ public class LiquidOrdinaryWalletPlanWireTests
 		params (string Token, string Root)[] roots)
 	{
 		string normalized = value.Replace('\\', '/');
-		foreach ((string token, string root) in roots.OrderByDescending(pair => pair.Root.Length))
+		SortAuthorityRootsMostSpecific(roots);
+		foreach ((string token, string root) in roots)
 		{
 			normalized = ReplaceAuthorityRoot(normalized, root, token);
 		}
 		return normalized;
+	}
+
+	private static void SortAuthorityRootsMostSpecific((string Token, string Root)[] roots)
+	{
+		for (int index = 0; index < roots.Length - 1; index++)
+		{
+			int mostSpecific = index;
+			for (int candidate = index + 1; candidate < roots.Length; candidate++)
+			{
+				if (roots[candidate].Root.Length > roots[mostSpecific].Root.Length)
+				{
+					mostSpecific = candidate;
+				}
+			}
+			if (mostSpecific != index)
+			{
+				(roots[index], roots[mostSpecific]) = (roots[mostSpecific], roots[index]);
+			}
+		}
 	}
 
 	private static string ReplaceAuthorityRoot(string value, string root, string token)
@@ -4369,16 +5227,29 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private static string GetBuildAuthorityFileSha256(
 		string path,
 		string projectAssetsFile,
+		string packagesLockFile,
+		string expectedTargetFramework,
 		string repositoryRoot,
 		string dotnetRoot,
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
 	{
 		string fullPath = Path.GetFullPath(path);
 		string fullAssetsPath = Path.GetFullPath(projectAssetsFile);
+		string fullLockPath = Path.GetFullPath(packagesLockFile);
+		if (PackagePathComparer.Equals(fullPath, fullLockPath))
+		{
+			(IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages, _) =
+				ReadLockedPackageAuthority(fullLockPath, expectedTargetFramework);
+			var lockManifest = new StringBuilder();
+			AppendLockedPackageAuthority(lockManifest, lockedPackages);
+			return Sha256Text(lockManifest.ToString());
+		}
 		if (PackagePathComparer.Equals(fullPath, fullAssetsPath))
 		{
 			return Sha256Text(BuildProjectAssetsSemanticManifest(
 				fullPath,
+				packagesLockFile,
+				expectedTargetFramework,
 				repositoryRoot,
 				dotnetRoot,
 				packageAuthority));
@@ -4401,10 +5272,19 @@ public class LiquidOrdinaryWalletPlanWireTests
 
 	private static string BuildProjectAssetsSemanticManifest(
 		string projectAssetsFile,
+		string packagesLockFile,
+		string expectedTargetFramework,
 		string repositoryRoot,
 		string dotnetRoot,
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
 	{
+		Assert.Equal("net10.0", expectedTargetFramework);
+		string expectedLockFile = Path.GetFullPath(Path.Combine(
+			repositoryRoot,
+			"WalletWasabi/packages.lock.json"));
+		Assert.True(PackagePathComparer.Equals(expectedLockFile, Path.GetFullPath(packagesLockFile)));
+		(IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages, bool lockHasLinuxX64Overlay) =
+			ReadLockedPackageAuthority(packagesLockFile, expectedTargetFramework);
 		AssertRegularAuthorityFile(projectAssetsFile, "semantic project assets authority");
 		using JsonDocument document = JsonDocument.Parse(
 			File.ReadAllText(projectAssetsFile),
@@ -4415,65 +5295,536 @@ public class LiquidOrdinaryWalletPlanWireTests
 			root,
 			["version", "targets", "libraries", "projectFileDependencyGroups", "packageFolders", "project"]);
 		Assert.Equal(3, root.GetProperty("version").GetInt32());
-		AssertProjectAssetsDependencyAuthority(root);
+		AssertProjectAssetsDependencyAuthority(
+			root,
+			expectedTargetFramework,
+			lockedPackages,
+			lockHasLinuxX64Overlay,
+			packageAuthority);
 		AssertProjectAssetsPackageTopology(root, packageAuthority);
 		AssertProjectAssetsFallbackFolderTopology(root, packageAuthority);
 
 		var manifest = new StringBuilder();
+		AppendLockedPackageAuthority(manifest, lockedPackages);
 		AppendCanonicalProjectAssetsJson(
 			manifest,
 			root,
 			"$",
 			repositoryRoot,
 			dotnetRoot,
-			packageAuthority);
+			packageAuthority,
+			lockedPackages);
 		return manifest.ToString();
 	}
 
-	private static void AssertProjectAssetsDependencyAuthority(JsonElement root)
+	private static (IReadOnlyDictionary<string, LockedPackageAuthority> Packages, bool HasLinuxX64Overlay)
+		ReadLockedPackageAuthority(string packagesLockFile, string expectedTargetFramework)
+	{
+		AssertRegularAuthorityFile(packagesLockFile, "tracked packages lock authority");
+		using JsonDocument document = JsonDocument.Parse(
+			File.ReadAllText(packagesLockFile),
+			new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow, MaxDepth = 128 });
+		JsonElement root = document.RootElement;
+		AssertExactJsonProperties(root, ["version", "dependencies"]);
+		Assert.Equal(JsonValueKind.Number, root.GetProperty("version").ValueKind);
+		Assert.Equal(2, root.GetProperty("version").GetInt32());
+		JsonElement frameworks = root.GetProperty("dependencies");
+		Assert.Equal(JsonValueKind.Object, frameworks.ValueKind);
+		bool hasLinuxX64Overlay = frameworks.TryGetProperty(LinuxX64TargetFramework, out JsonElement linuxX64Overlay);
+		AssertExactJsonProperties(
+			frameworks,
+			hasLinuxX64Overlay
+				? new[] { expectedTargetFramework, LinuxX64TargetFramework }
+				: new[] { expectedTargetFramework });
+		JsonElement dependencies = frameworks.GetProperty(expectedTargetFramework);
+		Assert.Equal(JsonValueKind.Object, dependencies.ValueKind);
+		var packages = new Dictionary<string, LockedPackageAuthority>(StringComparer.Ordinal);
+		var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (JsonProperty package in dependencies.EnumerateObject())
+		{
+			AssertPackageId(package.Name, "locked package ID");
+			Assert.True(aliases.Add(package.Name), $"Duplicate or case-aliased locked package ID: {package.Name}");
+			Assert.Equal(JsonValueKind.Object, package.Value.ValueKind);
+			var names = new HashSet<string>(StringComparer.Ordinal);
+			var nameAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (JsonProperty property in package.Value.EnumerateObject())
+			{
+				Assert.True(names.Add(property.Name), $"Duplicate locked package property: {package.Name}/{property.Name}");
+				Assert.True(nameAliases.Add(property.Name), $"Case-aliased locked package property: {package.Name}/{property.Name}");
+				Assert.Contains(property.Name, new[] { "type", "requested", "resolved", "contentHash", "dependencies" });
+			}
+			Assert.Contains("type", names);
+			Assert.Contains("resolved", names);
+			Assert.Contains("contentHash", names);
+			string type = GetRequiredJsonString(package.Value.GetProperty("type"), $"locked package type for {package.Name}");
+			Assert.Contains(type, new[] { "Direct", "Transitive" });
+			Assert.Equal(type == "Direct", names.Contains("requested"));
+			string? requested = null;
+			if (names.Contains("requested"))
+			{
+				requested = GetRequiredJsonString(
+					package.Value.GetProperty("requested"),
+					$"locked requested version for {package.Name}");
+				Assert.False(string.IsNullOrWhiteSpace(requested));
+			}
+			string resolvedVersion = GetRequiredJsonString(
+				package.Value.GetProperty("resolved"),
+				$"locked resolved version for {package.Name}");
+			AssertSemanticPackageVersion(resolvedVersion, $"locked package version for {package.Name}");
+			Assert.True(
+				NuGetVersion.TryParse(resolvedVersion, out NuGetVersion? parsedResolvedVersion),
+				$"The locked resolved version is not a NuGet version: {package.Name}/{resolvedVersion}");
+			if (requested is not null)
+			{
+				Assert.True(
+					VersionRange.TryParse(requested, out VersionRange? requestedRange),
+					$"The locked requested range is not a NuGet range: {package.Name}/{requested}");
+				Assert.True(
+					requestedRange.Satisfies(parsedResolvedVersion),
+					$"The locked resolved version is outside its direct requested range: {package.Name}");
+			}
+			string contentHash = AssertCanonicalSha512(
+				package.Value.GetProperty("contentHash"),
+				$"locked content hash for {package.Name}/{resolvedVersion}");
+			var dependencyAuthority = new Dictionary<string, string>(StringComparer.Ordinal);
+			if (names.Contains("dependencies"))
+			{
+				JsonElement transitiveDependencies = package.Value.GetProperty("dependencies");
+				Assert.Equal(JsonValueKind.Object, transitiveDependencies.ValueKind);
+				var dependencyAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				foreach (JsonProperty dependency in transitiveDependencies.EnumerateObject())
+				{
+					AssertPackageId(dependency.Name, $"locked dependency ID for {package.Name}");
+					Assert.True(dependencyAliases.Add(dependency.Name), $"Duplicate or case-aliased locked dependency: {package.Name}/{dependency.Name}");
+					string dependencyVersion = GetRequiredJsonString(
+						dependency.Value,
+						$"locked dependency version for {package.Name}/{dependency.Name}");
+					AssertSemanticPackageVersion(dependencyVersion, $"locked dependency version for {package.Name}/{dependency.Name}");
+					Assert.True(dependencyAuthority.TryAdd(dependency.Name, dependencyVersion));
+				}
+			}
+			Assert.True(packages.TryAdd(
+				package.Name,
+				(type, requested, resolvedVersion, contentHash, dependencyAuthority)));
+		}
+		Assert.NotEmpty(packages);
+		if (hasLinuxX64Overlay)
+		{
+			AssertExactJsonProperties(
+				linuxX64Overlay,
+				["Microsoft.Win32.SystemEvents", "SQLitePCLRaw.lib.e_sqlite3"]);
+			foreach (JsonProperty overlayPackage in linuxX64Overlay.EnumerateObject())
+			{
+				Assert.True(dependencies.TryGetProperty(overlayPackage.Name, out JsonElement basePackage));
+				Assert.True(
+					JsonElement.DeepEquals(basePackage, overlayPackage.Value),
+					$"The linux-x64 lock overlay diverges from base authority: {overlayPackage.Name}");
+			}
+		}
+		foreach (KeyValuePair<string, LockedPackageAuthority> package in packages)
+		{
+			foreach (KeyValuePair<string, string> dependency in package.Value.Dependencies)
+			{
+				Assert.True(
+					packages.TryGetValue(dependency.Key, out LockedPackageAuthority resolvedDependency),
+					$"Locked dependency edge has no package authority: {package.Key}/{dependency.Key}");
+				Assert.True(
+					VersionRange.TryParse(dependency.Value, out VersionRange? dependencyRange),
+					$"The locked dependency constraint is not a NuGet range: {package.Key}/{dependency.Key}");
+				Assert.True(
+					NuGetVersion.TryParse(resolvedDependency.ResolvedVersion, out NuGetVersion? resolvedVersion),
+					$"The locked dependency resolution is not a NuGet version: {package.Key}/{dependency.Key}");
+				Assert.True(
+					dependencyRange.Satisfies(resolvedVersion),
+					$"Locked dependency resolution is outside its declared constraint: {package.Key}/{dependency.Key}");
+			}
+		}
+		return (packages, hasLinuxX64Overlay);
+	}
+
+	private static void AppendLockedPackageAuthority(
+		StringBuilder manifest,
+		IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages)
+	{
+		manifest.Append("PROJECT_ASSETS_SEMANTIC_V2|LOCKED_PACKAGES|");
+		string[] packageIds = lockedPackages.Keys.ToArray();
+		Array.Sort(packageIds, StringComparer.Ordinal);
+		foreach (string packageId in packageIds)
+		{
+			LockedPackageAuthority package = lockedPackages[packageId];
+			manifest.Append(JsonSerializer.Serialize(packageId));
+			manifest.Append('|');
+			manifest.Append(JsonSerializer.Serialize(package.Type));
+			manifest.Append('|');
+			manifest.Append(JsonSerializer.Serialize(package.Requested));
+			manifest.Append('|');
+			manifest.Append(JsonSerializer.Serialize(package.ResolvedVersion));
+			manifest.Append('|');
+			manifest.Append(package.ContentHash);
+			string[] dependencyIds = package.Dependencies.Keys.ToArray();
+			Array.Sort(dependencyIds, StringComparer.Ordinal);
+			foreach (string dependencyId in dependencyIds)
+			{
+				manifest.Append('|');
+				manifest.Append(JsonSerializer.Serialize(dependencyId));
+				manifest.Append('=');
+				manifest.Append(JsonSerializer.Serialize(package.Dependencies[dependencyId]));
+			}
+			manifest.Append(';');
+		}
+	}
+
+	private static void AssertProjectAssetsDependencyAuthority(
+		JsonElement root,
+		string expectedTargetFramework,
+		IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages,
+		bool lockHasLinuxX64Overlay,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
 	{
 		JsonElement libraries = root.GetProperty("libraries");
 		Assert.Equal(JsonValueKind.Object, libraries.ValueKind);
 		var identities = new HashSet<string>(StringComparer.Ordinal);
+		var identityAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		var packageIds = new HashSet<string>(StringComparer.Ordinal);
 		foreach (JsonProperty library in libraries.EnumerateObject())
 		{
 			Assert.True(identities.Add(library.Name), $"Duplicate project-assets library identity: {library.Name}");
+			Assert.True(identityAliases.Add(library.Name), $"Duplicate or case-aliased project-assets library identity: {library.Name}");
 			int separator = library.Name.LastIndexOf('/');
 			Assert.True(separator > 0 && separator < library.Name.Length - 1, $"Invalid library identity: {library.Name}");
+			string packageId = library.Name[..separator];
+			string resolvedVersion = library.Name[(separator + 1)..];
+			AssertPackageId(packageId, "project-assets package ID");
+			AssertSemanticPackageVersion(resolvedVersion, $"project-assets package version for {packageId}");
+			Assert.True(packageIds.Add(packageId), $"Duplicate project-assets package ID: {packageId}");
+			Assert.True(lockedPackages.TryGetValue(packageId, out LockedPackageAuthority locked));
+			Assert.Equal(locked.ResolvedVersion, resolvedVersion);
 			Assert.Equal(JsonValueKind.Object, library.Value.ValueKind);
-			Assert.Equal("package", library.Value.GetProperty("type").GetString());
-			string contentHash = Assert.IsType<string>(library.Value.GetProperty("sha512").GetString());
-			Assert.Equal(64, Convert.FromBase64String(contentHash).Length);
-			string packagePath = Assert.IsType<string>(library.Value.GetProperty("path").GetString());
+			AssertProjectAssetsLibraryProperties(library.Name, library.Value);
+			Assert.Equal("package", GetRequiredJsonString(library.Value.GetProperty("type"), $"project-assets type for {library.Name}"));
+			string packagePath = GetRequiredJsonString(library.Value.GetProperty("path"), $"project-assets path for {library.Name}");
 			AssertSafePackageRelativePath(packagePath);
 			Assert.Equal(library.Name.ToLowerInvariant(), packagePath);
 			JsonElement files = library.Value.GetProperty("files");
-			Assert.Equal(JsonValueKind.Array, files.ValueKind);
-			var fileIdentities = new HashSet<string>(StringComparer.Ordinal);
-			foreach (JsonElement file in files.EnumerateArray())
-			{
-				Assert.Equal(JsonValueKind.String, file.ValueKind);
-				string relativeFile = Assert.IsType<string>(file.GetString());
-				AssertSafePackageRelativePath(relativeFile);
-				Assert.True(fileIdentities.Add(relativeFile), $"Duplicate package file identity: {library.Name}/{relativeFile}");
-			}
-			Assert.NotEmpty(fileIdentities);
+			AssertProjectAssetsLibraryTransportProfile(
+				library.Name,
+				packageId,
+				resolvedVersion,
+				packagePath,
+				library.Value,
+				files,
+				locked.ContentHash,
+				packageAuthority);
 		}
 		Assert.NotEmpty(identities);
+		Assert.Equal(lockedPackages.Keys.Order(StringComparer.Ordinal), packageIds.Order(StringComparer.Ordinal));
 
 		JsonElement targets = root.GetProperty("targets");
-		Assert.Equal(JsonValueKind.Object, targets.ValueKind);
-		Assert.NotEmpty(targets.EnumerateObject());
-		foreach (JsonProperty target in targets.EnumerateObject())
+		bool hasLinuxX64Target = targets.TryGetProperty(LinuxX64TargetFramework, out JsonElement linuxX64Target);
+		Assert.Equal(lockHasLinuxX64Overlay, hasLinuxX64Target);
+		AssertExactJsonProperties(
+			targets,
+			hasLinuxX64Target
+				? new[] { expectedTargetFramework, LinuxX64TargetFramework }
+				: new[] { expectedTargetFramework });
+		JsonElement target = targets.GetProperty(expectedTargetFramework);
+		Assert.Equal(JsonValueKind.Object, target.ValueKind);
+		var targetIdentities = new HashSet<string>(StringComparer.Ordinal);
+		var targetAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (JsonProperty dependency in target.EnumerateObject())
 		{
-			Assert.Equal(JsonValueKind.Object, target.Value.ValueKind);
-			foreach (JsonProperty dependency in target.Value.EnumerateObject())
+			Assert.True(targetIdentities.Add(dependency.Name), $"Duplicate project-assets target identity: {dependency.Name}");
+			Assert.True(targetAliases.Add(dependency.Name), $"Duplicate or case-aliased project-assets target identity: {dependency.Name}");
+			Assert.Contains(dependency.Name, identities);
+			Assert.Equal(JsonValueKind.Object, dependency.Value.ValueKind);
+			Assert.Equal(
+				"package",
+				GetRequiredJsonString(dependency.Value.GetProperty("type"), $"project-assets target type for {dependency.Name}"));
+		}
+		Assert.Equal(identities.Order(StringComparer.Ordinal), targetIdentities.Order(StringComparer.Ordinal));
+
+		JsonElement project = root.GetProperty("project");
+		bool hasProjectRuntimes = project.TryGetProperty("runtimes", out JsonElement projectRuntimes);
+		Assert.Equal(hasLinuxX64Target, hasProjectRuntimes);
+		JsonElement restore = project.GetProperty("restore");
+		JsonElement audit = restore.GetProperty("restoreAuditProperties");
+		AssertExactJsonProperties(
+			audit,
+			["enableAudit", "auditLevel", "auditMode", "suppressedAdvisories"]);
+		Assert.Contains(
+			GetRequiredJsonString(audit.GetProperty("enableAudit"), "restore audit enablement"),
+			new[] { "true", "false" });
+		Assert.Equal("low", GetRequiredJsonString(audit.GetProperty("auditLevel"), "restore audit level"));
+		Assert.Equal("all", GetRequiredJsonString(audit.GetProperty("auditMode"), "restore audit mode"));
+		JsonElement suppressedAdvisories = audit.GetProperty("suppressedAdvisories");
+		AssertExactJsonProperties(
+			suppressedAdvisories,
+			["https://github.com/advisories/GHSA-2m69-gcr7-jv3q"]);
+		Assert.Equal(
+			JsonValueKind.Null,
+			suppressedAdvisories.GetProperty("https://github.com/advisories/GHSA-2m69-gcr7-jv3q").ValueKind);
+		if (!hasLinuxX64Target)
+		{
+			return;
+		}
+		AssertExactLinuxX64AssetsOverlay(target, linuxX64Target, project);
+	}
+
+	private static void AssertExactLinuxX64AssetsOverlay(
+		JsonElement target,
+		JsonElement linuxX64Target,
+		JsonElement project)
+	{
+		JsonElement projectRuntimes = project.GetProperty("runtimes");
+		AssertExactJsonProperties(projectRuntimes, ["linux-x64"]);
+		JsonElement linuxX64Runtime = projectRuntimes.GetProperty("linux-x64");
+		AssertExactJsonProperties(linuxX64Runtime, ["#import"]);
+		JsonElement imports = linuxX64Runtime.GetProperty("#import");
+		Assert.Equal(JsonValueKind.Array, imports.ValueKind);
+		Assert.Empty(imports.EnumerateArray());
+		var changedRidPackages = new HashSet<string>(StringComparer.Ordinal);
+		var ridIdentities = new HashSet<string>(StringComparer.Ordinal);
+		foreach (JsonProperty ridDependency in linuxX64Target.EnumerateObject())
+		{
+			Assert.True(ridIdentities.Add(ridDependency.Name));
+			Assert.True(target.TryGetProperty(ridDependency.Name, out JsonElement baseDependency));
+			if (JsonElement.DeepEquals(baseDependency, ridDependency.Value))
 			{
-				Assert.Contains(dependency.Name, identities);
-				Assert.Equal(JsonValueKind.Object, dependency.Value.ValueKind);
-				Assert.Equal("package", dependency.Value.GetProperty("type").GetString());
+				continue;
+			}
+			Assert.True(changedRidPackages.Add(ridDependency.Name));
+			if (ridDependency.Name == "Microsoft.Win32.SystemEvents/10.0.2")
+			{
+				AssertExactJsonProperties(baseDependency, ["type", "compile", "runtime", "build", "runtimeTargets"]);
+				AssertExactJsonProperties(ridDependency.Value, ["type", "compile", "runtime", "build"]);
+				foreach (string propertyName in new[] { "type", "compile", "runtime", "build" })
+				{
+					Assert.True(JsonElement.DeepEquals(
+						baseDependency.GetProperty(propertyName),
+						ridDependency.Value.GetProperty(propertyName)));
+				}
+				JsonElement runtimeTargets = baseDependency.GetProperty("runtimeTargets");
+				AssertExactJsonProperties(
+					runtimeTargets,
+					["runtimes/win/lib/net10.0/Microsoft.Win32.SystemEvents.dll"]);
+				JsonElement winRuntime = runtimeTargets.GetProperty(
+					"runtimes/win/lib/net10.0/Microsoft.Win32.SystemEvents.dll");
+				AssertExactJsonProperties(winRuntime, ["assetType", "rid"]);
+				Assert.Equal("runtime", GetRequiredJsonString(winRuntime.GetProperty("assetType"), "SystemEvents asset type"));
+				Assert.Equal("win", GetRequiredJsonString(winRuntime.GetProperty("rid"), "SystemEvents RID"));
+				continue;
+			}
+			Assert.Equal("SQLitePCLRaw.lib.e_sqlite3/2.1.11", ridDependency.Name);
+			AssertExactJsonProperties(baseDependency, ["type", "compile", "runtime", "build", "runtimeTargets"]);
+			AssertExactJsonProperties(ridDependency.Value, ["type", "compile", "runtime", "native", "build"]);
+			foreach (string propertyName in new[] { "type", "compile", "runtime", "build" })
+			{
+				Assert.True(JsonElement.DeepEquals(
+					baseDependency.GetProperty(propertyName),
+					ridDependency.Value.GetProperty(propertyName)));
+			}
+			const string LinuxNativeAsset = "runtimes/linux-x64/native/libe_sqlite3.so";
+			JsonElement baseLinuxNative = baseDependency.GetProperty("runtimeTargets").GetProperty(LinuxNativeAsset);
+			AssertExactJsonProperties(baseLinuxNative, ["assetType", "rid"]);
+			Assert.Equal("native", GetRequiredJsonString(baseLinuxNative.GetProperty("assetType"), "SQLite native asset type"));
+			Assert.Equal("linux-x64", GetRequiredJsonString(baseLinuxNative.GetProperty("rid"), "SQLite native RID"));
+			JsonElement ridNative = ridDependency.Value.GetProperty("native");
+			AssertExactJsonProperties(ridNative, [LinuxNativeAsset]);
+			Assert.Empty(ridNative.GetProperty(LinuxNativeAsset).EnumerateObject());
+		}
+		string[] baseIdentities = target.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal).ToArray();
+		Assert.Equal(baseIdentities, ridIdentities.Order(StringComparer.Ordinal));
+		Assert.Equal(
+			new[] { "Microsoft.Win32.SystemEvents/10.0.2", "SQLitePCLRaw.lib.e_sqlite3/2.1.11" },
+			changedRidPackages.Order(StringComparer.Ordinal));
+	}
+
+	private static void AssertProjectAssetsLibraryProperties(string libraryIdentity, JsonElement library)
+	{
+		var names = new HashSet<string>(StringComparer.Ordinal);
+		var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (JsonProperty property in library.EnumerateObject())
+		{
+			Assert.True(names.Add(property.Name), $"Duplicate project-assets library property: {libraryIdentity}/{property.Name}");
+			Assert.True(aliases.Add(property.Name), $"Case-aliased project-assets library property: {libraryIdentity}/{property.Name}");
+			Assert.Contains(property.Name, new[] { "sha512", "type", "path", "files", "hasTools" });
+		}
+		Assert.Contains("type", names);
+		Assert.Contains("path", names);
+		Assert.Contains("files", names);
+		if (names.Contains("hasTools"))
+		{
+			Assert.Contains(
+				library.GetProperty("hasTools").ValueKind,
+				new[] { JsonValueKind.True, JsonValueKind.False });
+		}
+	}
+
+	private static void AssertProjectAssetsLibraryTransportProfile(
+		string libraryIdentity,
+		string packageId,
+		string resolvedVersion,
+		string packagePath,
+		JsonElement library,
+		JsonElement files,
+		string lockedContentHash,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		Assert.Equal(JsonValueKind.Array, files.ValueKind);
+		var fileIdentities = new HashSet<string>(StringComparer.Ordinal);
+		var fileAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (JsonElement file in files.EnumerateArray())
+		{
+			Assert.Equal(JsonValueKind.String, file.ValueKind);
+			string relativeFile = Assert.IsType<string>(file.GetString());
+			AssertSafePackageRelativePath(relativeFile);
+			Assert.True(fileIdentities.Add(relativeFile), $"Duplicate package file identity: {libraryIdentity}/{relativeFile}");
+			Assert.True(fileAliases.Add(relativeFile), $"Duplicate or case-aliased package file identity: {libraryIdentity}/{relativeFile}");
+		}
+		Assert.NotEmpty(fileIdentities);
+		Assert.Contains(".nupkg.metadata", fileIdentities);
+		string expectedSidecar = packagePath.Replace('/', '.') + ".nupkg.sha512";
+		foreach (string file in fileIdentities)
+		{
+			if (file.Contains('/'))
+			{
+				continue;
+			}
+			if (file.Equals(".signature.p7s", StringComparison.OrdinalIgnoreCase))
+			{
+				Assert.Equal(".signature.p7s", file);
+			}
+			if (file.Equals(".nix-patched", StringComparison.OrdinalIgnoreCase))
+			{
+				Assert.Equal(".nix-patched", file);
+			}
+			if (file.EndsWith(".nupkg.sha512", StringComparison.OrdinalIgnoreCase))
+			{
+				Assert.Equal(expectedSidecar, file);
 			}
 		}
+
+		bool hasSignature = fileIdentities.Contains(".signature.p7s");
+		bool hasSidecar = fileIdentities.Contains(expectedSidecar);
+		bool hasNixPatchMarker = fileIdentities.Contains(".nix-patched");
+		bool hasAssetsHash = library.TryGetProperty("sha512", out JsonElement assetsHash);
+		if (hasAssetsHash)
+		{
+			Assert.Equal(
+				lockedContentHash,
+				AssertCanonicalSha512(assetsHash, $"project-assets content hash for {libraryIdentity}"));
+		}
+
+		bool normalProfile = hasSignature && hasSidecar && !hasNixPatchMarker && hasAssetsHash;
+		bool nixFallbackProfile = !hasSignature && !hasSidecar && hasNixPatchMarker && !hasAssetsHash;
+		Assert.True(
+			normalProfile ^ nixFallbackProfile,
+			$"The package transport profile is hybrid or unknown: {libraryIdentity}");
+
+		string? selectedPackageDirectory = null;
+		int selectedRootIndex = -1;
+		for (int index = 0; index < packageAuthority.OrderedRoots.Length; index++)
+		{
+			string packageDirectory = Path.GetFullPath(Path.Combine(
+				packageAuthority.OrderedRoots[index],
+				packagePath.Replace('/', Path.DirectorySeparatorChar)));
+			if (!Directory.Exists(packageDirectory))
+			{
+				continue;
+			}
+			AssertRegularAuthorityDirectory(packageDirectory, $"resolved package directory for {packageId}/{resolvedVersion}");
+			selectedPackageDirectory = packageDirectory;
+			selectedRootIndex = index;
+			break;
+		}
+		Assert.NotNull(selectedPackageDirectory);
+		if (nixFallbackProfile)
+		{
+			Assert.True(selectedRootIndex > 0, $"The pinned-Nix package resolved from the primary root: {libraryIdentity}");
+		}
+		foreach (string relativeFile in fileIdentities)
+		{
+			string physicalFile = Path.GetFullPath(Path.Combine(
+				selectedPackageDirectory,
+				relativeFile.Replace('/', Path.DirectorySeparatorChar)));
+			Assert.True(IsPathWithin(physicalFile, selectedPackageDirectory));
+			AssertRegularAuthorityFile(physicalFile, $"declared package file for {libraryIdentity}/{relativeFile}");
+		}
+		var physicalIdentities = new HashSet<string>(StringComparer.Ordinal);
+		foreach (string physicalFile in Directory.EnumerateFiles(selectedPackageDirectory, "*", SearchOption.AllDirectories))
+		{
+			AssertRegularAuthorityFile(physicalFile, $"materialized package file for {libraryIdentity}");
+			Assert.True(physicalIdentities.Add(NormalizeRelativePath(
+				Path.GetRelativePath(selectedPackageDirectory, physicalFile))));
+		}
+		string metadataPath = Path.Combine(selectedPackageDirectory, ".nupkg.metadata");
+		if (normalProfile)
+		{
+			string expectedNupkg = packagePath.Replace('/', '.') + ".nupkg";
+			Assert.True(physicalIdentities.Remove(expectedNupkg), $"The cached nupkg is absent: {libraryIdentity}");
+			Assert.Equal(fileIdentities.Order(StringComparer.Ordinal), physicalIdentities.Order(StringComparer.Ordinal));
+			using JsonDocument metadata = JsonDocument.Parse(
+				File.ReadAllText(metadataPath),
+				new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow, MaxDepth = 16 });
+			Assert.Equal(JsonValueKind.Object, metadata.RootElement.ValueKind);
+			Assert.Equal(
+				lockedContentHash,
+				AssertCanonicalSha512(
+					metadata.RootElement.GetProperty("contentHash"),
+					$"NuGet metadata content hash for {libraryIdentity}"));
+			Assert.Equal(
+				Convert.ToBase64String(SHA512.HashData(File.ReadAllBytes(Path.Combine(selectedPackageDirectory, expectedNupkg)))),
+				File.ReadAllText(Path.Combine(selectedPackageDirectory, expectedSidecar)));
+			Assert.True(new FileInfo(Path.Combine(selectedPackageDirectory, ".signature.p7s")).Length > 0);
+			Assert.False(File.Exists(Path.Combine(selectedPackageDirectory, ".nix-patched")));
+		}
+		else
+		{
+			Assert.Equal(fileIdentities.Order(StringComparer.Ordinal), physicalIdentities.Order(StringComparer.Ordinal));
+			Assert.Equal(Encoding.ASCII.GetBytes("{}\n"), File.ReadAllBytes(metadataPath));
+			Assert.Equal(0, new FileInfo(Path.Combine(selectedPackageDirectory, ".nix-patched")).Length);
+			Assert.False(File.Exists(Path.Combine(selectedPackageDirectory, ".signature.p7s")));
+			Assert.False(File.Exists(Path.Combine(selectedPackageDirectory, expectedSidecar)));
+		}
+	}
+
+	private static string AssertCanonicalSha512(JsonElement value, string description)
+	{
+		Assert.Equal(JsonValueKind.String, value.ValueKind);
+		string encoded = Assert.IsType<string>(value.GetString());
+		Span<byte> decoded = stackalloc byte[64];
+		Assert.True(
+			Convert.TryFromBase64String(encoded, decoded, out int written) && written == decoded.Length,
+			$"The {description} is not a 64-byte Base64 value.");
+		Assert.Equal(encoded, Convert.ToBase64String(decoded));
+		return encoded;
+	}
+
+	private static string GetRequiredJsonString(JsonElement value, string description)
+	{
+		Assert.Equal(JsonValueKind.String, value.ValueKind);
+		string? result = value.GetString();
+		Assert.NotNull(result);
+		return result;
+	}
+
+	private static void AssertPackageId(string value, string description)
+	{
+		Assert.Matches("^[0-9A-Za-z_][0-9A-Za-z_.-]*$", value);
+		Assert.DoesNotContain("..", value, StringComparison.Ordinal);
+		Assert.False(value.EndsWith('.'), $"The {description} has a trailing dot: {value}");
+	}
+
+	private static void AssertSemanticPackageVersion(string value, string description)
+	{
+		const string NumericIdentifier = "(?:0|[1-9][0-9]*)";
+		const string Label = "[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*";
+		Assert.True(
+			Regex.IsMatch(
+				value,
+				$"^{NumericIdentifier}(?:\\.{NumericIdentifier}){{1,3}}(?:-{Label})?(?:\\+{Label})?$",
+				RegexOptions.CultureInvariant),
+			$"The {description} is not a canonical semantic package version: {value}");
 	}
 
 	private static void AssertProjectAssetsPackageTopology(
@@ -4502,7 +5853,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string jsonPath,
 		string repositoryRoot,
 		string dotnetRoot,
-		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages)
 	{
 		switch (value.ValueKind)
 		{
@@ -4516,9 +5868,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 				{
 					Assert.True(names.Add(property.Name), $"Duplicate JSON property at {jsonPath}: {property.Name}");
 					string childPath = jsonPath + "." + property.Name;
-					if (StringComparer.Ordinal.Equals(childPath, "$.project.restore.fallbackFolders"))
+					if (StringComparer.Ordinal.Equals(childPath, "$.project.restore.fallbackFolders") ||
+						StringComparer.Ordinal.Equals(childPath, "$.project.runtimes"))
 					{
-						AssertProjectAssetsFallbackFolders(property.Value, packageAuthority);
+						if (StringComparer.Ordinal.Equals(childPath, "$.project.restore.fallbackFolders"))
+						{
+							AssertProjectAssetsFallbackFolders(property.Value, packageAuthority);
+						}
 						continue;
 					}
 					if (!first)
@@ -4528,7 +5884,32 @@ public class LiquidOrdinaryWalletPlanWireTests
 					first = false;
 					manifest.Append(JsonSerializer.Serialize(property.Name));
 					manifest.Append(':');
-					if (StringComparer.Ordinal.Equals(childPath, "$.packageFolders"))
+					if (StringComparer.Ordinal.Equals(childPath, "$.targets"))
+					{
+						manifest.Append('{');
+						manifest.Append(JsonSerializer.Serialize("net10.0"));
+						manifest.Append(':');
+						AppendCanonicalProjectAssetsJson(
+							manifest,
+							property.Value.GetProperty("net10.0"),
+							"$.targets.net10.0",
+							repositoryRoot,
+							dotnetRoot,
+							packageAuthority,
+							lockedPackages);
+						manifest.Append('}');
+					}
+					else if (StringComparer.Ordinal.Equals(childPath, "$.libraries"))
+					{
+						AppendCanonicalProjectAssetsLibraries(
+							manifest,
+							property.Value,
+							repositoryRoot,
+							dotnetRoot,
+							packageAuthority,
+							lockedPackages);
+					}
+					else if (StringComparer.Ordinal.Equals(childPath, "$.packageFolders"))
 					{
 						manifest.Append(JsonSerializer.Serialize("{VALIDATED_PACKAGE_ROOT_TOPOLOGY}"));
 					}
@@ -4542,6 +5923,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 						AssertProjectAssetsRestoreSources(property.Value, packageAuthority);
 						manifest.Append(JsonSerializer.Serialize("{VALIDATED_RESTORE_SOURCE}"));
 					}
+					else if (StringComparer.Ordinal.Equals(childPath, "$.project.restore.restoreAuditProperties"))
+					{
+						manifest.Append(JsonSerializer.Serialize("{VALIDATED_RESTORE_AUDIT_PROFILE}"));
+					}
 					else
 					{
 						AppendCanonicalProjectAssetsJson(
@@ -4550,7 +5935,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 							childPath,
 							repositoryRoot,
 							dotnetRoot,
-							packageAuthority);
+							packageAuthority,
+							lockedPackages);
 					}
 				}
 				manifest.Append('}');
@@ -4567,10 +5953,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 					AppendCanonicalProjectAssetsJson(
 						manifest,
 						item,
-						jsonPath + "[]",
-						repositoryRoot,
-						dotnetRoot,
-						packageAuthority);
+							jsonPath + "[]",
+							repositoryRoot,
+							dotnetRoot,
+							packageAuthority,
+							lockedPackages);
 					index++;
 				}
 				manifest.Append(']');
@@ -4599,6 +5986,150 @@ public class LiquidOrdinaryWalletPlanWireTests
 				throw new Xunit.Sdk.XunitException($"Unsupported JSON value at {jsonPath}: {value.ValueKind}");
 		}
 		}
+
+	private static void AppendCanonicalProjectAssetsLibraries(
+		StringBuilder manifest,
+		JsonElement libraries,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages)
+	{
+		Assert.Equal(JsonValueKind.Object, libraries.ValueKind);
+		JsonProperty[] properties = libraries.EnumerateObject().ToArray();
+		SortJsonProperties(properties);
+		var names = new HashSet<string>(StringComparer.Ordinal);
+		var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		manifest.Append('{');
+		for (int index = 0; index < properties.Length; index++)
+		{
+			JsonProperty library = properties[index];
+			Assert.True(names.Add(library.Name), $"Duplicate project-assets library identity: {library.Name}");
+			Assert.True(aliases.Add(library.Name), $"Duplicate or case-aliased project-assets library identity: {library.Name}");
+			int separator = library.Name.LastIndexOf('/');
+			Assert.True(separator > 0);
+			string packageId = library.Name[..separator];
+			Assert.True(lockedPackages.TryGetValue(packageId, out LockedPackageAuthority locked));
+			if (index != 0)
+			{
+				manifest.Append(',');
+			}
+			manifest.Append(JsonSerializer.Serialize(library.Name));
+			manifest.Append(':');
+			AppendCanonicalProjectAssetsLibrary(
+				manifest,
+				library.Name,
+				library.Value,
+				locked.ContentHash,
+				repositoryRoot,
+				dotnetRoot,
+				packageAuthority,
+				lockedPackages);
+		}
+		manifest.Append('}');
+	}
+
+	private static void AppendCanonicalProjectAssetsLibrary(
+		StringBuilder manifest,
+		string libraryIdentity,
+		JsonElement library,
+		string lockedContentHash,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages)
+	{
+		Assert.Equal(JsonValueKind.Object, library.ValueKind);
+		JsonProperty[] properties = library.EnumerateObject().ToArray();
+		SortJsonProperties(properties);
+		var names = new HashSet<string>(StringComparer.Ordinal);
+		bool first = true;
+		bool injectedHash = false;
+		manifest.Append('{');
+		foreach (JsonProperty property in properties)
+		{
+			Assert.True(names.Add(property.Name), $"Duplicate project-assets library property: {libraryIdentity}/{property.Name}");
+			if (property.Name == "sha512")
+			{
+				continue;
+			}
+			if (!injectedHash && StringComparer.Ordinal.Compare("sha512", property.Name) < 0)
+			{
+				AppendCanonicalProjectAssetsInjectedHash(manifest, lockedContentHash, ref first);
+				injectedHash = true;
+			}
+			if (!first)
+			{
+				manifest.Append(',');
+			}
+			first = false;
+			manifest.Append(JsonSerializer.Serialize(property.Name));
+			manifest.Append(':');
+			if (property.Name == "files")
+			{
+				string packagePath = Assert.IsType<string>(library.GetProperty("path").GetString());
+				AppendCanonicalProjectAssetsLibraryFiles(manifest, property.Value, packagePath);
+			}
+			else
+			{
+				AppendCanonicalProjectAssetsJson(
+					manifest,
+					property.Value,
+					$"$.libraries.{libraryIdentity}.{property.Name}",
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority,
+					lockedPackages);
+			}
+		}
+		if (!injectedHash)
+		{
+			AppendCanonicalProjectAssetsInjectedHash(manifest, lockedContentHash, ref first);
+		}
+		manifest.Append('}');
+	}
+
+	private static void AppendCanonicalProjectAssetsInjectedHash(
+		StringBuilder manifest,
+		string lockedContentHash,
+		ref bool first)
+	{
+		if (!first)
+		{
+			manifest.Append(',');
+		}
+		first = false;
+		manifest.Append("\"sha512\":");
+		manifest.Append(JsonSerializer.Serialize(lockedContentHash));
+	}
+
+	private static void AppendCanonicalProjectAssetsLibraryFiles(
+		StringBuilder manifest,
+		JsonElement files,
+		string packagePath)
+	{
+		const string ValidatedProfileMarker = "{VALIDATED_PACKAGE_TRANSPORT_PROFILE}";
+		string expectedSidecar = packagePath.Replace('/', '.') + ".nupkg.sha512";
+		var normalizedFiles = new List<string>();
+		foreach (JsonElement fileElement in files.EnumerateArray())
+		{
+			string file = Assert.IsType<string>(fileElement.GetString());
+			if (file != ".signature.p7s" && file != ".nix-patched" && file != expectedSidecar)
+			{
+				normalizedFiles.Add(file);
+			}
+		}
+		normalizedFiles.Sort(StringComparer.Ordinal);
+		Assert.DoesNotContain(ValidatedProfileMarker, normalizedFiles);
+		manifest.Append('[');
+		manifest.Append(JsonSerializer.Serialize(ValidatedProfileMarker));
+		foreach (string file in normalizedFiles)
+		{
+			manifest.Append(',');
+			manifest.Append(JsonSerializer.Serialize(file));
+		}
+		manifest.Append(']');
+	}
 
 	private static void AssertProjectAssetsConfigFileTopology(JsonElement configFiles, string repositoryRoot)
 	{
@@ -6640,7 +8171,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string importedPackageFile,
 		string dependencyVersion,
 		string contentHash,
-		string libraryPath)
+		string libraryPath,
+		bool usePinnedNixFallbackProfile = false)
 	{
 		string projectRoot = Path.Combine(repositoryRoot, "WalletWasabi");
 		string generatedRoot = Path.Combine(projectRoot, "obj");
@@ -6649,18 +8181,68 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string assetsPath = Path.Combine(generatedRoot, "project.assets.json");
 		string propsPath = Path.Combine(generatedRoot, "WalletWasabi.csproj.nuget.g.props");
 		string targetsPath = Path.Combine(generatedRoot, "WalletWasabi.csproj.nuget.g.targets");
+		string packagesLockPath = Path.Combine(projectRoot, "packages.lock.json");
 		string dependencyIdentity = $"Example.Package/{dependencyVersion}";
+		string packageDirectory = Path.GetDirectoryName(Path.GetDirectoryName(importedPackageFile)!)!;
+		Directory.CreateDirectory(Path.Combine(packageDirectory, "lib/net10.0"));
+		Directory.CreateDirectory(Path.Combine(packageDirectory, "runtimes/linux-x64/native"));
+		File.WriteAllBytes(
+			Path.Combine(packageDirectory, "lib/net10.0/Example.Package.dll"),
+			Convert.FromHexString("01020304"));
+		File.WriteAllBytes(
+			Path.Combine(packageDirectory, "runtimes/linux-x64/native/libexample.so"),
+			Convert.FromHexString("05060708"));
+		if (usePinnedNixFallbackProfile)
+		{
+			File.WriteAllBytes(
+				Path.Combine(packageDirectory, ".nupkg.metadata"),
+				Encoding.ASCII.GetBytes("{}\n"));
+			File.WriteAllBytes(Path.Combine(packageDirectory, ".nix-patched"), []);
+		}
+		else
+		{
+			File.WriteAllText(
+				Path.Combine(packageDirectory, ".nupkg.metadata"),
+				$"{{\"contentHash\":{JsonSerializer.Serialize(contentHash)}}}",
+				Encoding.UTF8);
+			File.WriteAllBytes(
+				Path.Combine(packageDirectory, ".signature.p7s"),
+				Convert.FromHexString("01020304"));
+			byte[] fixtureNupkg = Convert.FromHexString("01020304");
+			File.WriteAllBytes(
+				Path.Combine(packageDirectory, $"example.package.{dependencyVersion}.nupkg"),
+				fixtureNupkg);
+			File.WriteAllText(
+				Path.Combine(packageDirectory, $"example.package.{dependencyVersion}.nupkg.sha512"),
+				Convert.ToBase64String(SHA512.HashData(fixtureNupkg)),
+				Encoding.UTF8);
+		}
 		var json = new StringBuilder();
 		json.Append("{\"version\":3,\"targets\":{\"net10.0\":{");
 		json.Append(JsonSerializer.Serialize(dependencyIdentity));
 		json.Append(":{\"type\":\"package\",\"compile\":{\"lib/net10.0/Example.Package.dll\":{}}}}},");
 		json.Append("\"libraries\":{");
 		json.Append(JsonSerializer.Serialize(dependencyIdentity));
-		json.Append(":{\"sha512\":");
-		json.Append(JsonSerializer.Serialize(contentHash));
-		json.Append(",\"type\":\"package\",\"path\":");
+		json.Append(":{");
+		if (!usePinnedNixFallbackProfile)
+		{
+			json.Append("\"sha512\":");
+			json.Append(JsonSerializer.Serialize(contentHash));
+			json.Append(',');
+		}
+		json.Append("\"type\":\"package\",\"path\":");
 		json.Append(JsonSerializer.Serialize(libraryPath));
-		json.Append(",\"files\":[\"lib/net10.0/Example.Package.dll\",\"build/example.props\"]}},");
+		json.Append(",\"files\":[\".nupkg.metadata\",");
+		json.Append(usePinnedNixFallbackProfile ? "\".nix-patched\"" : "\".signature.p7s\"");
+		json.Append(",\"lib/net10.0/Example.Package.dll\",\"build/example.props\",");
+		json.Append("\"runtimes/linux-x64/native/libexample.so\"");
+		if (!usePinnedNixFallbackProfile)
+		{
+			json.Append(",\"example.package.");
+			json.Append(dependencyVersion);
+			json.Append(".nupkg.sha512\"");
+		}
+		json.Append("]}},");
 		json.Append("\"projectFileDependencyGroups\":{\"net10.0\":[");
 		json.Append(JsonSerializer.Serialize($"Example.Package >= {dependencyVersion}"));
 		json.Append("]},\"packageFolders\":{");
@@ -6687,6 +8269,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		json.Append(',');
 		json.Append(JsonSerializer.Serialize(Path.Combine(repositoryRoot, "home/.nuget/NuGet/NuGet.Config")));
 		json.Append("],\"originalTargetFrameworks\":[\"net10.0\"],\"sources\":{\"https://api.nuget.org/v3/index.json\":{}},");
+		json.Append("\"restoreAuditProperties\":{\"enableAudit\":\"true\",\"auditLevel\":\"low\",\"auditMode\":\"all\",");
+		json.Append("\"suppressedAdvisories\":{\"https://github.com/advisories/GHSA-2m69-gcr7-jv3q\":null}},");
 		if (orderedPackageRoots.Length > 1)
 		{
 			json.Append("\"fallbackFolders\":[");
@@ -6708,12 +8292,61 @@ public class LiquidOrdinaryWalletPlanWireTests
 		json.Append(JsonSerializer.Serialize(Path.Combine(dotnetRoot, "sdk/10.0.100/PortableRuntimeIdentifierGraph.json")));
 		json.Append("}}}}");
 		File.WriteAllText(assetsPath, json.ToString(), Encoding.UTF8);
+		WriteSemanticPackagesLockFixture(packagesLockPath, dependencyVersion, contentHash);
 		WriteSemanticNuGetPropsFixture(propsPath, orderedPackageRoots, importedPackageFile);
 		File.WriteAllText(
 			targetsPath,
 			"<Project ToolsVersion=\"14.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\" />",
 			Encoding.UTF8);
 		return assetsPath;
+	}
+
+	private static void WriteSemanticPackagesLockFixture(
+		string path,
+		string dependencyVersion,
+		string contentHash,
+		string packageId = "Example.Package",
+		string? additionalPackageId = null,
+		string? dependencyId = null,
+		string dependencyMinimumVersion = "1.0.0",
+		string? dependencyAliasId = null)
+	{
+		var json = new StringBuilder();
+		json.Append("{\"version\":2,\"dependencies\":{\"net10.0\":{");
+		json.Append(JsonSerializer.Serialize(packageId));
+		json.Append(":{");
+		json.Append("\"type\":\"Direct\",\"requested\":");
+		json.Append(JsonSerializer.Serialize($"[{dependencyVersion}, )"));
+		json.Append(",\"resolved\":");
+		json.Append(JsonSerializer.Serialize(dependencyVersion));
+		json.Append(",\"contentHash\":");
+		json.Append(JsonSerializer.Serialize(contentHash));
+		if (dependencyId is not null)
+		{
+			json.Append(",\"dependencies\":{");
+			json.Append(JsonSerializer.Serialize(dependencyId));
+			json.Append(':');
+			json.Append(JsonSerializer.Serialize(dependencyMinimumVersion));
+			if (dependencyAliasId is not null)
+			{
+				json.Append(',');
+				json.Append(JsonSerializer.Serialize(dependencyAliasId));
+				json.Append(':');
+				json.Append(JsonSerializer.Serialize(dependencyMinimumVersion));
+			}
+			json.Append('}');
+		}
+		json.Append('}');
+		if (additionalPackageId is not null)
+		{
+			json.Append(',');
+			json.Append(JsonSerializer.Serialize(additionalPackageId));
+			json.Append(":{\"type\":\"Transitive\",\"resolved\":\"1.0.0\",\"contentHash\":");
+			json.Append(JsonSerializer.Serialize(contentHash));
+			json.Append('}');
+		}
+		json.Append("}}}");
+		File.WriteAllText(path, json.ToString(), Encoding.UTF8);
 	}
 
 	private static void WriteSemanticNuGetPropsFixture(
@@ -6749,9 +8382,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private static string CreateSemanticRestorePackageImport(
 		string packageRoot,
 		byte[] content,
-		string fileName = "example.props")
+		string fileName = "example.props",
+		string dependencyVersion = "1.2.3")
 	{
-		string path = Path.Combine(packageRoot, "example.package/1.2.3/build", fileName);
+		string path = Path.Combine(packageRoot, $"example.package/{dependencyVersion}/build", fileName);
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 		File.WriteAllBytes(path, content);
 		return path;
@@ -6771,21 +8405,29 @@ public class LiquidOrdinaryWalletPlanWireTests
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
 	{
 		string generatedRoot = Path.GetDirectoryName(projectAssetsFile)!;
+		string packagesLockFile = Path.Combine(repositoryRoot, "WalletWasabi/packages.lock.json");
+		const string ExpectedTargetFramework = "net10.0";
 		return GetBuildAuthorityFileSha256(
 			projectAssetsFile,
 			projectAssetsFile,
+			packagesLockFile,
+			ExpectedTargetFramework,
 			repositoryRoot,
 			dotnetRoot,
 			packageAuthority) + "|" +
 			GetBuildAuthorityFileSha256(
 				Path.Combine(generatedRoot, "WalletWasabi.csproj.nuget.g.props"),
 				projectAssetsFile,
+				packagesLockFile,
+				ExpectedTargetFramework,
 				repositoryRoot,
 				dotnetRoot,
 				packageAuthority) + "|" +
 			GetBuildAuthorityFileSha256(
 				Path.Combine(generatedRoot, "WalletWasabi.csproj.nuget.g.targets"),
 				projectAssetsFile,
+				packagesLockFile,
+				ExpectedTargetFramework,
 				repositoryRoot,
 				dotnetRoot,
 				packageAuthority);

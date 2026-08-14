@@ -21,6 +21,10 @@
 			<HintPath>$(MSBuildToolsPath)\Microsoft.Build.Framework.dll</HintPath>
 			<Private>true</Private>
 		</Reference>
+		<Reference Include="NuGet.Versioning">
+			<HintPath>$(MSBuildToolsPath)\NuGet.Versioning.dll</HintPath>
+			<Private>true</Private>
+		</Reference>
 		<PackageReference Include="coverlet.collector">
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 			<PrivateAssets>all</PrivateAssets>
