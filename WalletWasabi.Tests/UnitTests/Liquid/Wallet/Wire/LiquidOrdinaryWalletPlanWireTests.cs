@@ -63,8 +63,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "PENDING-LINUX-X64-DEBUG-IMPORT-AUTHORITY-V2");
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseImportClosureSha256 =
 		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "98ded521ee2cdcc32e313eac442b46ede3e23bc22d5f8321e24135a60dfd9c05");
-	private const string ExpectedDebugReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
-	private const string ExpectedReleaseReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
+	private const string ExpectedDebugReferenceAuthoritySha256 = "ef61142bc45c04415be4ee870ff4b4db9345dc8beb787c67ee67bc6c7d3d8fdb";
+	private const string ExpectedReleaseReferenceAuthoritySha256 = "ef61142bc45c04415be4ee870ff4b4db9345dc8beb787c67ee67bc6c7d3d8fdb";
 	private const string ExpectedDebugCompilerInputAuthoritySha256 = "bfea856edbef7d0f63be9ff1793d652ae55b86be1eeb626989b1675145c0d4da";
 	private const string ExpectedReleaseCompilerInputAuthoritySha256 = "8c6fb2e578c28bc89488be5e1b1cf638ea79c16554dd3b24def00d5bad2b8e99";
 	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 = "37cc68f484c4bcf067132754644d2644cd6750016d2a4ba3eaba08f7fb80dbc1";
@@ -1186,8 +1186,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 				buildAuthority.CompilerInputAuthorityManifest,
 				buildAuthority.ToolchainAuthorityManifest);
 		}
-		string mutatedReferenceManifest =
-			buildAuthority.ReferenceAuthorityManifest + "REFERENCE|INJECTED|SHA256|" + new string('0', 64) + "\n";
+		string mutatedReferenceManifest = CreateReferenceManifestWithMutatedFirstContent(
+			buildAuthority.ReferenceAuthorityManifest);
 		Assert.NotEqual(buildAuthority.ReferenceAuthorityManifest, mutatedReferenceManifest);
 		AssertConfiguredAuthorityHashesRejects(
 			buildAuthority.ImportClosureManifest,
@@ -1479,6 +1479,29 @@ public class LiquidOrdinaryWalletPlanWireTests
 			Assert.Equal(
 				hostileImportValue,
 				ParseCanonicalImportManifestRow(hostileImportRow, "IMPORT_EVENT_V2", 9)[2]);
+			string hostileReferencePath = "NUGET|package/with|PROVENANCE|marker/reference.dll";
+			string hostileReferenceProvenance = "REPO|WalletWasabi/with|ALIASES|marker.csproj";
+			string hostileReferenceAliases = "global|REFERENCE_V2|forged\nrow\r";
+			string hostileReferenceRow = BuildCanonicalAuthorityManifestRow(
+				"REFERENCE_V2",
+				[
+					"0",
+					hostileReferencePath,
+					new string('a', 64),
+					hostileReferenceProvenance,
+					hostileReferenceAliases,
+				]);
+			Assert.DoesNotContain('\n', hostileReferenceRow);
+			Assert.DoesNotContain('\r', hostileReferenceRow);
+			string[] hostileReferenceRows = AssertCanonicalReferenceAuthorityManifest(
+				"REFERENCE_AUTHORITY_V2\n" + hostileReferenceRow + "\n");
+			string[] hostileReferenceFields = ParseCanonicalAuthorityManifestRow(
+				Assert.Single(hostileReferenceRows),
+				"REFERENCE_V2",
+				5);
+			Assert.Equal(hostileReferencePath, hostileReferenceFields[1]);
+			Assert.Equal(hostileReferenceProvenance, hostileReferenceFields[3]);
+			Assert.Equal(hostileReferenceAliases, hostileReferenceFields[4]);
 			string optionalImportExpression = NormalizeAndValidateUnexpandedImportProject(
 				"$(OptionalImport)/x.props",
 				multiRoot,
@@ -5588,22 +5611,30 @@ public class LiquidOrdinaryWalletPlanWireTests
 		IEnumerable<EvaluatedBuildItem> references,
 		string repositoryRoot,
 		string dotnetRoot,
-		(string PrimaryRoot, string[] OrderedRoots) packageAuthority) =>
-		string.Join(
-			'\n',
-			references.Select((reference, index) =>
-			{
-				string provenance = string.IsNullOrEmpty(reference.DefiningProjectFullPath)
-					? "NONE"
-					: NormalizeAuthorityPath(
-						reference.DefiningProjectFullPath,
-						repositoryRoot,
-						dotnetRoot,
-						packageAuthority);
-				return $"REFERENCE|{index:D3}|{NormalizeAuthorityPath(reference.FullPath, repositoryRoot, dotnetRoot, packageAuthority)}|" +
-					$"{Sha256File(reference.FullPath)}|PROVENANCE|{provenance}|ALIASES|" +
-					(reference.Metadata.TryGetValue("Aliases", out string? aliases) ? aliases : "");
-			})) + "\n";
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		string[] rows = references.Select((reference, index) =>
+		{
+			string provenance = string.IsNullOrEmpty(reference.DefiningProjectFullPath)
+				? "NONE"
+				: NormalizeAuthorityPath(
+					reference.DefiningProjectFullPath,
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority);
+			return BuildCanonicalAuthorityManifestRow(
+				"REFERENCE_V2",
+				[
+					index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+					NormalizeAuthorityPath(reference.FullPath, repositoryRoot, dotnetRoot, packageAuthority),
+					Sha256File(reference.FullPath),
+					provenance,
+					reference.Metadata.TryGetValue("Aliases", out string? aliases) ? aliases : "",
+				]);
+		}).ToArray();
+		Assert.NotEmpty(rows);
+		return "REFERENCE_AUTHORITY_V2\n" + string.Join('\n', rows) + "\n";
+	}
 
 	private static string BuildCompilerInputAuthorityManifest(
 		IReadOnlyList<string> arguments,
@@ -5879,7 +5910,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string expectedCompiler = ExpectedReleaseCompilerInputAuthoritySha256;
 #endif
 		AssertExactImportAuthoritySha256(expectedImport, importManifest);
-		AssertExactSha256(expectedReferences, referenceManifest);
+		AssertExactReferenceAuthoritySha256(expectedReferences, referenceManifest);
 		AssertExactSha256(expectedCompiler, compilerManifest);
 		string expectedToolchain = OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64
 			? ExpectedMacOsArm64ToolchainDependencyAuthoritySha256
@@ -10197,6 +10228,12 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private static string BuildCanonicalImportManifestRow(string prefix, IReadOnlyList<string> fields)
 	{
 		Assert.True(prefix is "IMPORT_EVENT_V2" or "PIN_V2");
+		return BuildCanonicalAuthorityManifestRow(prefix, fields);
+	}
+
+	private static string BuildCanonicalAuthorityManifestRow(string prefix, IReadOnlyList<string> fields)
+	{
+		Assert.True(prefix is "IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2");
 		var values = new string[fields.Count];
 		var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 		for (int index = 0; index < fields.Count; index++)
@@ -10208,7 +10245,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 			}
 			catch (EncoderFallbackException)
 			{
-				throw new Xunit.Sdk.XunitException($"Import manifest field {index} is not valid UTF-8 text.");
+				throw new Xunit.Sdk.XunitException($"Authority manifest field {index} is not valid UTF-8 text.");
 			}
 			values[index] = value;
 		}
@@ -10217,6 +10254,16 @@ public class LiquidOrdinaryWalletPlanWireTests
 
 	private static string[] ParseCanonicalImportManifestRow(string row, string expectedPrefix, int expectedFieldCount)
 	{
+		Assert.True(expectedPrefix is "IMPORT_EVENT_V2" or "PIN_V2");
+		return ParseCanonicalAuthorityManifestRow(row, expectedPrefix, expectedFieldCount);
+	}
+
+	private static string[] ParseCanonicalAuthorityManifestRow(
+		string row,
+		string expectedPrefix,
+		int expectedFieldCount)
+	{
+		Assert.True(expectedPrefix is "IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2");
 		string prefix = expectedPrefix + "|";
 		Assert.StartsWith(prefix, row, StringComparison.Ordinal);
 		string payload = row[prefix.Length..];
@@ -10491,5 +10538,73 @@ public class LiquidOrdinaryWalletPlanWireTests
 		diagnostics.Append("\nPIN_ROWS_SHA256|").Append(Sha256Text(pinRows.ToString()));
 		diagnostics.Append("\nSORTED_ROWS_SHA256|").Append(Sha256Text(string.Join('\n', sortedRows) + "\n"));
 		throw new Xunit.Sdk.XunitException(diagnostics.ToString());
+	}
+
+	private static void AssertExactReferenceAuthoritySha256(string expectedSha256, string manifest)
+	{
+		string[] rows = AssertCanonicalReferenceAuthorityManifest(manifest);
+		string actualSha256 = Sha256Text(manifest);
+		var diagnostics = new StringBuilder(actualSha256);
+		for (int index = 0; index < rows.Length; index++)
+		{
+			string[] fields = ParseCanonicalAuthorityManifestRow(rows[index], "REFERENCE_V2", 5);
+			diagnostics.Append("\nROW|").Append(fields[0]);
+			diagnostics.Append("|ROW_SHA256|").Append(Sha256Text(rows[index]));
+			diagnostics.Append("|PATH_SHA256|").Append(Sha256Text(fields[1]));
+			diagnostics.Append("|CONTENT_SHA256|").Append(fields[2]);
+			diagnostics.Append("|PROVENANCE_SHA256|").Append(Sha256Text(fields[3]));
+			diagnostics.Append("|ALIASES_SHA256|").Append(Sha256Text(fields[4]));
+		}
+		if (StringComparer.Ordinal.Equals(expectedSha256, actualSha256))
+		{
+			return;
+		}
+		string[] sortedRows = rows.ToArray();
+		Array.Sort(sortedRows, StringComparer.Ordinal);
+		diagnostics.Append("\nSORTED_ROWS_SHA256|").Append(Sha256Text(string.Join('\n', sortedRows) + "\n"));
+		throw new Xunit.Sdk.XunitException(diagnostics.ToString());
+	}
+
+	private static string CreateReferenceManifestWithMutatedFirstContent(string manifest)
+	{
+		_ = AssertCanonicalReferenceAuthorityManifest(manifest);
+		string[] lines = manifest.Split('\n', StringSplitOptions.None);
+		string[] fields = ParseCanonicalAuthorityManifestRow(lines[1], "REFERENCE_V2", 5);
+		fields[2] = fields[2][0] == '0'
+			? "1" + fields[2][1..]
+			: "0" + fields[2][1..];
+		lines[1] = BuildCanonicalAuthorityManifestRow("REFERENCE_V2", fields);
+		string mutated = string.Join('\n', lines);
+		Assert.NotEqual(manifest, mutated);
+		_ = AssertCanonicalReferenceAuthorityManifest(mutated);
+		return mutated;
+	}
+
+	private static string[] AssertCanonicalReferenceAuthorityManifest(string manifest)
+	{
+		Assert.DoesNotContain('\r', manifest);
+		Assert.True(manifest.EndsWith('\n'));
+		string[] lines = manifest.Split('\n', StringSplitOptions.None);
+		Assert.True(lines.Length >= 3);
+		Assert.Equal("", lines[^1]);
+		Assert.Equal("REFERENCE_AUTHORITY_V2", lines[0]);
+		var rows = new string[lines.Length - 2];
+		for (int lineIndex = 1; lineIndex < lines.Length - 1; lineIndex++)
+		{
+			string row = lines[lineIndex];
+			Assert.False(string.IsNullOrEmpty(row));
+			rows[lineIndex - 1] = row;
+			string[] fields = ParseCanonicalAuthorityManifestRow(row, "REFERENCE_V2", 5);
+			Assert.Equal(
+				(lineIndex - 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+				fields[0]);
+			AssertCanonicalNormalizedImportPath(fields[1]);
+			Assert.Matches("^[0-9a-f]{64}$", fields[2]);
+			if (fields[3] != "NONE")
+			{
+				AssertCanonicalNormalizedImportPath(fields[3]);
+			}
+		}
+		return rows;
 	}
 }
