@@ -38,7 +38,7 @@ using Xunit;
 using LiquidOrdinaryWalletPlanEncodedFrame = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanEncodedFrame;
 using LiquidOrdinaryWalletPlanFundingBatch = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanFundingBatch;
 using LiquidOrdinaryWalletPlanFundingRow = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanFundingRow;
-using LockedPackageAuthority = (string Type, string? Requested, string ResolvedVersion, string ContentHash, System.Collections.Generic.IReadOnlyDictionary<string, string> Dependencies);
+using LockedPackageAuthority = (string Type, string? Requested, string ResolvedVersion, string? ContentHash, System.Collections.Generic.IReadOnlyDictionary<string, string> Dependencies);
 
 namespace WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire;
 
@@ -59,13 +59,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private const string ExpectedReleaseAmbientClosureSha256 = "190c3955f0e3a75fcf1497e92604b514ce93769c31d601e66c54862da397deee";
 	private const string ExpectedDebugGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
 	private const string ExpectedReleaseGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
-	private const string ExpectedDebugImportClosureSha256 = "9dd06e6189fca6349908bc42cd607b89d294f8db6e205a2d6d7722d48490de7e";
-	private const string ExpectedReleaseImportClosureSha256 = "9dd06e6189fca6349908bc42cd607b89d294f8db6e205a2d6d7722d48490de7e";
+	private const string ExpectedDebugImportClosureSha256 = "48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6";
+	private const string ExpectedReleaseImportClosureSha256 = "48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6";
 	private const string ExpectedDebugReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
 	private const string ExpectedReleaseReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
 	private const string ExpectedDebugCompilerInputAuthoritySha256 = "bfea856edbef7d0f63be9ff1793d652ae55b86be1eeb626989b1675145c0d4da";
 	private const string ExpectedReleaseCompilerInputAuthoritySha256 = "8c6fb2e578c28bc89488be5e1b1cf638ea79c16554dd3b24def00d5bad2b8e99";
-	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 = "44c95f2e20ccce3f65ea9c5fecf8e2f72e6eb011d2a9b5822f3b2b3586a64643";
+	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 = "d9ee6e22e3ef1fc55a71a0355d4c0e62065ad77c28edc197b6a01d9188c61fab";
 	private const string ExpectedLinuxX64ToolchainDependencyAuthoritySha256 = "PENDING-LINUX-X64-TOOLCHAIN-AUTHORITY";
 	private const string IssuedAssetHex =
 		"2222222222222222222222222222222222222222222222222222222222222222";
@@ -1649,10 +1649,45 @@ public class LiquidOrdinaryWalletPlanWireTests
 				$"{{\"version\":2,\"dependencies\":{{\"net10.0\":{{{lockBase}}}," +
 				$"\"{LinuxX64TargetFramework}\":{{{lockBase}}}}}}}",
 				Encoding.UTF8);
-			(IReadOnlyDictionary<string, LockedPackageAuthority> ridLockAuthority, bool hasRidLockOverlay) =
+			(
+				IReadOnlyDictionary<string, LockedPackageAuthority> ridLockAuthority,
+				bool hasRidLockOverlay,
+				bool ridLockHasContentHashes) =
 				ReadLockedPackageAuthority(ridLockFixture, "net10.0");
 			Assert.True(hasRidLockOverlay);
+			Assert.True(ridLockHasContentHashes);
 			Assert.Equal(2, ridLockAuthority.Count);
+			string ridTransportWithOverlay =
+				BuildPackageTransportAuthorityManifest(ridLockFixture, "net10.0");
+			Assert.Contains("RID_OVERLAY|LINUX_X64_PRESENT\n", ridTransportWithOverlay, StringComparison.Ordinal);
+			File.WriteAllText(
+				ridLockFixture,
+				$"{{\"version\":2,\"dependencies\":{{\"net10.0\":{{{lockBase}}}}}}}",
+				Encoding.UTF8);
+			string ridTransportWithoutOverlay =
+				BuildPackageTransportAuthorityManifest(ridLockFixture, "net10.0");
+			Assert.Contains("RID_OVERLAY|LINUX_X64_ABSENT\n", ridTransportWithoutOverlay, StringComparison.Ordinal);
+			Assert.NotEqual(ridTransportWithOverlay, ridTransportWithoutOverlay);
+			string systemLockWithoutHash =
+				"{\"type\":\"Direct\",\"requested\":\"[10.0.2, )\",\"resolved\":\"10.0.2\"}";
+			string sqliteLockWithoutHash =
+				"{\"type\":\"Transitive\",\"resolved\":\"2.1.11\"}";
+			string lockBaseWithoutHashes =
+				$"{JsonSerializer.Serialize("Microsoft.Win32.SystemEvents")}:{systemLockWithoutHash}," +
+				$"{JsonSerializer.Serialize("SQLitePCLRaw.lib.e_sqlite3")}:{sqliteLockWithoutHash}";
+			File.WriteAllText(
+				ridLockFixture,
+				$"{{\"version\":2,\"dependencies\":{{\"net10.0\":{{{lockBaseWithoutHashes}}}," +
+				$"\"{LinuxX64TargetFramework}\":{{{lockBaseWithoutHashes}}}}}}}",
+				Encoding.UTF8);
+			(
+				IReadOnlyDictionary<string, LockedPackageAuthority> nixRidLockAuthority,
+				bool hasNixRidLockOverlay,
+				bool nixRidLockHasContentHashes) =
+				ReadLockedPackageAuthority(ridLockFixture, "net10.0");
+			Assert.True(hasNixRidLockOverlay);
+			Assert.False(nixRidLockHasContentHashes);
+			Assert.Equal(2, nixRidLockAuthority.Count);
 			string mutatedSqliteLock = sqliteLock.Replace(
 				JsonSerializer.Serialize(sqliteHash),
 				JsonSerializer.Serialize(CreateSemanticRestoreContentHash(11)),
@@ -1737,6 +1772,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 				expectedContentHash,
 				"example.package/1.2.3",
 				usePinnedNixFallbackProfile: true);
+			string firstLock = Path.Combine(firstRepository, "WalletWasabi/packages.lock.json");
+			string secondLock = Path.Combine(secondRepository, "WalletWasabi/packages.lock.json");
 			string secondOfflineSource = Path.Combine(secondRoot, "source");
 			Directory.CreateDirectory(secondOfflineSource);
 			File.WriteAllText(
@@ -1759,6 +1796,28 @@ public class LiquidOrdinaryWalletPlanWireTests
 				secondDotnet,
 				secondAuthority);
 			Assert.Equal(firstManifest, secondManifest);
+			string firstTransportManifest = BuildPackageTransportAuthorityManifest(firstLock, "net10.0");
+			string secondTransportManifest = BuildPackageTransportAuthorityManifest(secondLock, "net10.0");
+			Assert.Contains("PROFILE|CONTENT_HASHES_PRESENT\n", firstTransportManifest, StringComparison.Ordinal);
+			Assert.Contains("PROFILE|CONTENT_HASHES_ABSENT_PINNED_NIX\n", secondTransportManifest, StringComparison.Ordinal);
+			Assert.NotEqual(firstTransportManifest, secondTransportManifest);
+			File.WriteAllText(
+				secondLock,
+				File.ReadAllText(secondLock).Replace(
+					"\"resolved\":\"1.2.3\"",
+					$"\"resolved\":\"1.2.3\",\"contentHash\":{JsonSerializer.Serialize(expectedContentHash)}",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			WriteSemanticPackagesLockFixture(
+				secondLock,
+				"1.2.3",
+				expectedContentHash,
+				omitContentHashes: true);
 			string firstPayloadManifest = BuildPackagePayloadAuthorityManifest(firstAssets, firstAuthority);
 			string secondPayloadManifest = BuildPackagePayloadAuthorityManifest(secondAssets, secondAuthority);
 			Assert.Equal(firstPayloadManifest, secondPayloadManifest);
@@ -1927,7 +1986,6 @@ public class LiquidOrdinaryWalletPlanWireTests
 				"example.package/1.2.3",
 				usePinnedNixFallbackProfile: true);
 
-			string firstLock = Path.Combine(firstRepository, "WalletWasabi/packages.lock.json");
 			string normalHashProperty = $"\"sha512\":{JsonSerializer.Serialize(expectedContentHash)},";
 			string normalAssetsText = File.ReadAllText(firstAssets);
 			Assert.Contains(normalHashProperty, normalAssetsText, StringComparison.Ordinal);
@@ -1935,6 +1993,48 @@ public class LiquidOrdinaryWalletPlanWireTests
 				firstAssets,
 				normalAssetsText.Replace(normalHashProperty, "", StringComparison.Ordinal),
 				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			WriteSemanticPackagesLockFixture(
+				firstLock,
+				"1.2.3",
+				CreateSemanticRestoreContentHash(8));
+			Assert.NotEqual(
+				firstTransportManifest,
+				BuildPackageTransportAuthorityManifest(firstLock, "net10.0"));
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				expectedContentHash,
+				"example.package/1.2.3");
+			WriteSemanticPackagesLockFixture(
+				firstLock,
+				"1.2.3",
+				expectedContentHash,
+				omitContentHashes: true);
 			AssertSemanticRestoreFixtureRejected(
 				firstAssets,
 				firstRepository,
@@ -2026,6 +2126,23 @@ public class LiquidOrdinaryWalletPlanWireTests
 				firstRepository,
 				firstDotnet,
 				firstAuthority);
+
+			WriteSemanticPackagesLockFixture(
+				firstLock,
+				"1.2.3",
+				expectedContentHash,
+				additionalPackageId: "Extra.Package",
+				omitAdditionalPackageContentHash: true);
+			bool mixedContentHashProfileRejected = false;
+			try
+			{
+				_ = ReadLockedPackageAuthority(firstLock, "net10.0");
+			}
+			catch (Xunit.Sdk.XunitException)
+			{
+				mixedContentHashProfileRejected = true;
+			}
+			Assert.True(mixedContentHashProfileRejected, "A mixed lock content-hash profile was accepted.");
 
 			WriteSemanticPackagesLockFixture(
 				firstLock,
@@ -2412,13 +2529,16 @@ public class LiquidOrdinaryWalletPlanWireTests
 				"1.2.3",
 				CreateSemanticRestoreContentHash(8),
 				"example.package/1.2.3");
-			Assert.NotEqual(
+			Assert.Equal(
 				firstManifest,
 				BuildSemanticRestoreFixtureManifest(
 					firstAssets,
 					firstRepository,
 					firstDotnet,
 					GetPinnedPackageAuthority(firstAssets)));
+			Assert.NotEqual(
+				firstTransportManifest,
+				BuildPackageTransportAuthorityManifest(firstLock, "net10.0"));
 
 			WriteSemanticRestoreFixture(
 				firstRepository,
@@ -4140,6 +4260,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 			compilerInputAuthorityManifest += cscTraceManifest;
 			string toolchainAuthorityManifest =
 				BuildToolchainAuthorityManifest(dotnetHost, dotnetRoot) +
+				BuildPackageTransportAuthorityManifest(
+					Path.Combine(repositoryRoot, "WalletWasabi/packages.lock.json"),
+					"net10.0") +
 				BuildPackagePayloadAuthorityManifest(projectAssetsFile, packageAuthority);
 			AssertConfiguredAuthorityHashes(
 				importClosureManifest,
@@ -5238,7 +5361,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string fullLockPath = Path.GetFullPath(packagesLockFile);
 		if (PackagePathComparer.Equals(fullPath, fullLockPath))
 		{
-			(IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages, _) =
+			(IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages, _, _) =
 				ReadLockedPackageAuthority(fullLockPath, expectedTargetFramework);
 			var lockManifest = new StringBuilder();
 			AppendLockedPackageAuthority(lockManifest, lockedPackages);
@@ -5283,7 +5406,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 			repositoryRoot,
 			"WalletWasabi/packages.lock.json"));
 		Assert.True(PackagePathComparer.Equals(expectedLockFile, Path.GetFullPath(packagesLockFile)));
-		(IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages, bool lockHasLinuxX64Overlay) =
+		(
+			IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages,
+			bool lockHasLinuxX64Overlay,
+			_) =
 			ReadLockedPackageAuthority(packagesLockFile, expectedTargetFramework);
 		AssertRegularAuthorityFile(projectAssetsFile, "semantic project assets authority");
 		using JsonDocument document = JsonDocument.Parse(
@@ -5317,7 +5443,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 		return manifest.ToString();
 	}
 
-	private static (IReadOnlyDictionary<string, LockedPackageAuthority> Packages, bool HasLinuxX64Overlay)
+	private static (
+		IReadOnlyDictionary<string, LockedPackageAuthority> Packages,
+		bool HasLinuxX64Overlay,
+		bool HasContentHashes)
 		ReadLockedPackageAuthority(string packagesLockFile, string expectedTargetFramework)
 	{
 		AssertRegularAuthorityFile(packagesLockFile, "tracked packages lock authority");
@@ -5340,6 +5469,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		Assert.Equal(JsonValueKind.Object, dependencies.ValueKind);
 		var packages = new Dictionary<string, LockedPackageAuthority>(StringComparer.Ordinal);
 		var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		bool? contentHashProfile = null;
 		foreach (JsonProperty package in dependencies.EnumerateObject())
 		{
 			AssertPackageId(package.Name, "locked package ID");
@@ -5355,7 +5485,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 			}
 			Assert.Contains("type", names);
 			Assert.Contains("resolved", names);
-			Assert.Contains("contentHash", names);
+			bool hasContentHash = names.Contains("contentHash");
+			contentHashProfile ??= hasContentHash;
+			Assert.Equal(contentHashProfile.Value, hasContentHash);
 			string type = GetRequiredJsonString(package.Value.GetProperty("type"), $"locked package type for {package.Name}");
 			Assert.Contains(type, new[] { "Direct", "Transitive" });
 			Assert.Equal(type == "Direct", names.Contains("requested"));
@@ -5383,9 +5515,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 					requestedRange.Satisfies(parsedResolvedVersion),
 					$"The locked resolved version is outside its direct requested range: {package.Name}");
 			}
-			string contentHash = AssertCanonicalSha512(
-				package.Value.GetProperty("contentHash"),
-				$"locked content hash for {package.Name}/{resolvedVersion}");
+			string? contentHash = hasContentHash
+				? AssertCanonicalSha512(
+					package.Value.GetProperty("contentHash"),
+					$"locked content hash for {package.Name}/{resolvedVersion}")
+				: null;
 			var dependencyAuthority = new Dictionary<string, string>(StringComparer.Ordinal);
 			if (names.Contains("dependencies"))
 			{
@@ -5408,6 +5542,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				(type, requested, resolvedVersion, contentHash, dependencyAuthority)));
 		}
 		Assert.NotEmpty(packages);
+		Assert.NotNull(contentHashProfile);
 		if (hasLinuxX64Overlay)
 		{
 			AssertExactJsonProperties(
@@ -5439,7 +5574,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 					$"Locked dependency resolution is outside its declared constraint: {package.Key}/{dependency.Key}");
 			}
 		}
-		return (packages, hasLinuxX64Overlay);
+		return (packages, hasLinuxX64Overlay, contentHashProfile.Value);
 	}
 
 	private static void AppendLockedPackageAuthority(
@@ -5460,7 +5595,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 			manifest.Append('|');
 			manifest.Append(JsonSerializer.Serialize(package.ResolvedVersion));
 			manifest.Append('|');
-			manifest.Append(package.ContentHash);
+			manifest.Append("{VALIDATED_PACKAGE_CONTENT_AUTHORITY}");
 			string[] dependencyIds = package.Dependencies.Keys.ToArray();
 			Array.Sort(dependencyIds, StringComparer.Ordinal);
 			foreach (string dependencyId in dependencyIds)
@@ -5667,7 +5802,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string packagePath,
 		JsonElement library,
 		JsonElement files,
-		string lockedContentHash,
+		string? lockedContentHash,
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
 	{
 		Assert.Equal(JsonValueKind.Array, files.ValueKind);
@@ -5708,8 +5843,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 		bool hasSidecar = fileIdentities.Contains(expectedSidecar);
 		bool hasNixPatchMarker = fileIdentities.Contains(".nix-patched");
 		bool hasAssetsHash = library.TryGetProperty("sha512", out JsonElement assetsHash);
+		Assert.Equal(lockedContentHash is not null, hasAssetsHash);
 		if (hasAssetsHash)
 		{
+			Assert.NotNull(lockedContentHash);
 			Assert.Equal(
 				lockedContentHash,
 				AssertCanonicalSha512(assetsHash, $"project-assets content hash for {libraryIdentity}"));
@@ -5760,6 +5897,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string metadataPath = Path.Combine(selectedPackageDirectory, ".nupkg.metadata");
 		if (normalProfile)
 		{
+			Assert.NotNull(lockedContentHash);
 			string expectedNupkg = packagePath.Replace('/', '.') + ".nupkg";
 			Assert.True(physicalIdentities.Remove(expectedNupkg), $"The cached nupkg is absent: {libraryIdentity}");
 			Assert.Equal(fileIdentities.Order(StringComparer.Ordinal), physicalIdentities.Order(StringComparer.Ordinal));
@@ -6020,7 +6158,6 @@ public class LiquidOrdinaryWalletPlanWireTests
 				manifest,
 				library.Name,
 				library.Value,
-				locked.ContentHash,
 				repositoryRoot,
 				dotnetRoot,
 				packageAuthority,
@@ -6033,7 +6170,6 @@ public class LiquidOrdinaryWalletPlanWireTests
 		StringBuilder manifest,
 		string libraryIdentity,
 		JsonElement library,
-		string lockedContentHash,
 		string repositoryRoot,
 		string dotnetRoot,
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
@@ -6055,7 +6191,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 			}
 			if (!injectedHash && StringComparer.Ordinal.Compare("sha512", property.Name) < 0)
 			{
-				AppendCanonicalProjectAssetsInjectedHash(manifest, lockedContentHash, ref first);
+				AppendCanonicalProjectAssetsInjectedHash(manifest, ref first);
 				injectedHash = true;
 			}
 			if (!first)
@@ -6084,14 +6220,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 		}
 		if (!injectedHash)
 		{
-			AppendCanonicalProjectAssetsInjectedHash(manifest, lockedContentHash, ref first);
+			AppendCanonicalProjectAssetsInjectedHash(manifest, ref first);
 		}
 		manifest.Append('}');
 	}
 
 	private static void AppendCanonicalProjectAssetsInjectedHash(
 		StringBuilder manifest,
-		string lockedContentHash,
 		ref bool first)
 	{
 		if (!first)
@@ -6100,7 +6235,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		}
 		first = false;
 		manifest.Append("\"sha512\":");
-		manifest.Append(JsonSerializer.Serialize(lockedContentHash));
+		manifest.Append(JsonSerializer.Serialize("{VALIDATED_PACKAGE_CONTENT_AUTHORITY}"));
 	}
 
 	private static void AppendCanonicalProjectAssetsLibraryFiles(
@@ -8292,7 +8427,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 		json.Append(JsonSerializer.Serialize(Path.Combine(dotnetRoot, "sdk/10.0.100/PortableRuntimeIdentifierGraph.json")));
 		json.Append("}}}}");
 		File.WriteAllText(assetsPath, json.ToString(), Encoding.UTF8);
-		WriteSemanticPackagesLockFixture(packagesLockPath, dependencyVersion, contentHash);
+		WriteSemanticPackagesLockFixture(
+			packagesLockPath,
+			dependencyVersion,
+			contentHash,
+			omitContentHashes: usePinnedNixFallbackProfile);
 		WriteSemanticNuGetPropsFixture(propsPath, orderedPackageRoots, importedPackageFile);
 		File.WriteAllText(
 			targetsPath,
@@ -8309,7 +8448,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string? additionalPackageId = null,
 		string? dependencyId = null,
 		string dependencyMinimumVersion = "1.0.0",
-		string? dependencyAliasId = null)
+		string? dependencyAliasId = null,
+		bool omitContentHashes = false,
+		bool omitAdditionalPackageContentHash = false)
 	{
 		var json = new StringBuilder();
 		json.Append("{\"version\":2,\"dependencies\":{\"net10.0\":{");
@@ -8319,8 +8460,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 		json.Append(JsonSerializer.Serialize($"[{dependencyVersion}, )"));
 		json.Append(",\"resolved\":");
 		json.Append(JsonSerializer.Serialize(dependencyVersion));
-		json.Append(",\"contentHash\":");
-		json.Append(JsonSerializer.Serialize(contentHash));
+		if (!omitContentHashes)
+		{
+			json.Append(",\"contentHash\":");
+			json.Append(JsonSerializer.Serialize(contentHash));
+		}
 		if (dependencyId is not null)
 		{
 			json.Append(",\"dependencies\":{");
@@ -8341,8 +8485,12 @@ public class LiquidOrdinaryWalletPlanWireTests
 		{
 			json.Append(',');
 			json.Append(JsonSerializer.Serialize(additionalPackageId));
-			json.Append(":{\"type\":\"Transitive\",\"resolved\":\"1.0.0\",\"contentHash\":");
-			json.Append(JsonSerializer.Serialize(contentHash));
+			json.Append(":{\"type\":\"Transitive\",\"resolved\":\"1.0.0\"");
+			if (!omitContentHashes && !omitAdditionalPackageContentHash)
+			{
+				json.Append(",\"contentHash\":");
+				json.Append(JsonSerializer.Serialize(contentHash));
+			}
 			json.Append('}');
 		}
 		json.Append("}}}");
@@ -8672,5 +8820,35 @@ public class LiquidOrdinaryWalletPlanWireTests
 			}
 		}
 		return true;
+	}
+
+	private static string BuildPackageTransportAuthorityManifest(
+		string packagesLockFile,
+		string expectedTargetFramework)
+	{
+		(
+			IReadOnlyDictionary<string, LockedPackageAuthority> packages,
+			bool hasLinuxX64Overlay,
+			bool hasContentHashes) =
+			ReadLockedPackageAuthority(packagesLockFile, expectedTargetFramework);
+		var manifest = new StringBuilder("PACKAGE_TRANSPORT_AUTHORITY_V1\n");
+		manifest.Append(hasContentHashes
+			? "PROFILE|CONTENT_HASHES_PRESENT\n"
+			: "PROFILE|CONTENT_HASHES_ABSENT_PINNED_NIX\n");
+		manifest.Append(hasLinuxX64Overlay
+			? "RID_OVERLAY|LINUX_X64_PRESENT\n"
+			: "RID_OVERLAY|LINUX_X64_ABSENT\n");
+		string[] packageIds = packages.Keys.ToArray();
+		Array.Sort(packageIds, StringComparer.Ordinal);
+		foreach (string packageId in packageIds)
+		{
+			LockedPackageAuthority package = packages[packageId];
+			manifest.Append("PACKAGE|");
+			manifest.Append(packageId);
+			manifest.Append('|');
+			manifest.Append(package.ContentHash ?? "{ABSENT_PINNED_NIX_CONTENT_HASH}");
+			manifest.Append('\n');
+		}
+		return manifest.ToString();
 	}
 }
