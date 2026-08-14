@@ -1789,35 +1789,36 @@ public class LiquidOrdinaryWalletPlanWireTests
 			Assert.Equal(firstManifest, secondManifest);
 			string canonicalFirstAssets = File.ReadAllText(firstAssets);
 			string canonicalSecondAssets = File.ReadAllText(secondAssets);
+			string secondOfflineSource = Path.Combine(secondRoot, "source");
 			string secondLibraryPacksSource = Path.Combine(secondDotnet, "library-packs");
-			string serializedPrimarySource = JsonSerializer.Serialize(secondPrimary);
+			string serializedOfflineSource = JsonSerializer.Serialize(secondOfflineSource);
 			string serializedLibraryPacksSource = JsonSerializer.Serialize(secondLibraryPacksSource);
-			string primarySourceEntry = $"{serializedPrimarySource}:{{}}";
+			string offlineSourceEntry = $"{serializedOfflineSource}:{{}}";
 			string libraryPacksEntry = $"{serializedLibraryPacksSource}:{{}}";
 			string canonicalPinnedNixSources =
-				$"\"sources\":{{{primarySourceEntry},{libraryPacksEntry}}}";
+				$"\"sources\":{{{offlineSourceEntry},{libraryPacksEntry}}}";
 			Assert.Contains(canonicalPinnedNixSources, canonicalSecondAssets, StringComparison.Ordinal);
 			string extraRestoreSource = Path.Combine(secondRoot, "unexpected-source");
 			string[] rejectedPinnedNixSources =
 			[
-				$"\"sources\":{{{primarySourceEntry}}}",
+				$"\"sources\":{{{offlineSourceEntry}}}",
 				$"\"sources\":{{{libraryPacksEntry}}}",
-				$"\"sources\":{{{libraryPacksEntry},{primarySourceEntry}}}",
-				$"\"sources\":{{{primarySourceEntry},{libraryPacksEntry}," +
+				$"\"sources\":{{{libraryPacksEntry},{offlineSourceEntry}}}",
+				$"\"sources\":{{{offlineSourceEntry},{libraryPacksEntry}," +
 					$"{JsonSerializer.Serialize(extraRestoreSource)}:{{}}}}",
-				$"\"sources\":{{{primarySourceEntry}," +
+				$"\"sources\":{{{offlineSourceEntry}," +
 					$"{JsonSerializer.Serialize(Path.Combine(secondDotnet, "Library-Packs"))}:{{}}}}",
-				$"\"sources\":{{{primarySourceEntry}," +
+				$"\"sources\":{{{offlineSourceEntry}," +
 					$"{JsonSerializer.Serialize(secondLibraryPacksSource + Path.DirectorySeparatorChar)}:{{}}}}",
-				$"\"sources\":{{{primarySourceEntry}," +
+				$"\"sources\":{{{offlineSourceEntry}," +
 					$"{JsonSerializer.Serialize(Path.Combine(secondDotnet, "sdk", "..", "library-packs"))}:{{}}}}",
-				$"\"sources\":{{{primarySourceEntry}," +
+				$"\"sources\":{{{offlineSourceEntry}," +
 					$"{JsonSerializer.Serialize(Path.Combine(secondDotnet, "library-packs-copy"))}:{{}}}}",
 				$"\"sources\":{{" +
-					$"{JsonSerializer.Serialize(Path.Combine(secondPrimary, "..", Path.GetFileName(secondPrimary)))}:{{}}," +
+					$"{JsonSerializer.Serialize(Path.Combine(secondOfflineSource, "..", Path.GetFileName(secondOfflineSource)))}:{{}}," +
 					$"{libraryPacksEntry}}}",
-				$"\"sources\":{{{primarySourceEntry},{serializedLibraryPacksSource}:{{\"unexpected\":true}}}}",
-				$"\"sources\":{{{primarySourceEntry},{primarySourceEntry},{libraryPacksEntry}}}",
+				$"\"sources\":{{{offlineSourceEntry},{serializedLibraryPacksSource}:{{\"unexpected\":true}}}}",
+				$"\"sources\":{{{offlineSourceEntry},{offlineSourceEntry},{libraryPacksEntry}}}",
 				$"\"sources\":{{" +
 					$"{JsonSerializer.Serialize("https://api.nuget.org/v3/index.json")}:{{}},{libraryPacksEntry}}}",
 				$"\"sources\":{{{JsonSerializer.Serialize("https://api.nuget.org/v3/index.json")}:{{}}}}",
@@ -1852,7 +1853,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				firstAssets,
 				canonicalFirstAssets.Replace(
 					$"\"sources\":{{{NuGetSourceEntry}}}",
-					$"\"sources\":{{{JsonSerializer.Serialize(firstPrimary)}:{{}}," +
+					$"\"sources\":{{{JsonSerializer.Serialize(Path.Combine(firstRoot, "source"))}:{{}}," +
 					$"{JsonSerializer.Serialize(Path.Combine(firstDotnet, "library-packs"))}:{{}}}}",
 					StringComparison.Ordinal),
 				Encoding.UTF8);
@@ -6494,9 +6495,12 @@ public class LiquidOrdinaryWalletPlanWireTests
 	{
 		Assert.Equal(JsonValueKind.Object, sources.ValueKind);
 		bool pinnedNixProfile = lockedPackages.Values.All(package => package.ContentHash is null);
+		string packageParent = Directory.GetParent(packageAuthority.PrimaryRoot)?.FullName ??
+			throw new Xunit.Sdk.XunitException("The primary package root has no parent.");
+		string expectedOfflineSource = Path.Combine(packageParent, "source");
 		string expectedLibraryPacks = Path.Combine(dotnetRoot, "library-packs");
 		string[] expectedSources = pinnedNixProfile
-			? [packageAuthority.PrimaryRoot, expectedLibraryPacks]
+			? [expectedOfflineSource, expectedLibraryPacks]
 			: ["https://api.nuget.org/v3/index.json"];
 		AssertExactJsonProperties(sources, expectedSources);
 		foreach (JsonProperty source in sources.EnumerateObject())
@@ -6506,7 +6510,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		}
 		if (pinnedNixProfile)
 		{
-			AssertRegularAuthorityDirectory(packageAuthority.PrimaryRoot, "pinned-Nix package restore source");
+			AssertRegularAuthorityDirectory(expectedOfflineSource, "pinned-Nix offline restore source");
 			AssertRegularAuthorityDirectory(expectedLibraryPacks, "SDK library-packs restore source");
 		}
 	}
@@ -8625,9 +8629,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 		json.Append("],\"originalTargetFrameworks\":[\"net10.0\"],\"sources\":{");
 		if (usePinnedNixFallbackProfile)
 		{
+			string packageParent = Directory.GetParent(primaryPackageRoot)?.FullName ??
+				throw new Xunit.Sdk.XunitException("The fixture package root has no parent.");
+			string offlineSource = Path.Combine(packageParent, "source");
 			string libraryPacksSource = Path.Combine(dotnetRoot, "library-packs");
+			Directory.CreateDirectory(offlineSource);
 			Directory.CreateDirectory(libraryPacksSource);
-			json.Append(JsonSerializer.Serialize(primaryPackageRoot));
+			json.Append(JsonSerializer.Serialize(offlineSource));
 			json.Append(":{},");
 			json.Append(JsonSerializer.Serialize(libraryPacksSource));
 			json.Append(":{}");
