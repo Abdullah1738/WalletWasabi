@@ -19,6 +19,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
+using System.Xml.Linq;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Logging;
 using Microsoft.CodeAnalysis.CSharp;
@@ -54,12 +56,12 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private const string ExpectedReleaseAmbientClosureSha256 = "190c3955f0e3a75fcf1497e92604b514ce93769c31d601e66c54862da397deee";
 	private const string ExpectedDebugGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
 	private const string ExpectedReleaseGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
-	private const string ExpectedDebugImportClosureSha256 = "af4597b46ba8ac1eff3c1dcc204854fb4b8fff8864cdfca63167ed0e9d8ae44e";
-	private const string ExpectedReleaseImportClosureSha256 = "af4597b46ba8ac1eff3c1dcc204854fb4b8fff8864cdfca63167ed0e9d8ae44e";
-	private const string ExpectedDebugReferenceAuthoritySha256 = "0feb723719d88d4a8b7e243b3c7bdb3458f027f35fd22c31ba043a366c2125d0";
-	private const string ExpectedReleaseReferenceAuthoritySha256 = "0feb723719d88d4a8b7e243b3c7bdb3458f027f35fd22c31ba043a366c2125d0";
-	private const string ExpectedDebugCompilerInputAuthoritySha256 = "017be6c524b7d699c8fc15993e79f33128fc617739816080be1ce9a3c8f99c17";
-	private const string ExpectedReleaseCompilerInputAuthoritySha256 = "5aaec2d3fd7933773b6aa7bf6df34fe7658d07b7b03b3033b99897a2ce878344";
+	private const string ExpectedDebugImportClosureSha256 = "932584d307786452fe44a5582afb6c5eba174aa4500fd0ba7b3bc2e0ad6c3601";
+	private const string ExpectedReleaseImportClosureSha256 = "932584d307786452fe44a5582afb6c5eba174aa4500fd0ba7b3bc2e0ad6c3601";
+	private const string ExpectedDebugReferenceAuthoritySha256 = "ff62b53abb82dfe960380727580f4b800389ce3eed5a64ee8c6a80196c34b2eb";
+	private const string ExpectedReleaseReferenceAuthoritySha256 = "ff62b53abb82dfe960380727580f4b800389ce3eed5a64ee8c6a80196c34b2eb";
+	private const string ExpectedDebugCompilerInputAuthoritySha256 = "62ac04eeaf0a813c3ba77f7544250d222cb9ac387b899e82269d74356e600dfa";
+	private const string ExpectedReleaseCompilerInputAuthoritySha256 = "5e84372882fab8c2203eafab592644f935c59ae4aec7dce00dd454d6d9d31bee";
 	private const string ExpectedToolchainDependencyAuthoritySha256 = "76752a17554778c4a90942141dbc1f4ed23b5382d7dd54843767bd1df67ae08e";
 	private const string IssuedAssetHex =
 		"2222222222222222222222222222222222222222222222222222222222222222";
@@ -869,7 +871,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 			buildAuthority.CompileInputs;
 		AssertExactImplementationCompileInputs(expectedImplementationPaths, productionRoot, evaluatedCompileInputs);
 		AssertExactAmbientCompileAuthority(evaluatedCompileInputs);
-		AssertExactAnalyzerAuthority(buildAuthority.Analyzers, buildAuthority.DotnetRoot);
+		AssertExactAnalyzerAuthority(
+			buildAuthority.Analyzers,
+			buildAuthority.DotnetRoot,
+			buildAuthority.PackageAuthority);
 		AssertExactGeneratedSourceAuthority(buildAuthority.GeneratedSources);
 
 		var declaredTypes = new List<string>();
@@ -1109,6 +1114,164 @@ public class LiquidOrdinaryWalletPlanWireTests
 				buildAuthority.CompilerInputAuthorityManifest,
 				buildAuthority.ToolchainAuthorityManifest));
 
+		string packageMutationRoot = Path.Combine(
+			Path.GetTempPath(),
+			$"walletwasabi-wlpq-package-authority-{Guid.NewGuid():N}");
+		try
+		{
+			Directory.CreateDirectory(packageMutationRoot);
+			string primaryPackageRoot = Path.Combine(packageMutationRoot, "packages");
+			string fallbackPackageRoot = Path.Combine(packageMutationRoot, "fallback");
+			string nestedPackageRoot = Path.Combine(primaryPackageRoot, "nested");
+			string undeclaredPackageRoot = Path.Combine(packageMutationRoot, "unapproved/.nuget/packages");
+			Directory.CreateDirectory(primaryPackageRoot);
+			Directory.CreateDirectory(fallbackPackageRoot);
+			Directory.CreateDirectory(nestedPackageRoot);
+			Directory.CreateDirectory(undeclaredPackageRoot);
+			string syntheticAssets = Path.Combine(packageMutationRoot, "project.assets.json");
+
+			WritePackageAssetsAuthorityFixture(
+				syntheticAssets,
+				primaryPackageRoot,
+				(primaryPackageRoot, true),
+				(fallbackPackageRoot, true));
+			(string PrimaryRoot, string[] OrderedRoots) multiRoot =
+				GetPinnedPackageAuthority(syntheticAssets);
+			Assert.Equal(primaryPackageRoot, multiRoot.PrimaryRoot);
+			Assert.Equal([primaryPackageRoot, fallbackPackageRoot], multiRoot.OrderedRoots);
+
+			WritePackageAssetsAuthorityFixture(
+				syntheticAssets,
+				primaryPackageRoot,
+				(primaryPackageRoot, true));
+			(string PrimaryRoot, string[] OrderedRoots) singleRoot =
+				GetPinnedPackageAuthority(syntheticAssets);
+			Assert.Equal(primaryPackageRoot, singleRoot.PrimaryRoot);
+			Assert.Equal([primaryPackageRoot], singleRoot.OrderedRoots);
+
+			WritePackageAssetsAuthorityFixture(
+				syntheticAssets,
+				primaryPackageRoot,
+				(fallbackPackageRoot, true),
+				(primaryPackageRoot, true));
+			AssertPackageAuthorityRejected(syntheticAssets);
+			WritePackageAssetsAuthorityFixture(
+				syntheticAssets,
+				primaryPackageRoot,
+				(primaryPackageRoot, true),
+				(primaryPackageRoot + Path.DirectorySeparatorChar, true));
+			AssertPackageAuthorityRejected(syntheticAssets);
+			WritePackageAssetsAuthorityFixture(
+				syntheticAssets,
+				primaryPackageRoot,
+				(primaryPackageRoot, true),
+				(nestedPackageRoot, true));
+			AssertPackageAuthorityRejected(syntheticAssets);
+			WritePackageAssetsAuthorityFixture(
+				syntheticAssets,
+				Path.Combine(primaryPackageRoot, "..", "fallback"),
+				(fallbackPackageRoot, true));
+			AssertPackageAuthorityRejected(syntheticAssets);
+			WritePackageAssetsAuthorityFixture(
+				syntheticAssets,
+				"relative/packages",
+				(primaryPackageRoot, true));
+			AssertPackageAuthorityRejected(syntheticAssets);
+			WritePackageAssetsAuthorityFixture(syntheticAssets, primaryPackageRoot);
+			AssertPackageAuthorityRejected(syntheticAssets);
+			WritePackageAssetsAuthorityFixture(
+				syntheticAssets,
+				primaryPackageRoot,
+				(primaryPackageRoot, false));
+			AssertPackageAuthorityRejected(syntheticAssets);
+			string missingPackageRoot = Path.Combine(packageMutationRoot, "missing");
+			WritePackageAssetsAuthorityFixture(
+				syntheticAssets,
+				missingPackageRoot,
+				(missingPackageRoot, true));
+			AssertPackageAuthorityRejected(syntheticAssets);
+			File.WriteAllText(
+				syntheticAssets,
+				"{\"project\":{\"restore\":{}},\"packageFolders\":{}}",
+				Encoding.UTF8);
+			AssertPackageAuthorityRejected(syntheticAssets);
+
+			string linkedPackageRoot = Path.Combine(packageMutationRoot, "linked-packages");
+			Directory.CreateSymbolicLink(linkedPackageRoot, fallbackPackageRoot);
+			WritePackageAssetsAuthorityFixture(
+				syntheticAssets,
+				linkedPackageRoot,
+				(linkedPackageRoot, true));
+			AssertPackageAuthorityRejected(syntheticAssets);
+
+			WritePackageAssetsAuthorityFixture(
+				syntheticAssets,
+				primaryPackageRoot,
+				(primaryPackageRoot, true),
+				(fallbackPackageRoot, true));
+			multiRoot = GetPinnedPackageAuthority(syntheticAssets);
+			string relativePackageFile = "example.package/1.2.3/lib/net10.0/Example.dll";
+			string primaryPackageFile = Path.Combine(
+				primaryPackageRoot,
+				relativePackageFile.Replace('/', Path.DirectorySeparatorChar));
+			string fallbackPackageFile = Path.Combine(
+				fallbackPackageRoot,
+				relativePackageFile.Replace('/', Path.DirectorySeparatorChar));
+			Directory.CreateDirectory(Path.GetDirectoryName(primaryPackageFile)!);
+			Directory.CreateDirectory(Path.GetDirectoryName(fallbackPackageFile)!);
+			File.WriteAllBytes(primaryPackageFile, [1, 2, 3, 4]);
+			File.WriteAllBytes(fallbackPackageFile, [1, 2, 3, 4]);
+			string expectedPackageIdentity = $"NUGET|{relativePackageFile}";
+			Assert.Equal(
+				expectedPackageIdentity,
+				NormalizeAuthorityPath(
+					primaryPackageFile,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					multiRoot));
+			Assert.Equal(
+				expectedPackageIdentity,
+				NormalizeAuthorityPath(
+					fallbackPackageFile,
+					buildAuthority.RepositoryRoot,
+					buildAuthority.DotnetRoot,
+					multiRoot));
+			Assert.Equal(
+				$"/reference:{{NUGET}}/{relativePackageFile}",
+				NormalizeAuthorityStringWithPackages(
+					$"/reference:{fallbackPackageFile}",
+					multiRoot));
+			string adjacentRootLookalike = NormalizeAuthorityStringWithPackages(
+				$"/reference:{fallbackPackageRoot}-undeclared/{relativePackageFile}",
+				multiRoot);
+			Assert.DoesNotContain("{NUGET}", adjacentRootLookalike, StringComparison.Ordinal);
+
+			File.WriteAllBytes(fallbackPackageFile, [1, 2, 3, 5]);
+			AssertPackagePathRejected(
+				primaryPackageFile,
+				buildAuthority.RepositoryRoot,
+				buildAuthority.DotnetRoot,
+				multiRoot);
+
+			string undeclaredPackageFile = Path.Combine(
+				undeclaredPackageRoot,
+				relativePackageFile.Replace('/', Path.DirectorySeparatorChar));
+			Directory.CreateDirectory(Path.GetDirectoryName(undeclaredPackageFile)!);
+			File.WriteAllBytes(undeclaredPackageFile, [1, 2, 3, 4]);
+			AssertPackagePathRejected(
+				undeclaredPackageFile,
+				buildAuthority.RepositoryRoot,
+				buildAuthority.DotnetRoot,
+				multiRoot);
+		}
+		finally
+		{
+			if (Directory.Exists(packageMutationRoot))
+			{
+				Directory.Delete(packageMutationRoot, recursive: true);
+			}
+		}
+
 		string symlinkMutationRoot = Path.Combine(
 			Path.GetTempPath(),
 			$"walletwasabi-wlpq-symlink-mutation-{Guid.NewGuid():N}");
@@ -1245,6 +1408,391 @@ public class LiquidOrdinaryWalletPlanWireTests
 				exactTypes.Select(type => type.FullName!),
 				exactTypes.Select(type => type.FullName!)
 					.Append("WalletWasabi.Liquid.Wallet.Wire.Nested.Added")));
+	}
+
+	[Fact]
+	public void RestoreArtifactAuthorityIsPortableAndMutationClosed()
+	{
+		string currentRevision = new('a', 40);
+		Assert.Equal(
+			"1.2.3+release",
+			RemoveSdkSourceRevisionSuffix("1.2.3+release", "", currentRevision));
+		Assert.Equal(
+			"1.2.3+release",
+			RemoveSdkSourceRevisionSuffix($"1.2.3+release.{currentRevision}", "", currentRevision));
+		Assert.Equal(
+			$"1.2.3+{currentRevision}",
+			RemoveSdkSourceRevisionSuffix($"1.2.3+{currentRevision}", "", null));
+		Assert.Equal(
+			$"1.2.3+{currentRevision}",
+			RemoveSdkSourceRevisionSuffix($"1.2.3+{currentRevision}", "", new string('b', 40)));
+		Assert.Equal(
+			$"1.2.3+{currentRevision}",
+			RemoveSdkSourceRevisionSuffix($"1.2.3+{currentRevision}", currentRevision, null));
+		Assert.Equal(
+			"1.2.3+release",
+			RemoveSdkSourceRevisionSuffix(
+				$"1.2.3+release.{currentRevision}",
+				currentRevision,
+				currentRevision));
+		Assert.True(IsValidGitReferenceName("refs/heads/release-é@candidate"));
+		Assert.False(IsValidGitReferenceName("refs/heads/../escape"));
+		Assert.False(IsValidGitReferenceName("refs/heads/control\u0001name"));
+
+		string fixtureRoot = Path.Combine(
+			Path.GetTempPath(),
+			$"walletwasabi-wlpq-restore-artifact-{Guid.NewGuid():N}");
+		try
+		{
+			string firstRoot = Path.Combine(fixtureRoot, "first");
+			string secondRoot = Path.Combine(fixtureRoot, "second");
+			string firstRepository = Path.Combine(firstRoot, "repo");
+			string secondRepository = Path.Combine(secondRoot, "repo");
+			string firstDotnet = Path.Combine(firstRoot, "dotnet");
+			string secondDotnet = Path.Combine(secondRoot, "dotnet");
+			string firstPrimary = Path.Combine(firstRoot, "packages");
+			string secondPrimary = Path.Combine(secondRoot, "packages");
+			string secondFallback = Path.Combine(secondRoot, "fallback");
+			Directory.CreateDirectory(firstRepository);
+			Directory.CreateDirectory(secondRepository);
+			Directory.CreateDirectory(firstDotnet);
+			Directory.CreateDirectory(secondDotnet);
+			Directory.CreateDirectory(firstPrimary);
+			Directory.CreateDirectory(secondPrimary);
+			Directory.CreateDirectory(secondFallback);
+
+			string detachedRepository = Path.Combine(fixtureRoot, "git-detached");
+			string detachedGitDirectory = Path.Combine(detachedRepository, ".git");
+			Directory.CreateDirectory(detachedGitDirectory);
+			File.WriteAllText(Path.Combine(detachedGitDirectory, "HEAD"), currentRevision, Encoding.UTF8);
+			Assert.Equal(currentRevision, TryReadRepositoryRevision(detachedRepository));
+
+			string looseRepository = Path.Combine(fixtureRoot, "git-loose");
+			string looseGitDirectory = Path.Combine(looseRepository, ".git");
+			string looseReference = "refs/heads/release-é@candidate";
+			Directory.CreateDirectory(Path.Combine(looseGitDirectory, "refs/heads"));
+			File.WriteAllText(Path.Combine(looseGitDirectory, "HEAD"), $"ref: {looseReference}\n", Encoding.UTF8);
+			File.WriteAllText(Path.Combine(looseGitDirectory, looseReference), currentRevision, Encoding.UTF8);
+			Assert.Equal(currentRevision, TryReadRepositoryRevision(looseRepository));
+
+			string packedRepository = Path.Combine(fixtureRoot, "git-packed");
+			string packedGitDirectory = Path.Combine(packedRepository, ".git");
+			string packedReference = "refs/heads/packed@candidate";
+			Directory.CreateDirectory(packedGitDirectory);
+			File.WriteAllText(Path.Combine(packedGitDirectory, "HEAD"), $"ref: {packedReference}\n", Encoding.UTF8);
+			File.WriteAllText(
+				Path.Combine(packedGitDirectory, "packed-refs"),
+				$"# pack-refs with: peeled fully-peeled sorted\n{currentRevision} {packedReference}\n",
+				Encoding.UTF8);
+			Assert.Equal(currentRevision, TryReadRepositoryRevision(packedRepository));
+
+			string linkedRepository = Path.Combine(fixtureRoot, "git-linked");
+			string commonGitDirectory = Path.Combine(fixtureRoot, "git-common");
+			string linkedGitDirectory = Path.Combine(commonGitDirectory, "worktrees/linked");
+			string linkedReference = "refs/heads/linked-é@candidate";
+			Directory.CreateDirectory(linkedRepository);
+			Directory.CreateDirectory(Path.Combine(commonGitDirectory, "refs/heads"));
+			Directory.CreateDirectory(linkedGitDirectory);
+			File.WriteAllText(
+				Path.Combine(linkedRepository, ".git"),
+				$"gitdir: {linkedGitDirectory}\n",
+				Encoding.UTF8);
+			File.WriteAllText(Path.Combine(linkedGitDirectory, "commondir"), "../..\n", Encoding.UTF8);
+			File.WriteAllText(Path.Combine(linkedGitDirectory, "HEAD"), $"ref: {linkedReference}\n", Encoding.UTF8);
+			File.WriteAllText(Path.Combine(commonGitDirectory, linkedReference), currentRevision, Encoding.UTF8);
+			Assert.Equal(currentRevision, TryReadRepositoryRevision(linkedRepository));
+
+			string firstImport = CreateSemanticRestorePackageImport(firstPrimary, [1, 2, 3, 4]);
+			string secondImport = CreateSemanticRestorePackageImport(secondFallback, [1, 2, 3, 4]);
+			string firstAssets = WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				CreateSemanticRestoreContentHash(7),
+				"example.package/1.2.3");
+			string secondAssets = WriteSemanticRestoreFixture(
+				secondRepository,
+				secondDotnet,
+				secondPrimary,
+				[secondPrimary, secondFallback],
+				secondImport,
+				"1.2.3",
+				CreateSemanticRestoreContentHash(7),
+				"example.package/1.2.3");
+			string secondOfflineSource = Path.Combine(secondRoot, "source");
+			Directory.CreateDirectory(secondOfflineSource);
+			File.WriteAllText(
+				secondAssets,
+				File.ReadAllText(secondAssets).Replace(
+					JsonSerializer.Serialize("https://api.nuget.org/v3/index.json") + ":{}",
+					JsonSerializer.Serialize(secondOfflineSource) + ":{}",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			(string PrimaryRoot, string[] OrderedRoots) firstAuthority = GetPinnedPackageAuthority(firstAssets);
+			(string PrimaryRoot, string[] OrderedRoots) secondAuthority = GetPinnedPackageAuthority(secondAssets);
+			string firstManifest = BuildSemanticRestoreFixtureManifest(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+			string secondManifest = BuildSemanticRestoreFixtureManifest(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			Assert.Equal(firstManifest, secondManifest);
+
+			string secondFallbackProperty =
+				$"\"fallbackFolders\":[{JsonSerializer.Serialize(secondFallback)}],";
+			string secondAssetsText = File.ReadAllText(secondAssets);
+			Assert.Contains(secondFallbackProperty, secondAssetsText, StringComparison.Ordinal);
+			File.WriteAllText(
+				secondAssets,
+				secondAssetsText.Replace(secondFallbackProperty, "", StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+
+			const string RestoreSourceProperty =
+				"\"sources\":{\"https://api.nuget.org/v3/index.json\":{}},";
+			string firstAssetsText = File.ReadAllText(firstAssets);
+			Assert.Contains(RestoreSourceProperty, firstAssetsText, StringComparison.Ordinal);
+			File.WriteAllText(
+				firstAssets,
+				firstAssetsText.Replace(
+					RestoreSourceProperty,
+					RestoreSourceProperty + "\"fallbackFolders\":[],",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.4",
+				CreateSemanticRestoreContentHash(7),
+				"example.package/1.2.4");
+			Assert.NotEqual(
+				firstManifest,
+				BuildSemanticRestoreFixtureManifest(
+					firstAssets,
+					firstRepository,
+					firstDotnet,
+					GetPinnedPackageAuthority(firstAssets)));
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				CreateSemanticRestoreContentHash(7),
+				"example.package/1.2.3");
+			File.WriteAllText(
+				firstAssets,
+				File.ReadAllText(firstAssets).Replace(
+					"https://api.nuget.org/v3/index.json",
+					"https://unapproved.invalid/v3/index.json",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				GetPinnedPackageAuthority(firstAssets));
+			string generatedProps =
+				Path.Combine(firstRepository, "WalletWasabi/obj/WalletWasabi.csproj.nuget.g.props");
+			string sourceRootDeclaration =
+				$"<SourceRoot Include=\"{System.Security.SecurityElement.Escape(firstPrimary + Path.DirectorySeparatorChar)}\" />";
+			string generatedPropsText;
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				CreateSemanticRestoreContentHash(7),
+				"example.package/1.2.3");
+			generatedPropsText = File.ReadAllText(generatedProps);
+			File.WriteAllText(
+				generatedProps,
+				generatedPropsText.Replace(
+					sourceRootDeclaration,
+					$"<SourceRoot Include=\"{System.Security.SecurityElement.Escape(firstPrimary)}\" />",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				GetPinnedPackageAuthority(firstAssets));
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				CreateSemanticRestoreContentHash(7),
+				"example.package/1.2.3");
+			generatedPropsText = File.ReadAllText(generatedProps);
+			File.WriteAllText(
+				generatedProps,
+				generatedPropsText.Replace(
+					sourceRootDeclaration,
+					$"<SourceRoot Include=\"{System.Security.SecurityElement.Escape(firstPrimary + Path.DirectorySeparatorChar + Path.DirectorySeparatorChar)}\" />",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				GetPinnedPackageAuthority(firstAssets));
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				CreateSemanticRestoreContentHash(7),
+				"example.package/1.2.3");
+			generatedPropsText = File.ReadAllText(generatedProps);
+			Assert.Contains(sourceRootDeclaration, generatedPropsText, StringComparison.Ordinal);
+			File.WriteAllText(
+				generatedProps,
+				generatedPropsText.Replace(sourceRootDeclaration, "", StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				GetPinnedPackageAuthority(firstAssets));
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				CreateSemanticRestoreContentHash(7),
+				"example.package/1.2.3");
+			generatedPropsText = File.ReadAllText(generatedProps);
+			Assert.Contains("NuGetPackageRoot", generatedPropsText, StringComparison.Ordinal);
+			File.WriteAllText(
+				generatedProps,
+				generatedPropsText
+					.Replace(
+						"<NuGetPackageRoot>",
+						"<VALIDATED_PACKAGE_SOURCE_ROOT_TOPOLOGY>",
+						StringComparison.Ordinal)
+					.Replace(
+						"</NuGetPackageRoot>",
+						"</VALIDATED_PACKAGE_SOURCE_ROOT_TOPOLOGY>",
+						StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				GetPinnedPackageAuthority(firstAssets));
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				CreateSemanticRestoreContentHash(8),
+				"example.package/1.2.3");
+			Assert.NotEqual(
+				firstManifest,
+				BuildSemanticRestoreFixtureManifest(
+					firstAssets,
+					firstRepository,
+					firstDotnet,
+					GetPinnedPackageAuthority(firstAssets)));
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				CreateSemanticRestoreContentHash(7),
+				"../example.package/1.2.3");
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				GetPinnedPackageAuthority(firstAssets));
+
+			WriteSemanticRestoreFixture(
+				firstRepository,
+				firstDotnet,
+				firstPrimary,
+				[firstPrimary],
+				firstImport,
+				"1.2.3",
+				CreateSemanticRestoreContentHash(7),
+				"example.package/1.2.3");
+			string alternateImport = CreateSemanticRestorePackageImport(
+				firstPrimary,
+				[1, 2, 3, 4],
+				"alternate.props");
+			WriteSemanticNuGetPropsFixture(
+				Path.Combine(firstRepository, "WalletWasabi/obj/WalletWasabi.csproj.nuget.g.props"),
+				[firstPrimary],
+				alternateImport);
+			Assert.NotEqual(
+				firstManifest,
+				BuildSemanticRestoreFixtureManifest(
+					firstAssets,
+					firstRepository,
+					firstDotnet,
+					GetPinnedPackageAuthority(firstAssets)));
+
+			WriteSemanticNuGetPropsFixture(
+				Path.Combine(firstRepository, "WalletWasabi/obj/WalletWasabi.csproj.nuget.g.props"),
+				[firstPrimary],
+				firstImport);
+			File.WriteAllBytes(firstImport, [1, 2, 3, 5]);
+			Assert.NotEqual(
+				firstManifest,
+				BuildSemanticRestoreFixtureManifest(
+					firstAssets,
+					firstRepository,
+					firstDotnet,
+					GetPinnedPackageAuthority(firstAssets)));
+		}
+		finally
+		{
+			if (Directory.Exists(fixtureRoot))
+			{
+				Directory.Delete(fixtureRoot, recursive: true);
+			}
+		}
 	}
 
 	[Fact]
@@ -2366,7 +2914,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 		return type.GetConstructors(Declared).Cast<MethodBase>().Concat(type.GetMethods(Declared));
 	}
 
-	private static string TypeIdentity(Type? type) => type?.AssemblyQualifiedName ?? "null";
+	private static string TypeIdentity(Type? type) =>
+		WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests.NormalizeProductAssemblyVersion(
+			type?.AssemblyQualifiedName ?? "null");
 
 	private static string MethodIdentity(MethodBase method) =>
 		$"{TypeIdentity(method.DeclaringType)}::{method.Name}" +
@@ -2585,7 +3135,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string DotnetHost,
 		string DotnetRoot,
 		string RepositoryRoot,
-		string PackageRoot,
+		(string PrimaryRoot, string[] OrderedRoots) PackageAuthority,
 		string AuthorityRoot,
 		string GeneratedRoot,
 		string InjectedAnalyzerTargetContent);
@@ -2599,7 +3149,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string projectExtensionsPath = Path.GetFullPath(Path.Combine(expectedProductionRoot, "obj")) +
 			Path.DirectorySeparatorChar;
 		(string dotnetHost, string dotnetRoot) = GetApprovedDotnetHost();
-		string packageRoot = GetPinnedPackageRoot(projectAssetsFile);
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority = GetPinnedPackageAuthority(projectAssetsFile);
+		string packageRoot = packageAuthority.PrimaryRoot;
 		string authorityRoot = Path.Combine(
 			Path.GetTempPath(),
 			$"walletwasabi-wlpq-authority-{Guid.NewGuid():N}");
@@ -2640,11 +3191,14 @@ public class LiquidOrdinaryWalletPlanWireTests
 #else
 			const string configuration = "Release";
 #endif
+			(string productVersion, string commitHash) = GetLoadedProductBuildIdentity();
 			string sdkRoot = Path.Combine(dotnetRoot, "sdk/10.0.100");
 			string roslynRoot = Path.Combine(sdkRoot, "Roslyn");
 			var globalProperties = new Dictionary<string, string>(StringComparer.Ordinal)
 			{
 				["Configuration"] = configuration,
+				["Version"] = productVersion,
+				["CommitHash"] = commitHash,
 				["TargetFramework"] = "net10.0",
 				["Platform"] = "AnyCPU",
 				["BaseIntermediateOutputPath"] = baseIntermediateOutputPath,
@@ -2760,7 +3314,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 				expectedProductionRoot,
 				dotnetRoot,
 				packageRoot,
-				authorityRoot));
+				authorityRoot,
+				productVersion,
+				commitHash));
 			AssertExactChildEnvironment(
 				startInfo.Environment.ToDictionary(pair => pair.Key, pair => pair.Value ?? "", StringComparer.Ordinal),
 				CreateExpectedChildEnvironment(dotnetRoot, childHome, childTemp));
@@ -2867,7 +3423,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				binaryLog,
 				repositoryRoot,
 				dotnetRoot,
-				packageRoot,
+				packageAuthority,
 				authorityRoot,
 				projectPath,
 				projectAssetsFile);
@@ -2880,7 +3436,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				referencePaths,
 				repositoryRoot,
 				dotnetRoot,
-				packageRoot);
+				packageAuthority);
 			string compilerInputAuthorityManifest = BuildCompilerInputAuthorityManifest(
 				cscCommandLineArgs,
 				compileItems,
@@ -2892,7 +3448,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				evaluatedProjectRoot,
 				repositoryRoot,
 				dotnetRoot,
-				packageRoot,
+				packageAuthority,
 				authorityRoot);
 			compilerInputAuthorityManifest += cscTraceManifest;
 			string toolchainAuthorityManifest = BuildToolchainAuthorityManifest(dotnetHost, dotnetRoot);
@@ -2941,7 +3497,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				dotnetHost,
 				dotnetRoot,
 				repositoryRoot,
-				packageRoot,
+				packageAuthority,
 				authorityRoot,
 				generatedRoot,
 				InjectedAnalyzerTargetContent);
@@ -2952,12 +3508,48 @@ public class LiquidOrdinaryWalletPlanWireTests
 		}
 	}
 
-	private static string GetPinnedPackageRoot(string projectAssetsFile)
+	private static (string PrimaryRoot, string[] OrderedRoots) GetPinnedPackageAuthority(string projectAssetsFile)
 	{
+		AssertRegularAuthorityFile(projectAssetsFile, "project assets authority");
 		using JsonDocument assets = JsonDocument.Parse(File.ReadAllText(projectAssetsFile));
-		string packageRoot = Assert.Single(
-			assets.RootElement.GetProperty("packageFolders").EnumerateObject()).Name;
-		return Path.GetFullPath(packageRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+		JsonElement root = assets.RootElement;
+		Assert.Equal(JsonValueKind.Object, root.ValueKind);
+		Assert.True(root.TryGetProperty("project", out JsonElement project));
+		Assert.Equal(JsonValueKind.Object, project.ValueKind);
+		Assert.True(project.TryGetProperty("restore", out JsonElement restore));
+		Assert.Equal(JsonValueKind.Object, restore.ValueKind);
+		Assert.True(restore.TryGetProperty("packagesPath", out JsonElement packagesPath));
+		Assert.Equal(JsonValueKind.String, packagesPath.ValueKind);
+		string primaryRoot = ParseCanonicalPackageRoot(
+			Assert.IsType<string>(packagesPath.GetString()),
+			"primary package root");
+		Assert.True(root.TryGetProperty("packageFolders", out JsonElement packageFolders));
+		Assert.Equal(JsonValueKind.Object, packageFolders.ValueKind);
+		var orderedRoots = new List<string>();
+		foreach (JsonProperty property in packageFolders.EnumerateObject())
+		{
+			Assert.Equal(JsonValueKind.Object, property.Value.ValueKind);
+			Assert.Empty(property.Value.EnumerateObject());
+			orderedRoots.Add(ParseCanonicalPackageRoot(property.Name, "declared package root"));
+		}
+		Assert.NotEmpty(orderedRoots);
+		Assert.Equal(primaryRoot, orderedRoots[0]);
+		var uniqueRoots = new HashSet<string>(PackagePathComparer);
+		foreach (string packageRoot in orderedRoots)
+		{
+			Assert.True(uniqueRoots.Add(packageRoot), $"Duplicate declared package root: {packageRoot}");
+		}
+		for (int first = 0; first < orderedRoots.Count; first++)
+		{
+			for (int second = first + 1; second < orderedRoots.Count; second++)
+			{
+				Assert.False(
+					IsPathWithin(orderedRoots[first], orderedRoots[second]) ||
+					IsPathWithin(orderedRoots[second], orderedRoots[first]),
+					$"Declared package roots overlap: {orderedRoots[first]} and {orderedRoots[second]}");
+			}
+		}
+		return (primaryRoot, orderedRoots.ToArray());
 	}
 
 	private static IReadOnlyDictionary<string, string> CreateExpectedGlobalProperties(
@@ -2966,13 +3558,17 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string productionRoot,
 		string dotnetRoot,
 		string packageRoot,
-		string authorityRoot)
+		string authorityRoot,
+		string productVersion,
+		string commitHash)
 	{
 		string sdkRoot = Path.Combine(dotnetRoot, "sdk/10.0.100");
 		string roslynRoot = Path.Combine(sdkRoot, "Roslyn");
 		return new Dictionary<string, string>(StringComparer.Ordinal)
 		{
 			["Configuration"] = configuration,
+			["Version"] = productVersion,
+			["CommitHash"] = commitHash,
 			["TargetFramework"] = "net10.0",
 			["Platform"] = "AnyCPU",
 			["BaseIntermediateOutputPath"] = Path.Combine(authorityRoot, "obj") + Path.DirectorySeparatorChar,
@@ -3255,7 +3851,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string binaryLog,
 		string repositoryRoot,
 		string dotnetRoot,
-		string packageRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
 		string authorityRoot,
 		string projectPath,
 		string projectAssetsFile)
@@ -3338,7 +3934,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 			ProjectImportedEventArgs imported = imports[index];
 			string importedPath = imported.ImportedProjectFile ?? "";
 			string rowPrefix = $"IMPORT_EVENT|{index:D3}|IGNORED|{imported.ImportIgnored}|UNEXPANDED|{imported.UnexpandedProject}|" +
-				$"SOURCE|{NormalizeOptionalAuthorityPath(imported.ProjectFile, repositoryRoot, dotnetRoot, packageRoot)}|" +
+				$"SOURCE|{NormalizeOptionalAuthorityPath(imported.ProjectFile, repositoryRoot, dotnetRoot, packageAuthority)}|" +
 				$"LOCATION|{imported.LineNumber}:{imported.ColumnNumber}";
 			if (string.IsNullOrWhiteSpace(importedPath))
 			{
@@ -3348,7 +3944,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 			string path = Path.GetFullPath(importedPath);
 			AssertRegularAuthorityFile(path, "captured import");
 			paths.Add(path);
-			rows.Add(rowPrefix + $"|RESOLVED|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageRoot)}|SHA256|{Sha256File(path)}");
+			rows.Add(rowPrefix + $"|RESOLVED|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority)}|SHA256|" +
+				GetBuildAuthorityFileSha256(
+					path,
+					projectAssetsFile,
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority));
 		}
 		Assert.NotEmpty(imports);
 
@@ -3366,7 +3968,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 		foreach (string path in independentlyPinned)
 		{
 			AssertRegularAuthorityFile(path, "pinned build-authority file");
-			rows.Add($"PIN|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageRoot)}|{Sha256File(path)}");
+			rows.Add($"PIN|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority)}|" +
+				GetBuildAuthorityFileSha256(
+					path,
+					projectAssetsFile,
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority));
 		}
 		string[] cscInputRows = inputs
 			.OrderBy(input => input.ParameterName ?? "", StringComparer.Ordinal)
@@ -3374,20 +3982,20 @@ public class LiquidOrdinaryWalletPlanWireTests
 			.ThenBy(input => input.ItemType ?? "", StringComparer.Ordinal)
 			.Select((input, index) =>
 			$"CSC_INPUT|{index:D3}|{input.ParameterName}|{input.PropertyName}|{input.ItemType}|" +
-			string.Join('|', input.Items.Cast<object>().Select(item => NormalizeAuthorityString(
+			string.Join('|', input.Items.Cast<object>().Select(item => NormalizeAuthorityStringWithPackages(
 				GetBuildItemSpec(item),
+				packageAuthority,
 				("{REPO}", repositoryRoot),
 				("{DOTNET}", dotnetRoot),
-				("{NUGET}", packageRoot),
 				("{AUTHORITY}", authorityRoot))))).ToArray();
 		string[] cscArgumentRows = orderedArgs.Select((argument, index) =>
-			$"CSC_ARG|{index:D4}|" + NormalizeAuthorityString(
+			$"CSC_ARG|{index:D4}|" + NormalizeAuthorityStringWithPackages(
 				argument,
+				packageAuthority,
 				("{REPO}", repositoryRoot),
 				("{DOTNET}", dotnetRoot),
-				("{NUGET}", packageRoot),
 				("{AUTHORITY}", authorityRoot))).ToArray();
-		string cscManifest = $"CSC_START|{NormalizeAuthorityPath(cscStart.TaskAssemblyLocation, repositoryRoot, dotnetRoot, packageRoot)}|" +
+		string cscManifest = $"CSC_START|{NormalizeAuthorityPath(cscStart.TaskAssemblyLocation, repositoryRoot, dotnetRoot, packageAuthority)}|" +
 			$"{Sha256File(cscStart.TaskAssemblyLocation)}\n" + string.Join('\n', cscInputRows) + "\n" +
 			string.Join('\n', cscArgumentRows) + "\n";
 		return new BinaryBuildTrace(
@@ -3451,16 +4059,16 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string? path,
 		string repositoryRoot,
 		string dotnetRoot,
-		string packageRoot) =>
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority) =>
 		string.IsNullOrWhiteSpace(path)
 			? "EMPTY"
-			: NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageRoot);
+			: NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority);
 
 	private static string BuildReferenceAuthorityManifest(
 		IEnumerable<EvaluatedBuildItem> references,
 		string repositoryRoot,
 		string dotnetRoot,
-		string packageRoot) =>
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority) =>
 		string.Join(
 			'\n',
 			references.Select((reference, index) =>
@@ -3471,8 +4079,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 						reference.DefiningProjectFullPath,
 						repositoryRoot,
 						dotnetRoot,
-						packageRoot);
-				return $"REFERENCE|{index:D3}|{NormalizeAuthorityPath(reference.FullPath, repositoryRoot, dotnetRoot, packageRoot)}|" +
+						packageAuthority);
+				return $"REFERENCE|{index:D3}|{NormalizeAuthorityPath(reference.FullPath, repositoryRoot, dotnetRoot, packageAuthority)}|" +
 					$"{Sha256File(reference.FullPath)}|PROVENANCE|{provenance}|ALIASES|" +
 					(reference.Metadata.TryGetValue("Aliases", out string? aliases) ? aliases : "");
 			})) + "\n";
@@ -3488,11 +4096,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string projectRoot,
 		string repositoryRoot,
 		string dotnetRoot,
-		string packageRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
 		string authorityRoot)
 	{
 		var rows = arguments.Select((argument, index) =>
-			$"ARG|{index:D4}|{NormalizeAuthorityString(argument, ("{REPO}", repositoryRoot), ("{DOTNET}", dotnetRoot), ("{NUGET}", packageRoot), ("{AUTHORITY}", authorityRoot))}")
+			$"ARG|{index:D4}|{NormalizeAuthorityStringWithPackages(argument, packageAuthority, ("{REPO}", repositoryRoot), ("{DOTNET}", dotnetRoot), ("{AUTHORITY}", authorityRoot))}")
 			.ToList();
 		foreach ((string category, EvaluatedBuildItem[] items) in new[]
 		{
@@ -3505,7 +4113,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		})
 		{
 			rows.AddRange(items.Select((item, index) =>
-				$"{category}|{index:D4}|{NormalizeAuthorityPath(item.FullPath, repositoryRoot, dotnetRoot, packageRoot, authorityRoot)}|{Sha256File(item.FullPath)}"));
+				$"{category}|{index:D4}|{NormalizeAuthorityPath(item.FullPath, repositoryRoot, dotnetRoot, packageAuthority, authorityRoot)}|" +
+				GetCompilerInputAuthoritySha256(item.FullPath, authorityRoot)));
 		}
 
 		foreach (string analyzerDirectory in analyzers
@@ -3515,7 +4124,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		{
 			rows.AddRange(Directory.EnumerateFiles(analyzerDirectory, "*.dll", SearchOption.TopDirectoryOnly)
 				.Order(StringComparer.Ordinal)
-				.Select(path => $"ANALYZER_DEP|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageRoot)}|{Sha256File(path)}"));
+				.Select(path => $"ANALYZER_DEP|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority)}|{Sha256File(path)}"));
 		}
 
 		string[] auxiliaryPrefixes =
@@ -3533,9 +4142,56 @@ public class LiquidOrdinaryWalletPlanWireTests
 			string value = argument[prefix.Length..].Trim('"').Split(',')[0];
 			string path = Path.GetFullPath(Path.IsPathRooted(value) ? value : Path.Combine(projectRoot, value));
 			Assert.True(File.Exists(path), $"Compiler auxiliary input is absent: {path}");
-			rows.Add($"AUX|{prefix}|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageRoot, authorityRoot)}|{Sha256File(path)}");
+			rows.Add($"AUX|{prefix}|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority, authorityRoot)}|{Sha256File(path)}");
 		}
 		return string.Join('\n', rows) + "\n";
+	}
+
+	private static string GetCompilerInputAuthoritySha256(string path, string authorityRoot)
+	{
+		string fullPath = Path.GetFullPath(path);
+		string relativePath = NormalizeRelativePath(Path.GetRelativePath(authorityRoot, fullPath));
+		if (!StringComparer.Ordinal.Equals(relativePath, "obj/net10.0/WalletWasabi.AssemblyInfo.cs"))
+		{
+			return Sha256File(fullPath);
+		}
+
+		AssertRegularAuthorityFile(fullPath, "generated product assembly identity");
+		Assembly productAssembly = typeof(LiquidOrdinaryWalletPlanEncoder).Assembly;
+		string assemblyVersion = productAssembly.GetName().Version?.ToString() ??
+			throw new Xunit.Sdk.XunitException("The loaded product assembly version is absent.");
+		string fileVersion = Assert.Single(
+			productAssembly.GetCustomAttributes<AssemblyFileVersionAttribute>()).Version;
+		string informationalVersion = Assert.Single(
+			productAssembly.GetCustomAttributes<AssemblyInformationalVersionAttribute>()).InformationalVersion;
+		(string _, string commitHash) = GetLoadedProductBuildIdentity();
+		string canonical = File.ReadAllText(fullPath);
+		canonical = ReplaceExactGeneratedAssemblyIdentity(
+			canonical,
+			$"System.Reflection.AssemblyFileVersionAttribute(\"{fileVersion}\")",
+			"System.Reflection.AssemblyFileVersionAttribute(\"{FILE_VERSION}\")");
+		canonical = ReplaceExactGeneratedAssemblyIdentity(
+			canonical,
+			$"System.Reflection.AssemblyInformationalVersionAttribute(\"{informationalVersion}\")",
+			"System.Reflection.AssemblyInformationalVersionAttribute(\"{INFORMATIONAL_VERSION}\")");
+		canonical = ReplaceExactGeneratedAssemblyIdentity(
+			canonical,
+			$"System.Reflection.AssemblyVersionAttribute(\"{assemblyVersion}\")",
+			"System.Reflection.AssemblyVersionAttribute(\"{ASSEMBLY_VERSION}\")");
+		canonical = ReplaceExactGeneratedAssemblyIdentity(
+			canonical,
+			$"System.Reflection.AssemblyMetadata(\"CommitHash\", \"{commitHash}\")",
+			"System.Reflection.AssemblyMetadata(\"CommitHash\", \"{COMMIT_HASH}\")");
+		return Sha256Text(canonical);
+	}
+
+	private static string ReplaceExactGeneratedAssemblyIdentity(
+		string source,
+		string expected,
+		string replacement)
+	{
+		Assert.Equal(2, source.Split(expected, StringSplitOptions.None).Length);
+		return source.Replace(expected, replacement, StringComparison.Ordinal);
 	}
 
 	private static string BuildToolchainAuthorityManifest(string dotnetHost, string dotnetRoot)
@@ -3586,15 +4242,18 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string path,
 		string repositoryRoot,
 		string dotnetRoot,
-		string packageRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
 		string? authorityRoot = null)
 	{
 		string fullPath = Path.GetFullPath(path);
+		if (TryNormalizePackageAuthorityPath(fullPath, packageAuthority, out string normalizedPackagePath))
+		{
+			return normalizedPackagePath;
+		}
 		foreach ((string token, string root) in new[]
 		{
 			("REPO", repositoryRoot),
 			("DOTNET", dotnetRoot),
-			("NUGET", packageRoot),
 			("AUTHORITY", authorityRoot ?? Path.Combine(Path.GetTempPath(), "authority-not-present")),
 		})
 		{
@@ -3613,13 +4272,46 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string normalized = value.Replace('\\', '/');
 		foreach ((string token, string root) in roots.OrderByDescending(pair => pair.Root.Length))
 		{
-			normalized = normalized.Replace(
-				Path.GetFullPath(root).Replace('\\', '/').TrimEnd('/'),
-				token,
-				StringComparison.Ordinal);
+			normalized = ReplaceAuthorityRoot(normalized, root, token);
 		}
 		return normalized;
 	}
+
+	private static string ReplaceAuthorityRoot(string value, string root, string token)
+	{
+		string normalizedRoot = Path.GetFullPath(root).Replace('\\', '/').TrimEnd('/');
+		StringComparison comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+			? StringComparison.OrdinalIgnoreCase
+			: StringComparison.Ordinal;
+		var result = new StringBuilder(value.Length);
+		int copied = 0;
+		int search = 0;
+		while (search < value.Length)
+		{
+			int match = value.IndexOf(normalizedRoot, search, comparison);
+			if (match < 0)
+			{
+				break;
+			}
+			int end = match + normalizedRoot.Length;
+			bool validStart = match == 0 || IsAuthorityValueBoundary(value[match - 1]);
+			bool validEnd = end == value.Length || value[end] == '/' || IsAuthorityValueBoundary(value[end]);
+			if (!validStart || !validEnd)
+			{
+				search = match + 1;
+				continue;
+			}
+			result.Append(value, copied, match - copied);
+			result.Append(token);
+			copied = end;
+			search = end;
+		}
+		result.Append(value, copied, value.Length - copied);
+		return result.ToString();
+	}
+
+	private static bool IsAuthorityValueBoundary(char value) =>
+		char.IsWhiteSpace(value) || value is '"' or '\'' or '=' or ':' or ';' or ',' or '(' or ')' or '[' or ']';
 
 	private static void AssertExactArtifactBytes(byte[] inspectedAssembly, byte[] rebuiltAssembly)
 	{
@@ -3674,25 +4366,707 @@ public class LiquidOrdinaryWalletPlanWireTests
 		return Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
 	}
 
+	private static string GetBuildAuthorityFileSha256(
+		string path,
+		string projectAssetsFile,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		string fullPath = Path.GetFullPath(path);
+		string fullAssetsPath = Path.GetFullPath(projectAssetsFile);
+		if (PackagePathComparer.Equals(fullPath, fullAssetsPath))
+		{
+			return Sha256Text(BuildProjectAssetsSemanticManifest(
+				fullPath,
+				repositoryRoot,
+				dotnetRoot,
+				packageAuthority));
+		}
+
+		string fileName = Path.GetFileName(fullPath);
+		if (PackagePathComparer.Equals(Path.GetDirectoryName(fullPath), Path.GetDirectoryName(fullAssetsPath)) &&
+			(fileName.EndsWith(".nuget.g.props", StringComparison.Ordinal) ||
+			 fileName.EndsWith(".nuget.g.targets", StringComparison.Ordinal)))
+		{
+			return Sha256Text(BuildGeneratedNuGetSemanticManifest(
+				fullPath,
+				repositoryRoot,
+				dotnetRoot,
+				packageAuthority));
+		}
+
+		return Sha256File(fullPath);
+	}
+
+	private static string BuildProjectAssetsSemanticManifest(
+		string projectAssetsFile,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		AssertRegularAuthorityFile(projectAssetsFile, "semantic project assets authority");
+		using JsonDocument document = JsonDocument.Parse(
+			File.ReadAllText(projectAssetsFile),
+			new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow, MaxDepth = 128 });
+		JsonElement root = document.RootElement;
+		Assert.Equal(JsonValueKind.Object, root.ValueKind);
+		AssertExactJsonProperties(
+			root,
+			["version", "targets", "libraries", "projectFileDependencyGroups", "packageFolders", "project"]);
+		Assert.Equal(3, root.GetProperty("version").GetInt32());
+		AssertProjectAssetsDependencyAuthority(root);
+		AssertProjectAssetsPackageTopology(root, packageAuthority);
+		AssertProjectAssetsFallbackFolderTopology(root, packageAuthority);
+
+		var manifest = new StringBuilder();
+		AppendCanonicalProjectAssetsJson(
+			manifest,
+			root,
+			"$",
+			repositoryRoot,
+			dotnetRoot,
+			packageAuthority);
+		return manifest.ToString();
+	}
+
+	private static void AssertProjectAssetsDependencyAuthority(JsonElement root)
+	{
+		JsonElement libraries = root.GetProperty("libraries");
+		Assert.Equal(JsonValueKind.Object, libraries.ValueKind);
+		var identities = new HashSet<string>(StringComparer.Ordinal);
+		foreach (JsonProperty library in libraries.EnumerateObject())
+		{
+			Assert.True(identities.Add(library.Name), $"Duplicate project-assets library identity: {library.Name}");
+			int separator = library.Name.LastIndexOf('/');
+			Assert.True(separator > 0 && separator < library.Name.Length - 1, $"Invalid library identity: {library.Name}");
+			Assert.Equal(JsonValueKind.Object, library.Value.ValueKind);
+			Assert.Equal("package", library.Value.GetProperty("type").GetString());
+			string contentHash = Assert.IsType<string>(library.Value.GetProperty("sha512").GetString());
+			Assert.Equal(64, Convert.FromBase64String(contentHash).Length);
+			string packagePath = Assert.IsType<string>(library.Value.GetProperty("path").GetString());
+			AssertSafePackageRelativePath(packagePath);
+			Assert.Equal(library.Name.ToLowerInvariant(), packagePath);
+			JsonElement files = library.Value.GetProperty("files");
+			Assert.Equal(JsonValueKind.Array, files.ValueKind);
+			var fileIdentities = new HashSet<string>(StringComparer.Ordinal);
+			foreach (JsonElement file in files.EnumerateArray())
+			{
+				Assert.Equal(JsonValueKind.String, file.ValueKind);
+				string relativeFile = Assert.IsType<string>(file.GetString());
+				AssertSafePackageRelativePath(relativeFile);
+				Assert.True(fileIdentities.Add(relativeFile), $"Duplicate package file identity: {library.Name}/{relativeFile}");
+			}
+			Assert.NotEmpty(fileIdentities);
+		}
+		Assert.NotEmpty(identities);
+
+		JsonElement targets = root.GetProperty("targets");
+		Assert.Equal(JsonValueKind.Object, targets.ValueKind);
+		Assert.NotEmpty(targets.EnumerateObject());
+		foreach (JsonProperty target in targets.EnumerateObject())
+		{
+			Assert.Equal(JsonValueKind.Object, target.Value.ValueKind);
+			foreach (JsonProperty dependency in target.Value.EnumerateObject())
+			{
+				Assert.Contains(dependency.Name, identities);
+				Assert.Equal(JsonValueKind.Object, dependency.Value.ValueKind);
+				Assert.Equal("package", dependency.Value.GetProperty("type").GetString());
+			}
+		}
+	}
+
+	private static void AssertProjectAssetsPackageTopology(
+		JsonElement root,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		JsonElement packageFolders = root.GetProperty("packageFolders");
+		Assert.Equal(JsonValueKind.Object, packageFolders.ValueKind);
+		int index = 0;
+		foreach (JsonProperty folder in packageFolders.EnumerateObject())
+		{
+			Assert.True(index < packageAuthority.OrderedRoots.Length);
+			Assert.True(PackagePathComparer.Equals(
+				ParseCanonicalPackageRoot(folder.Name, "semantic project-assets package root"),
+				packageAuthority.OrderedRoots[index]));
+			Assert.Equal(JsonValueKind.Object, folder.Value.ValueKind);
+			Assert.Empty(folder.Value.EnumerateObject());
+			index++;
+		}
+		Assert.Equal(packageAuthority.OrderedRoots.Length, index);
+	}
+
+	private static void AppendCanonicalProjectAssetsJson(
+		StringBuilder manifest,
+		JsonElement value,
+		string jsonPath,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		switch (value.ValueKind)
+		{
+			case JsonValueKind.Object:
+				manifest.Append('{');
+				JsonProperty[] properties = value.EnumerateObject().ToArray();
+				SortJsonProperties(properties);
+				var names = new HashSet<string>(StringComparer.Ordinal);
+				bool first = true;
+				foreach (JsonProperty property in properties)
+				{
+					Assert.True(names.Add(property.Name), $"Duplicate JSON property at {jsonPath}: {property.Name}");
+					string childPath = jsonPath + "." + property.Name;
+					if (StringComparer.Ordinal.Equals(childPath, "$.project.restore.fallbackFolders"))
+					{
+						AssertProjectAssetsFallbackFolders(property.Value, packageAuthority);
+						continue;
+					}
+					if (!first)
+					{
+						manifest.Append(',');
+					}
+					first = false;
+					manifest.Append(JsonSerializer.Serialize(property.Name));
+					manifest.Append(':');
+					if (StringComparer.Ordinal.Equals(childPath, "$.packageFolders"))
+					{
+						manifest.Append(JsonSerializer.Serialize("{VALIDATED_PACKAGE_ROOT_TOPOLOGY}"));
+					}
+					else if (StringComparer.Ordinal.Equals(childPath, "$.project.restore.configFilePaths"))
+					{
+						AssertProjectAssetsConfigFileTopology(property.Value, repositoryRoot);
+						manifest.Append(JsonSerializer.Serialize("{VALIDATED_CONFIG_FILE_TOPOLOGY}"));
+					}
+					else if (StringComparer.Ordinal.Equals(childPath, "$.project.restore.sources"))
+					{
+						AssertProjectAssetsRestoreSources(property.Value, packageAuthority);
+						manifest.Append(JsonSerializer.Serialize("{VALIDATED_RESTORE_SOURCE}"));
+					}
+					else
+					{
+						AppendCanonicalProjectAssetsJson(
+							manifest,
+							property.Value,
+							childPath,
+							repositoryRoot,
+							dotnetRoot,
+							packageAuthority);
+					}
+				}
+				manifest.Append('}');
+				break;
+			case JsonValueKind.Array:
+				manifest.Append('[');
+				int index = 0;
+				foreach (JsonElement item in value.EnumerateArray())
+				{
+					if (index != 0)
+					{
+						manifest.Append(',');
+					}
+					AppendCanonicalProjectAssetsJson(
+						manifest,
+						item,
+						jsonPath + "[]",
+						repositoryRoot,
+						dotnetRoot,
+						packageAuthority);
+					index++;
+				}
+				manifest.Append(']');
+				break;
+			case JsonValueKind.String:
+				manifest.Append(JsonSerializer.Serialize(NormalizeProjectAssetsString(
+					Assert.IsType<string>(value.GetString()),
+					jsonPath,
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority)));
+				break;
+			case JsonValueKind.Number:
+				manifest.Append(value.GetRawText());
+				break;
+			case JsonValueKind.True:
+				manifest.Append("true");
+				break;
+			case JsonValueKind.False:
+				manifest.Append("false");
+				break;
+			case JsonValueKind.Null:
+				manifest.Append("null");
+				break;
+			default:
+				throw new Xunit.Sdk.XunitException($"Unsupported JSON value at {jsonPath}: {value.ValueKind}");
+		}
+		}
+
+	private static void AssertProjectAssetsConfigFileTopology(JsonElement configFiles, string repositoryRoot)
+	{
+		Assert.Equal(JsonValueKind.Array, configFiles.ValueKind);
+		string[] paths = configFiles.EnumerateArray().Select(item =>
+		{
+			Assert.Equal(JsonValueKind.String, item.ValueKind);
+			return Path.GetFullPath(Assert.IsType<string>(item.GetString()));
+		}).ToArray();
+		Assert.InRange(paths.Length, 1, 2);
+		Assert.True(PackagePathComparer.Equals(
+			paths[0],
+			Path.GetFullPath(Path.Combine(repositoryRoot, "NuGet.Config"))));
+		if (paths.Length == 2)
+		{
+			Assert.EndsWith(
+				"/.nuget/NuGet/NuGet.Config",
+				paths[1].Replace('\\', '/'),
+				StringComparison.OrdinalIgnoreCase);
+		}
+	}
+
+	private static void AssertProjectAssetsRestoreSources(
+		JsonElement sources,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		Assert.Equal(JsonValueKind.Object, sources.ValueKind);
+		JsonProperty source = Assert.Single(sources.EnumerateObject());
+		Assert.Equal(JsonValueKind.Object, source.Value.ValueKind);
+		Assert.Empty(source.Value.EnumerateObject());
+		if (StringComparer.Ordinal.Equals(source.Name, "https://api.nuget.org/v3/index.json"))
+		{
+			return;
+		}
+
+		string primaryParent = Directory.GetParent(packageAuthority.PrimaryRoot)?.FullName ??
+			throw new Xunit.Sdk.XunitException("The primary package root has no parent.");
+		string expectedOfflineSource = Path.GetFullPath(Path.Combine(primaryParent, "source"));
+		Assert.True(PackagePathComparer.Equals(Path.GetFullPath(source.Name), expectedOfflineSource));
+		AssertRegularAuthorityDirectory(expectedOfflineSource, "offline restore source");
+	}
+
+	private static string NormalizeProjectAssetsString(
+		string value,
+		string jsonPath,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		if (StringComparer.Ordinal.Equals(jsonPath, "$.project.restore.packagesPath"))
+		{
+			Assert.True(PackagePathComparer.Equals(
+				value.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+				packageAuthority.PrimaryRoot));
+			return "{NUGET_PRIMARY}";
+		}
+		if (StringComparer.Ordinal.Equals(jsonPath, "$.project.restore.projectUniqueName") ||
+			StringComparer.Ordinal.Equals(jsonPath, "$.project.restore.projectPath") ||
+			StringComparer.Ordinal.Equals(jsonPath, "$.project.restore.outputPath"))
+		{
+			return NormalizeAuthorityPath(value, repositoryRoot, dotnetRoot, packageAuthority);
+		}
+		if (StringComparer.Ordinal.Equals(jsonPath, "$.project.restore.configFilePaths[]"))
+		{
+			string normalized = Path.GetFullPath(value).Replace('\\', '/');
+			const string UserConfigSuffix = "/.nuget/NuGet/NuGet.Config";
+			if (normalized.EndsWith(UserConfigSuffix, StringComparison.OrdinalIgnoreCase))
+			{
+				return "{HOME}" + UserConfigSuffix;
+			}
+			return NormalizeAuthorityPath(value, repositoryRoot, dotnetRoot, packageAuthority);
+		}
+		if (jsonPath.StartsWith("$.project.frameworks.", StringComparison.Ordinal) &&
+			jsonPath.EndsWith(".runtimeIdentifierGraphPath", StringComparison.Ordinal))
+		{
+			string fullPath = Path.GetFullPath(value);
+			Assert.True(IsPathWithin(fullPath, dotnetRoot));
+			return $"DOTNET|{NormalizeRelativePath(Path.GetRelativePath(dotnetRoot, fullPath))}";
+		}
+		return value;
+	}
+
+	private static void AssertProjectAssetsFallbackFolders(
+		JsonElement fallbackFolders,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		Assert.Equal(JsonValueKind.Array, fallbackFolders.ValueKind);
+		int index = 1;
+		foreach (JsonElement fallback in fallbackFolders.EnumerateArray())
+		{
+			Assert.Equal(JsonValueKind.String, fallback.ValueKind);
+			Assert.True(index < packageAuthority.OrderedRoots.Length);
+			Assert.True(PackagePathComparer.Equals(
+				ParseCanonicalPackageRoot(Assert.IsType<string>(fallback.GetString()), "project-assets fallback root"),
+				packageAuthority.OrderedRoots[index]));
+			index++;
+		}
+		Assert.Equal(packageAuthority.OrderedRoots.Length, index);
+	}
+
+	private static string BuildGeneratedNuGetSemanticManifest(
+		string generatedProjectFile,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		AssertRegularAuthorityFile(generatedProjectFile, "generated NuGet authority");
+		var settings = new XmlReaderSettings
+		{
+			DtdProcessing = DtdProcessing.Prohibit,
+			IgnoreComments = false,
+			IgnoreProcessingInstructions = false,
+			XmlResolver = null,
+		};
+		using XmlReader reader = XmlReader.Create(generatedProjectFile, settings);
+		XDocument document = XDocument.Load(reader, LoadOptions.None);
+		XElement root = Assert.IsType<XElement>(document.Root);
+		Assert.All(
+			document.Nodes().Where(node => !ReferenceEquals(node, root)),
+			node => Assert.True(node is XText text && string.IsNullOrWhiteSpace(text.Value)));
+		XNamespace msbuild = "http://schemas.microsoft.com/developer/msbuild/2003";
+		Assert.Equal(msbuild + "Project", root.Name);
+		bool requiresSourceRoot = Path.GetFileName(generatedProjectFile)
+			.EndsWith(".nuget.g.props", StringComparison.Ordinal);
+		AssertGeneratedNuGetSourceRootTopology(root, msbuild, packageAuthority, requiresSourceRoot);
+		var manifest = new StringBuilder();
+		manifest.Append("NUGET_GENERATED|");
+		manifest.Append(Path.GetFileName(generatedProjectFile));
+		manifest.Append('|');
+		AppendCanonicalGeneratedNuGetXml(
+			manifest,
+			root,
+			msbuild,
+			repositoryRoot,
+			dotnetRoot,
+			packageAuthority);
+		return manifest.ToString();
+	}
+
+	private static void AssertGeneratedNuGetSourceRootTopology(
+		XElement root,
+		XNamespace msbuild,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		bool required)
+	{
+		XElement[] sourceRoots = root.Descendants(msbuild + "SourceRoot").ToArray();
+		if (sourceRoots.Length == 0)
+		{
+			Assert.False(required, "Generated NuGet props must declare the validated SourceRoot topology.");
+			return;
+		}
+		Assert.Equal(packageAuthority.OrderedRoots.Length, sourceRoots.Length);
+		XElement sourceRootParent = Assert.IsType<XElement>(sourceRoots[0].Parent);
+		Assert.Equal(msbuild + "ItemGroup", sourceRootParent.Name);
+		Assert.Same(root, sourceRootParent.Parent);
+		Assert.Equal(sourceRoots.Length, sourceRootParent.Elements().Count());
+		for (int index = 0; index < sourceRoots.Length; index++)
+		{
+			XElement sourceRoot = sourceRoots[index];
+			Assert.Same(sourceRootParent, sourceRoot.Parent);
+			Assert.Same(sourceRoot, sourceRootParent.Elements().ElementAt(index));
+			Assert.Empty(sourceRoot.Elements());
+			Assert.True(string.IsNullOrWhiteSpace(sourceRoot.Value));
+			XAttribute include = Assert.Single(sourceRoot.Attributes());
+			Assert.Equal("Include", include.Name.LocalName);
+			Assert.True(PackagePathComparer.Equals(
+				include.Value,
+				packageAuthority.OrderedRoots[index] + Path.DirectorySeparatorChar));
+		}
+	}
+
+	private static void AppendCanonicalGeneratedNuGetXml(
+		StringBuilder manifest,
+		XElement element,
+		XNamespace msbuild,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		Assert.Equal(msbuild.NamespaceName, element.Name.NamespaceName);
+		Assert.NotEqual(msbuild + "VALIDATED_PACKAGE_SOURCE_ROOT_TOPOLOGY", element.Name);
+		if (element.Name == msbuild + "SourceRoot")
+		{
+			if (element.ElementsBeforeSelf().Any())
+			{
+				return;
+			}
+			manifest.Append("<VALIDATED_PACKAGE_SOURCE_ROOT_TOPOLOGY></VALIDATED_PACKAGE_SOURCE_ROOT_TOPOLOGY>");
+			return;
+		}
+		manifest.Append('<');
+		manifest.Append(element.Name.LocalName);
+		XAttribute[] attributes = element.Attributes().ToArray();
+		SortXmlAttributes(attributes);
+		string? importIdentity = null;
+		string? importBytes = null;
+		if (element.Name == msbuild + "Import")
+		{
+			XAttribute project = Assert.Single(attributes, attribute => attribute.Name.LocalName == "Project");
+			(importIdentity, importBytes) = GetGeneratedNuGetImportAuthority(project.Value, packageAuthority);
+		}
+		foreach (XAttribute attribute in attributes)
+		{
+			if (attribute.IsNamespaceDeclaration)
+			{
+				continue;
+			}
+			Assert.True(string.IsNullOrEmpty(attribute.Name.NamespaceName));
+			manifest.Append('|');
+			manifest.Append(attribute.Name.LocalName);
+			manifest.Append('=');
+			string attributeValue = attribute.Value;
+			if (element.Name == msbuild + "Import" && attribute.Name.LocalName == "Project")
+			{
+				attributeValue = Assert.IsType<string>(importIdentity);
+			}
+			else if (element.Name == msbuild + "Import" && attribute.Name.LocalName == "Condition")
+			{
+				XAttribute project = Assert.Single(attributes, candidate => candidate.Name.LocalName == "Project");
+				Assert.Equal($"Exists('{project.Value}')", attributeValue);
+				attributeValue = "Exists('{NUGET_IMPORT}')";
+			}
+			else
+			{
+				attributeValue = AssertGeneratedNuGetStableValue(
+					attributeValue,
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority);
+			}
+			manifest.Append(JsonSerializer.Serialize(attributeValue));
+		}
+		if (importBytes is not null)
+		{
+			manifest.Append("|SELECTED_SHA256=");
+			manifest.Append(importBytes);
+		}
+		manifest.Append('>');
+
+		XNode[] nodes = element.Nodes().ToArray();
+		bool hasElements = element.HasElements;
+		foreach (XNode node in nodes)
+		{
+			if (node is XElement child)
+			{
+				AppendCanonicalGeneratedNuGetXml(
+					manifest,
+					child,
+					msbuild,
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority);
+			}
+			else if (node is XText text)
+			{
+				Assert.True(string.IsNullOrWhiteSpace(text.Value) || !hasElements);
+			}
+			else
+			{
+				throw new Xunit.Sdk.XunitException($"Unsupported generated NuGet XML node: {node.NodeType}");
+			}
+		}
+		if (!hasElements)
+		{
+			string semanticValue = element.Value;
+			if (element.Name == msbuild + "NuGetPackageRoot")
+			{
+				Assert.True(PackagePathComparer.Equals(
+					semanticValue.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+					packageAuthority.PrimaryRoot));
+				semanticValue = "{NUGET_PRIMARY}";
+			}
+			else if (element.Name == msbuild + "NuGetPackageFolders")
+			{
+				AssertGeneratedNuGetPackageFolders(semanticValue, packageAuthority);
+				semanticValue = "{VALIDATED_PACKAGE_ROOT_TOPOLOGY}";
+			}
+			else if (element.Name.LocalName.StartsWith("Pkg", StringComparison.Ordinal))
+			{
+				semanticValue = NormalizePackageDirectoryIdentity(semanticValue, packageAuthority);
+			}
+			else
+			{
+				semanticValue = AssertGeneratedNuGetStableValue(
+					semanticValue,
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority);
+			}
+			manifest.Append(JsonSerializer.Serialize(semanticValue));
+		}
+		manifest.Append("</");
+		manifest.Append(element.Name.LocalName);
+		manifest.Append('>');
+	}
+
+	private static (string Identity, string Sha256) GetGeneratedNuGetImportAuthority(
+		string project,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		const string NuGetPackageRootPrefix = "$(NuGetPackageRoot)/";
+		string relativePath;
+		string? selectedPath = null;
+		string normalizedProject = project.Replace('\\', '/');
+		if (normalizedProject.StartsWith(NuGetPackageRootPrefix, StringComparison.Ordinal))
+		{
+			relativePath = normalizedProject[NuGetPackageRootPrefix.Length..];
+		}
+		else
+		{
+			string fullPath = Path.GetFullPath(project);
+			string? selectedRoot = GetContainingPackageRoot(fullPath, packageAuthority);
+			Assert.NotNull(selectedRoot);
+			relativePath = NormalizeRelativePath(Path.GetRelativePath(selectedRoot, fullPath));
+			selectedPath = fullPath;
+		}
+		AssertSafePackageRelativePath(relativePath);
+		if (selectedPath is null)
+		{
+			foreach (string packageRoot in packageAuthority.OrderedRoots)
+			{
+				string candidate = Path.GetFullPath(Path.Combine(
+					packageRoot,
+					relativePath.Replace('/', Path.DirectorySeparatorChar)));
+				if (File.Exists(candidate))
+				{
+					selectedPath = candidate;
+					break;
+				}
+			}
+		}
+		Assert.NotNull(selectedPath);
+		AssertPackageShadowConsistency(selectedPath, relativePath, packageAuthority);
+		return ($"NUGET|{relativePath}", Sha256File(selectedPath));
+	}
+
+	private static string NormalizePackageDirectoryIdentity(
+		string path,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		string fullPath = Path.GetFullPath(path);
+		string? packageRoot = GetContainingPackageRoot(fullPath, packageAuthority);
+		Assert.NotNull(packageRoot);
+		AssertRegularAuthorityDirectory(fullPath, "generated NuGet package directory");
+		string relativePath = NormalizeRelativePath(Path.GetRelativePath(packageRoot, fullPath));
+		AssertSafePackageRelativePath(relativePath);
+		return $"NUGET|{relativePath}";
+	}
+
+	private static string? GetContainingPackageRoot(
+		string path,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		string fullPath = Path.GetFullPath(path);
+		string? result = null;
+		foreach (string packageRoot in packageAuthority.OrderedRoots)
+		{
+			if (!IsPathWithin(fullPath, packageRoot))
+			{
+				continue;
+			}
+			Assert.Null(result);
+			result = packageRoot;
+		}
+		return result;
+	}
+
+	private static void AssertGeneratedNuGetPackageFolders(
+		string value,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		string[] folders = value.Split(';', StringSplitOptions.RemoveEmptyEntries);
+		Assert.Equal(packageAuthority.OrderedRoots.Length, folders.Length);
+		for (int index = 0; index < folders.Length; index++)
+		{
+			Assert.True(PackagePathComparer.Equals(
+				folders[index].TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+				packageAuthority.OrderedRoots[index]));
+		}
+	}
+
+	private static string AssertGeneratedNuGetStableValue(
+		string value,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		string normalizedValue = value.Replace('\\', '/');
+		foreach (string packageRoot in packageAuthority.OrderedRoots)
+		{
+			Assert.DoesNotContain(
+				Path.GetFullPath(packageRoot).Replace('\\', '/').TrimEnd('/'),
+				normalizedValue,
+				StringComparison.Ordinal);
+		}
+		Assert.DoesNotContain(
+			Path.GetFullPath(repositoryRoot).Replace('\\', '/').TrimEnd('/'),
+			normalizedValue,
+			StringComparison.Ordinal);
+		Assert.DoesNotContain(
+			Path.GetFullPath(dotnetRoot).Replace('\\', '/').TrimEnd('/'),
+			normalizedValue,
+			StringComparison.Ordinal);
+		return value;
+	}
+
+	private static void AssertSafePackageRelativePath(string value)
+	{
+		Assert.False(string.IsNullOrWhiteSpace(value));
+		Assert.DoesNotContain('\\', value);
+		Assert.False(Path.IsPathFullyQualified(value));
+		string normalized = NormalizeRelativePath(value);
+		Assert.Equal(value, normalized);
+		Assert.All(value.Split('/'), component =>
+			Assert.False(component is "" or "." or ".."));
+	}
+
+	private static void AssertExactJsonProperties(JsonElement value, string[] expected)
+	{
+		Assert.Equal(JsonValueKind.Object, value.ValueKind);
+		var actual = new List<string>();
+		var unique = new HashSet<string>(StringComparer.Ordinal);
+		foreach (JsonProperty property in value.EnumerateObject())
+		{
+			Assert.True(unique.Add(property.Name), $"Duplicate JSON property: {property.Name}");
+			actual.Add(property.Name);
+		}
+		Assert.Equal(expected, actual);
+	}
+
+	private static void SortJsonProperties(JsonProperty[] properties)
+	{
+		for (int index = 1; index < properties.Length; index++)
+		{
+			JsonProperty current = properties[index];
+			int insertion = index;
+			while (insertion > 0 && StringComparer.Ordinal.Compare(properties[insertion - 1].Name, current.Name) > 0)
+			{
+				properties[insertion] = properties[insertion - 1];
+				insertion--;
+			}
+			properties[insertion] = current;
+		}
+	}
+
+	private static void SortXmlAttributes(XAttribute[] attributes)
+	{
+		for (int index = 1; index < attributes.Length; index++)
+		{
+			XAttribute current = attributes[index];
+			int insertion = index;
+			while (insertion > 0 && StringComparer.Ordinal.Compare(
+				attributes[insertion - 1].Name.ToString(), current.Name.ToString()) > 0)
+			{
+				attributes[insertion] = attributes[insertion - 1];
+				insertion--;
+			}
+			attributes[insertion] = current;
+		}
+	}
+
+	private static string Sha256Text(string value) =>
+		Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
 	private static void AssertRegularAuthorityFile(string path, string description)
 	{
 		Assert.True(File.Exists(path), $"The {description} is absent: {path}");
-		string fullPath = Path.GetFullPath(path);
-		if (OperatingSystem.IsMacOS() && fullPath.StartsWith("/var/", StringComparison.Ordinal))
-		{
-			fullPath = "/private" + fullPath;
-		}
-		string? current = Path.GetPathRoot(fullPath);
-		foreach (string component in fullPath[(current?.Length ?? 0)..].Split(
-			Path.DirectorySeparatorChar,
-			StringSplitOptions.RemoveEmptyEntries))
-		{
-			current = Path.Combine(current ?? "", component);
-			Assert.False(
-				new FileInfo(current).LinkTarget is not null ||
-				new DirectoryInfo(current).LinkTarget is not null,
-				$"The {description} reaches a symbolic link at: {current}");
-		}
+		AssertAuthorityPathHasNoSymbolicLinks(path, description);
 	}
 
 	private static string EscapeMsbuildPropertyValue(string value)
@@ -3711,6 +5085,71 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string dotnetHost = Path.GetFullPath(Path.Combine(dotnetRoot, executableName));
 		AssertApprovedDotnetHost(dotnetHost, dotnetRoot);
 		return (dotnetHost, dotnetRoot);
+	}
+
+	private static (string ProductVersion, string CommitHash) GetLoadedProductBuildIdentity()
+	{
+		Assembly productAssembly = typeof(LiquidOrdinaryWalletPlanEncoder).Assembly;
+		AssemblyInformationalVersionAttribute informationalVersion = Assert.Single(
+			productAssembly.GetCustomAttributes<AssemblyInformationalVersionAttribute>());
+		string value = informationalVersion.InformationalVersion;
+		string? commitHash = null;
+		foreach (AssemblyMetadataAttribute metadata in productAssembly.GetCustomAttributes<AssemblyMetadataAttribute>())
+		{
+			if (!StringComparer.Ordinal.Equals(metadata.Key, "CommitHash"))
+			{
+				continue;
+			}
+			Assert.Null(commitHash);
+			commitHash = metadata.Value;
+		}
+		Assert.NotNull(commitHash);
+		Assert.True(
+			commitHash.Length == 0 ||
+			Regex.IsMatch(commitHash, "^[0-9a-f]{40}$", RegexOptions.CultureInvariant),
+			"The loaded CommitHash metadata is not empty or a full lowercase Git identity.");
+		string productVersion = RemoveSdkSourceRevisionSuffix(
+			value,
+			commitHash,
+			TryReadCurrentRepositoryRevision());
+		Assert.Matches(
+			"^[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*(?:\\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$",
+			productVersion);
+		return (productVersion, commitHash);
+	}
+
+	private static string RemoveSdkSourceRevisionSuffix(
+		string informationalVersion,
+		string commitHash,
+		string? currentRepositoryRevision)
+	{
+		Assert.True(
+			currentRepositoryRevision is null ||
+			Regex.IsMatch(currentRepositoryRevision, "^[0-9a-f]{40}$", RegexOptions.CultureInvariant),
+			"The current repository revision evidence is not a full lowercase Git identity.");
+		int metadataSeparator = informationalVersion.IndexOf('+', StringComparison.Ordinal);
+		if (metadataSeparator < 0)
+		{
+			return informationalVersion;
+		}
+		string metadata = informationalVersion[(metadataSeparator + 1)..];
+		int revisionSeparator = metadata.LastIndexOf('.');
+		string revision = revisionSeparator < 0 ? metadata : metadata[(revisionSeparator + 1)..];
+		if (!Regex.IsMatch(revision, "^[0-9a-f]{40}$", RegexOptions.CultureInvariant))
+		{
+			return informationalVersion;
+		}
+		if (Regex.IsMatch(commitHash, "^[0-9a-f]{40}$", RegexOptions.CultureInvariant))
+		{
+			Assert.Equal(commitHash, revision);
+		}
+		if (!StringComparer.Ordinal.Equals(currentRepositoryRevision, revision))
+		{
+			return informationalVersion;
+		}
+		return revisionSeparator < 0
+			? informationalVersion[..metadataSeparator]
+			: informationalVersion[..(metadataSeparator + 1 + revisionSeparator)];
 	}
 
 	private static void AssertApprovedDotnetHost(string candidate, string dotnetRoot)
@@ -3749,17 +5188,21 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string repositoryRoot = Path.GetDirectoryName(Path.GetFullPath(productionRoot))!;
 		string authorityRoot = Path.GetDirectoryName(Path.GetFullPath(generatedRoot))!;
 		string projectAssetsFile = Path.GetFullPath(Path.Combine(productionRoot, "obj/project.assets.json"));
-		string packageRoot = GetPinnedPackageRoot(projectAssetsFile);
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority = GetPinnedPackageAuthority(projectAssetsFile);
+		string packageRoot = packageAuthority.PrimaryRoot;
 		string sdkRoot = Path.Combine(dotnetRoot, "sdk/10.0.100");
 		string roslynRoot = Path.Combine(sdkRoot, "Roslyn");
 		string outputPath = Path.Combine(authorityRoot, "bin") + Path.DirectorySeparatorChar;
 		string intermediateOutputPath = Path.Combine(authorityRoot, "obj/net10.0") + Path.DirectorySeparatorChar;
 		string baseOutputPath = Path.Combine(authorityRoot, "base-bin") + Path.DirectorySeparatorChar;
 		string baseIntermediateOutputPath = Path.Combine(authorityRoot, "obj") + Path.DirectorySeparatorChar;
+		(string productVersion, string commitHash) = GetLoadedProductBuildIdentity();
 		var expected = new Dictionary<string, string>(StringComparer.Ordinal)
 		{
 			["MSBuildProjectDirectory"] = Path.GetFullPath(productionRoot),
 			["Configuration"] = ExpectedConfiguration,
+			["Version"] = productVersion,
+			["CommitHash"] = commitHash,
 			["Platform"] = "AnyCPU",
 			["TargetFramework"] = "net10.0",
 			["TargetFrameworkIdentifier"] = ".NETCoreApp",
@@ -3987,7 +5430,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 
 	private static void AssertExactAnalyzerAuthority(
 		IEnumerable<(string FullPath, string DefiningProjectFullPath)> analyzers,
-		string dotnetRoot)
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
 	{
 		string[] expected =
 		[
@@ -4020,13 +5464,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 					"|SHA256|" + sha256 + provenance;
 			}
 
-			string normalized = NormalizeRelativePath(fullPath);
-			string marker = normalized.Contains("/.nuget/packages/", StringComparison.Ordinal)
-				? "/.nuget/packages/"
-				: "/nuget/";
-			int markerIndex = normalized.LastIndexOf(marker, StringComparison.Ordinal);
-			Assert.True(markerIndex >= 0, $"Analyzer is outside approved SDK and package roots: {fullPath}");
-			return "NUGET|" + normalized[(markerIndex + marker.Length)..] +
+			Assert.True(
+				TryNormalizePackageAuthorityPath(fullPath, packageAuthority, out string normalizedPackagePath),
+				$"Analyzer is outside approved SDK and package roots: {fullPath}");
+			return normalizedPackagePath +
 				"|SHA256|" + sha256 + provenance;
 		}).Order(StringComparer.Ordinal).ToArray();
 		string[] orderedExpected = expected.Order(StringComparer.Ordinal).ToArray();
@@ -5061,5 +6502,533 @@ public class LiquidOrdinaryWalletPlanWireTests
 			throw new InvalidOperationException("The coordinated list must be accessed by index.");
 
 		IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+	}
+
+	private static StringComparer PackagePathComparer =>
+		OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+			? StringComparer.OrdinalIgnoreCase
+			: StringComparer.Ordinal;
+
+	private static string ParseCanonicalPackageRoot(string value, string description)
+	{
+		Assert.False(string.IsNullOrWhiteSpace(value), $"The {description} is blank.");
+		Assert.True(Path.IsPathFullyQualified(value), $"The {description} is not absolute: {value}");
+		string provided = value.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+		string canonical = Path.GetFullPath(value)
+			.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+		Assert.False(string.IsNullOrEmpty(canonical), $"The {description} is a filesystem root.");
+		Assert.True(
+			PackagePathComparer.Equals(provided, canonical),
+			$"The {description} is not canonical: {value}");
+		string filesystemRoot = (Path.GetPathRoot(Path.GetFullPath(value)) ?? "")
+			.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+		Assert.False(
+			PackagePathComparer.Equals(canonical, filesystemRoot),
+			$"The {description} is a filesystem root: {value}");
+		AssertRegularAuthorityDirectory(canonical, description);
+		return canonical;
+	}
+
+	private static bool TryNormalizePackageAuthorityPath(
+		string path,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		out string normalizedPath)
+	{
+		string fullPath = Path.GetFullPath(path);
+		string? packageRoot = null;
+		foreach (string candidateRoot in packageAuthority.OrderedRoots)
+		{
+			if (!IsPathWithin(fullPath, candidateRoot))
+			{
+				continue;
+			}
+			Assert.Null(packageRoot);
+			packageRoot = candidateRoot;
+		}
+		if (packageRoot is null)
+		{
+			normalizedPath = "";
+			return false;
+		}
+		string relativePath = NormalizeRelativePath(Path.GetRelativePath(packageRoot, fullPath));
+		Assert.NotEqual(".", relativePath);
+		AssertPackageShadowConsistency(fullPath, relativePath, packageAuthority);
+		normalizedPath = $"NUGET|{relativePath}";
+		return true;
+	}
+
+	private static void AssertPackageShadowConsistency(
+		string selectedPath,
+		string relativePath,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		AssertRegularAuthorityFile(selectedPath, "selected package authority file");
+		byte[] selectedBytes = File.ReadAllBytes(selectedPath);
+		foreach (string packageRoot in packageAuthority.OrderedRoots)
+		{
+			string candidate = Path.GetFullPath(Path.Combine(
+				packageRoot,
+				relativePath.Replace('/', Path.DirectorySeparatorChar)));
+			if (PackagePathComparer.Equals(candidate, Path.GetFullPath(selectedPath)))
+			{
+				continue;
+			}
+			Assert.False(
+				Directory.Exists(candidate),
+				$"A package authority file is shadowed by a directory: {candidate}");
+			if (!File.Exists(candidate))
+			{
+				continue;
+			}
+			AssertRegularAuthorityFile(candidate, "shadow package authority file");
+			Assert.Equal(selectedBytes, File.ReadAllBytes(candidate));
+		}
+	}
+
+	private static string NormalizeAuthorityStringWithPackages(
+		string value,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		params (string Token, string Root)[] roots)
+	{
+		string normalized = value.Replace('\\', '/');
+		string[] packageRoots = packageAuthority.OrderedRoots.ToArray();
+		for (int index = 1; index < packageRoots.Length; index++)
+		{
+			string current = packageRoots[index];
+			int insertion = index;
+			while (insertion > 0 && packageRoots[insertion - 1].Length < current.Length)
+			{
+				packageRoots[insertion] = packageRoots[insertion - 1];
+				insertion--;
+			}
+			packageRoots[insertion] = current;
+		}
+		foreach (string packageRoot in packageRoots)
+		{
+			normalized = ReplaceAuthorityRoot(normalized, packageRoot, "{NUGET}");
+		}
+		return NormalizeAuthorityString(normalized, roots);
+	}
+
+	private static void WritePackageAssetsAuthorityFixture(
+		string path,
+		string primaryRoot,
+		params (string Root, bool EmptyObject)[] orderedRoots)
+	{
+		var json = new StringBuilder();
+		json.Append("{\"project\":{\"restore\":{\"packagesPath\":");
+		json.Append(JsonSerializer.Serialize(primaryRoot));
+		json.Append("}},\"packageFolders\":{");
+		for (int index = 0; index < orderedRoots.Length; index++)
+		{
+			if (index != 0)
+			{
+				json.Append(',');
+			}
+			json.Append(JsonSerializer.Serialize(orderedRoots[index].Root));
+			json.Append(orderedRoots[index].EmptyObject ? ":{}" : ":{\"unexpected\":true}");
+		}
+		json.Append("}}");
+		File.WriteAllText(path, json.ToString(), Encoding.UTF8);
+	}
+
+	private static string WriteSemanticRestoreFixture(
+		string repositoryRoot,
+		string dotnetRoot,
+		string primaryPackageRoot,
+		string[] orderedPackageRoots,
+		string importedPackageFile,
+		string dependencyVersion,
+		string contentHash,
+		string libraryPath)
+	{
+		string projectRoot = Path.Combine(repositoryRoot, "WalletWasabi");
+		string generatedRoot = Path.Combine(projectRoot, "obj");
+		Directory.CreateDirectory(generatedRoot);
+		string projectPath = Path.Combine(projectRoot, "WalletWasabi.csproj");
+		string assetsPath = Path.Combine(generatedRoot, "project.assets.json");
+		string propsPath = Path.Combine(generatedRoot, "WalletWasabi.csproj.nuget.g.props");
+		string targetsPath = Path.Combine(generatedRoot, "WalletWasabi.csproj.nuget.g.targets");
+		string dependencyIdentity = $"Example.Package/{dependencyVersion}";
+		var json = new StringBuilder();
+		json.Append("{\"version\":3,\"targets\":{\"net10.0\":{");
+		json.Append(JsonSerializer.Serialize(dependencyIdentity));
+		json.Append(":{\"type\":\"package\",\"compile\":{\"lib/net10.0/Example.Package.dll\":{}}}}},");
+		json.Append("\"libraries\":{");
+		json.Append(JsonSerializer.Serialize(dependencyIdentity));
+		json.Append(":{\"sha512\":");
+		json.Append(JsonSerializer.Serialize(contentHash));
+		json.Append(",\"type\":\"package\",\"path\":");
+		json.Append(JsonSerializer.Serialize(libraryPath));
+		json.Append(",\"files\":[\"lib/net10.0/Example.Package.dll\",\"build/example.props\"]}},");
+		json.Append("\"projectFileDependencyGroups\":{\"net10.0\":[");
+		json.Append(JsonSerializer.Serialize($"Example.Package >= {dependencyVersion}"));
+		json.Append("]},\"packageFolders\":{");
+		for (int index = 0; index < orderedPackageRoots.Length; index++)
+		{
+			if (index != 0)
+			{
+				json.Append(',');
+			}
+			json.Append(JsonSerializer.Serialize(orderedPackageRoots[index]));
+			json.Append(":{}");
+		}
+		json.Append("},\"project\":{\"version\":\"1.0.0\",\"restore\":{");
+		json.Append("\"projectUniqueName\":");
+		json.Append(JsonSerializer.Serialize(projectPath));
+		json.Append(",\"projectName\":\"WalletWasabi\",\"projectPath\":");
+		json.Append(JsonSerializer.Serialize(projectPath));
+		json.Append(",\"packagesPath\":");
+		json.Append(JsonSerializer.Serialize(primaryPackageRoot));
+		json.Append(",\"outputPath\":");
+		json.Append(JsonSerializer.Serialize(generatedRoot + Path.DirectorySeparatorChar));
+		json.Append(",\"projectStyle\":\"PackageReference\",\"configFilePaths\":[");
+		json.Append(JsonSerializer.Serialize(Path.Combine(repositoryRoot, "NuGet.Config")));
+		json.Append(',');
+		json.Append(JsonSerializer.Serialize(Path.Combine(repositoryRoot, "home/.nuget/NuGet/NuGet.Config")));
+		json.Append("],\"originalTargetFrameworks\":[\"net10.0\"],\"sources\":{\"https://api.nuget.org/v3/index.json\":{}},");
+		if (orderedPackageRoots.Length > 1)
+		{
+			json.Append("\"fallbackFolders\":[");
+			for (int index = 1; index < orderedPackageRoots.Length; index++)
+			{
+				if (index != 1)
+				{
+					json.Append(',');
+				}
+				json.Append(JsonSerializer.Serialize(orderedPackageRoots[index]));
+			}
+			json.Append("],");
+		}
+		json.Append("\"frameworks\":{\"net10.0\":{\"targetAlias\":\"net10.0\",\"projectReferences\":{}}}},");
+		json.Append("\"frameworks\":{\"net10.0\":{\"targetAlias\":\"net10.0\",\"dependencies\":{");
+		json.Append("\"Example.Package\":{\"target\":\"Package\",\"version\":");
+		json.Append(JsonSerializer.Serialize($"[{dependencyVersion}, )"));
+		json.Append("}},\"runtimeIdentifierGraphPath\":");
+		json.Append(JsonSerializer.Serialize(Path.Combine(dotnetRoot, "sdk/10.0.100/PortableRuntimeIdentifierGraph.json")));
+		json.Append("}}}}");
+		File.WriteAllText(assetsPath, json.ToString(), Encoding.UTF8);
+		WriteSemanticNuGetPropsFixture(propsPath, orderedPackageRoots, importedPackageFile);
+		File.WriteAllText(
+			targetsPath,
+			"<Project ToolsVersion=\"14.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\" />",
+			Encoding.UTF8);
+		return assetsPath;
+	}
+
+	private static void WriteSemanticNuGetPropsFixture(
+		string path,
+		string[] orderedPackageRoots,
+		string importedPackageFile)
+	{
+		var xml = new StringBuilder();
+		xml.Append("<Project ToolsVersion=\"14.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">");
+		xml.Append("<PropertyGroup Condition=\" '$(ExcludeRestorePackageImports)' != 'true' \">");
+		xml.Append("<NuGetPackageRoot>");
+		xml.Append(System.Security.SecurityElement.Escape(orderedPackageRoots[0]));
+		xml.Append("</NuGetPackageRoot><NuGetPackageFolders>");
+		xml.Append(System.Security.SecurityElement.Escape(string.Join(';', orderedPackageRoots)));
+		xml.Append("</NuGetPackageFolders><PkgExample_Package>");
+		string packageDirectory = Path.GetDirectoryName(Path.GetDirectoryName(importedPackageFile)!)!;
+		xml.Append(System.Security.SecurityElement.Escape(packageDirectory));
+		xml.Append("</PkgExample_Package></PropertyGroup><ItemGroup>");
+		foreach (string packageRoot in orderedPackageRoots)
+		{
+			xml.Append("<SourceRoot Include=\"");
+			xml.Append(System.Security.SecurityElement.Escape(packageRoot + Path.DirectorySeparatorChar));
+			xml.Append("\" />");
+		}
+		xml.Append("</ItemGroup><ImportGroup><Import Project=\"");
+		xml.Append(System.Security.SecurityElement.Escape(importedPackageFile));
+		xml.Append("\" Condition=\"Exists('");
+		xml.Append(System.Security.SecurityElement.Escape(importedPackageFile));
+		xml.Append("')\" /></ImportGroup></Project>");
+		File.WriteAllText(path, xml.ToString(), Encoding.UTF8);
+	}
+
+	private static string CreateSemanticRestorePackageImport(
+		string packageRoot,
+		byte[] content,
+		string fileName = "example.props")
+	{
+		string path = Path.Combine(packageRoot, "example.package/1.2.3/build", fileName);
+		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+		File.WriteAllBytes(path, content);
+		return path;
+	}
+
+	private static string CreateSemanticRestoreContentHash(byte value)
+	{
+		byte[] bytes = new byte[64];
+		Array.Fill(bytes, value);
+		return Convert.ToBase64String(bytes);
+	}
+
+	private static string BuildSemanticRestoreFixtureManifest(
+		string projectAssetsFile,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		string generatedRoot = Path.GetDirectoryName(projectAssetsFile)!;
+		return GetBuildAuthorityFileSha256(
+			projectAssetsFile,
+			projectAssetsFile,
+			repositoryRoot,
+			dotnetRoot,
+			packageAuthority) + "|" +
+			GetBuildAuthorityFileSha256(
+				Path.Combine(generatedRoot, "WalletWasabi.csproj.nuget.g.props"),
+				projectAssetsFile,
+				repositoryRoot,
+				dotnetRoot,
+				packageAuthority) + "|" +
+			GetBuildAuthorityFileSha256(
+				Path.Combine(generatedRoot, "WalletWasabi.csproj.nuget.g.targets"),
+				projectAssetsFile,
+				repositoryRoot,
+				dotnetRoot,
+				packageAuthority);
+	}
+
+	private static void AssertSemanticRestoreFixtureRejected(
+		string projectAssetsFile,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		bool rejected = false;
+		try
+		{
+			_ = BuildSemanticRestoreFixtureManifest(
+				projectAssetsFile,
+				repositoryRoot,
+				dotnetRoot,
+				packageAuthority);
+		}
+		catch (Xunit.Sdk.XunitException)
+		{
+			rejected = true;
+		}
+		Assert.True(rejected, "Invalid semantic restore authority was accepted.");
+	}
+
+	private static void AssertPackageAuthorityRejected(string projectAssetsFile)
+	{
+		bool rejected = false;
+		try
+		{
+			_ = GetPinnedPackageAuthority(projectAssetsFile);
+		}
+		catch (Xunit.Sdk.XunitException)
+		{
+			rejected = true;
+		}
+		Assert.True(rejected, "Invalid package authority was accepted.");
+	}
+
+	private static void AssertPackagePathRejected(
+		string path,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		bool rejected = false;
+		try
+		{
+			_ = NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority);
+		}
+		catch (Xunit.Sdk.XunitException)
+		{
+			rejected = true;
+		}
+		Assert.True(rejected, "Invalid package authority path was accepted.");
+	}
+
+	private static void AssertRegularAuthorityDirectory(string path, string description)
+	{
+		Assert.True(Directory.Exists(path), $"The {description} is absent: {path}");
+		AssertAuthorityPathHasNoSymbolicLinks(path, description);
+	}
+
+	private static void AssertAuthorityPathHasNoSymbolicLinks(string path, string description)
+	{
+		string fullPath = Path.GetFullPath(path);
+		if (OperatingSystem.IsMacOS() && fullPath.StartsWith("/var/", StringComparison.Ordinal))
+		{
+			fullPath = "/private" + fullPath;
+		}
+		string? current = Path.GetPathRoot(fullPath);
+		foreach (string component in fullPath[(current?.Length ?? 0)..].Split(
+			Path.DirectorySeparatorChar,
+			StringSplitOptions.RemoveEmptyEntries))
+		{
+			current = Path.Combine(current ?? "", component);
+			Assert.False(
+				new FileInfo(current).LinkTarget is not null ||
+				new DirectoryInfo(current).LinkTarget is not null,
+				$"The {description} reaches a symbolic link at: {current}");
+		}
+	}
+
+	private static void AssertProjectAssetsFallbackFolderTopology(
+		JsonElement root,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		JsonElement project = root.GetProperty("project");
+		Assert.Equal(JsonValueKind.Object, project.ValueKind);
+		JsonElement restore = project.GetProperty("restore");
+		Assert.Equal(JsonValueKind.Object, restore.ValueKind);
+		bool hasFallbackFolders = restore.TryGetProperty("fallbackFolders", out JsonElement fallbackFolders);
+		if (packageAuthority.OrderedRoots.Length == 1)
+		{
+			Assert.False(hasFallbackFolders, "A single package root must not declare restore fallbackFolders.");
+			return;
+		}
+
+		Assert.True(hasFallbackFolders, "Multiple package roots require restore fallbackFolders.");
+		AssertProjectAssetsFallbackFolders(fallbackFolders, packageAuthority);
+	}
+
+	private static string? TryReadCurrentRepositoryRevision()
+	{
+		DirectoryInfo? repository = Directory.GetParent(GetProductionRoot());
+		return repository is null ? null : TryReadRepositoryRevision(repository.FullName);
+	}
+
+	private static string? TryReadRepositoryRevision(string repositoryRoot)
+	{
+		string canonicalRepositoryRoot = Path.GetFullPath(repositoryRoot);
+		string gitEntry = Path.Combine(canonicalRepositoryRoot, ".git");
+		string gitDirectory;
+		if (Directory.Exists(gitEntry))
+		{
+			AssertRegularAuthorityDirectory(gitEntry, "current Git authority directory");
+			gitDirectory = Path.GetFullPath(gitEntry);
+		}
+		else if (File.Exists(gitEntry))
+		{
+			AssertRegularAuthorityFile(gitEntry, "current Git authority indirection");
+			string indirection = File.ReadAllText(gitEntry).Trim();
+			const string GitDirectoryPrefix = "gitdir: ";
+			if (!indirection.StartsWith(GitDirectoryPrefix, StringComparison.Ordinal))
+			{
+				return null;
+			}
+			string declaredDirectory = indirection[GitDirectoryPrefix.Length..];
+			gitDirectory = Path.GetFullPath(Path.Combine(canonicalRepositoryRoot, declaredDirectory));
+			AssertRegularAuthorityDirectory(gitDirectory, "current linked-worktree Git authority directory");
+		}
+		else
+		{
+			return null;
+		}
+
+		string commonGitDirectory = gitDirectory;
+		string commonDirectoryPath = Path.Combine(gitDirectory, "commondir");
+		if (File.Exists(commonDirectoryPath))
+		{
+			AssertRegularAuthorityFile(commonDirectoryPath, "current Git common-directory authority");
+			string declaredCommonDirectory = File.ReadAllText(commonDirectoryPath).Trim();
+			if (string.IsNullOrWhiteSpace(declaredCommonDirectory))
+			{
+				return null;
+			}
+			commonGitDirectory = Path.GetFullPath(Path.Combine(gitDirectory, declaredCommonDirectory));
+			AssertRegularAuthorityDirectory(commonGitDirectory, "current Git common authority directory");
+		}
+
+		string headPath = Path.Combine(gitDirectory, "HEAD");
+		if (!File.Exists(headPath))
+		{
+			return null;
+		}
+		AssertRegularAuthorityFile(headPath, "current Git HEAD authority");
+		string head = File.ReadAllText(headPath).Trim();
+		if (Regex.IsMatch(head, "^[0-9a-f]{40}$", RegexOptions.CultureInvariant))
+		{
+			return head;
+		}
+
+		const string RefPrefix = "ref: ";
+		if (!head.StartsWith(RefPrefix, StringComparison.Ordinal))
+		{
+			return null;
+		}
+		string referenceName = head[RefPrefix.Length..];
+		if (!IsValidGitReferenceName(referenceName))
+		{
+			return null;
+		}
+		string referencePath = Path.GetFullPath(Path.Combine(commonGitDirectory, referenceName));
+		if (!IsPathWithin(referencePath, commonGitDirectory))
+		{
+			return null;
+		}
+		if (File.Exists(referencePath))
+		{
+			AssertRegularAuthorityFile(referencePath, "current Git reference authority");
+			string revision = File.ReadAllText(referencePath).Trim();
+			return Regex.IsMatch(revision, "^[0-9a-f]{40}$", RegexOptions.CultureInvariant)
+				? revision
+				: null;
+		}
+
+		string packedReferencesPath = Path.Combine(commonGitDirectory, "packed-refs");
+		if (!File.Exists(packedReferencesPath))
+		{
+			return null;
+		}
+		AssertRegularAuthorityFile(packedReferencesPath, "current packed Git reference authority");
+		string? packedRevision = null;
+		foreach (string line in File.ReadAllLines(packedReferencesPath))
+		{
+			int separator = line.IndexOf(' ');
+			if (separator <= 0 || !StringComparer.Ordinal.Equals(line[(separator + 1)..], referenceName))
+			{
+				continue;
+			}
+			Assert.Null(packedRevision);
+			string candidate = line[..separator];
+			if (!Regex.IsMatch(candidate, "^[0-9a-f]{40}$", RegexOptions.CultureInvariant))
+			{
+				return null;
+			}
+			packedRevision = candidate;
+		}
+		return packedRevision;
+	}
+
+	private static bool IsValidGitReferenceName(string referenceName)
+	{
+		if (!referenceName.StartsWith("refs/", StringComparison.Ordinal) ||
+			referenceName.EndsWith('/') ||
+			referenceName.EndsWith('.') ||
+			referenceName.Contains("..", StringComparison.Ordinal) ||
+			referenceName.Contains("//", StringComparison.Ordinal) ||
+			referenceName.Contains("@{", StringComparison.Ordinal))
+		{
+			return false;
+		}
+
+		foreach (string component in referenceName.Split('/'))
+		{
+			if (component.Length == 0 ||
+				component.StartsWith('.') ||
+				component.EndsWith(".lock", StringComparison.Ordinal))
+			{
+				return false;
+			}
+		}
+
+		foreach (char character in referenceName)
+		{
+			if (character <= ' ' || character == '\u007f' ||
+				character is '~' or '^' or ':' or '?' or '*' or '[' or '\\')
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 }

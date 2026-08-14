@@ -2237,29 +2237,30 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>O",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass116_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass123_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass123_1",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass129_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass132_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass117_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass124_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass124_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass130_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass133_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass135_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass138_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass134_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass136_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass139_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass139_1",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass139_2",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass140_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass153_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass157_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass157_1",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass159_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass162_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass166_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass168_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass168_1",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass168_2",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass169_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass175_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass140_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass140_2",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass143_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass163_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass182_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass186_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass186_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass188_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass191_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass195_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass197_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass197_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass197_2",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass198_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass204_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass31_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass32_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass34_0",
@@ -2276,16 +2277,16 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass44_2",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass44_3",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass44_4",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass47_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass47_1",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass70_0",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass80_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass48_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass48_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass71_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass81_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<>c__DisplayClass82_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<FundingBatchSnapshotsStatefulAndConcurrentlyMutatedRowsAfterNullPreflightAsync>d__35",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<FundingRowSnapshotsStatefulAndConcurrentlyMutatedSourcesAfterNullPreflightAsync>d__31",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<GetIlInstructionsWithOffsets>d__115",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<GetTypeSurfaceManifest>d__104",
-			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<OwnerRacesReturnOnlyCompleteSuccessOrFixedLifecycleOutcomeAsync>d__47",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<GetIlInstructionsWithOffsets>d__116",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<GetTypeSurfaceManifest>d__105",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+<OwnerRacesReturnOnlyCompleteSuccessOrFixedLifecycleOutcomeAsync>d__48",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+BinaryBuildTrace",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+BuildContextKey",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireTests+CoordinatedSingleItemList`1",
@@ -2396,12 +2397,18 @@ public class LiquidWalletStateTests
 		string productTypeIdentity =
 			Assert.IsType<string>(typeof(LiquidWalletState).AssemblyQualifiedName);
 		string normalizedProductTypeIdentity = NormalizeProductAssemblyVersion(productTypeIdentity);
-		Assert.DoesNotContain(runtimeIdentity, normalizedProductTypeIdentity, StringComparison.Ordinal);
+		if (!StringComparer.Ordinal.Equals(runtimeIdentity, CanonicalIdentity))
+		{
+			Assert.DoesNotContain(runtimeIdentity, normalizedProductTypeIdentity, StringComparison.Ordinal);
+		}
 		Assert.Contains(CanonicalIdentity, normalizedProductTypeIdentity, StringComparison.Ordinal);
 		string closedGenericIdentity = Assert.IsType<string>(
 			typeof(IReadOnlyList<LiquidWalletAssetBalanceQueryResult>).AssemblyQualifiedName);
 		string normalizedClosedGenericIdentity = NormalizeProductAssemblyVersion(closedGenericIdentity);
-		Assert.DoesNotContain(runtimeIdentity, normalizedClosedGenericIdentity, StringComparison.Ordinal);
+		if (!StringComparer.Ordinal.Equals(runtimeIdentity, CanonicalIdentity))
+		{
+			Assert.DoesNotContain(runtimeIdentity, normalizedClosedGenericIdentity, StringComparison.Ordinal);
+		}
 		Assert.Contains(CanonicalIdentity, normalizedClosedGenericIdentity, StringComparison.Ordinal);
 
 		const string AlternateVersionIdentity =
