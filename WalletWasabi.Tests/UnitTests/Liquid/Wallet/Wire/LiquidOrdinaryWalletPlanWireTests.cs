@@ -1081,6 +1081,12 @@ public class LiquidOrdinaryWalletPlanWireTests
 			("DirectoryBuildTargetsPath", "/wlpq/injected-directory-build.targets"),
 			("CustomBeforeMicrosoftCommonTargets", "/wlpq/injected-analyzer.targets"),
 			("CscToolPath", "/wlpq/unreviewed-compiler"),
+			("Version", "9.9.9.9"),
+			("AssemblyVersion", "9.9.9.9"),
+			("FileVersion", "9.9.9.9"),
+			("InformationalVersion", "9.9.9+wrong"),
+			("IncludeSourceRevisionInInformationalVersion", "true"),
+			("CommitHash", new string('b', 40)),
 		})
 		{
 			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
@@ -1452,7 +1458,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 	[Fact]
 	public void RestoreArtifactAuthorityIsPortableAndMutationClosed()
 	{
-		string currentRevision = new('a', 40);
+		const string currentRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+		const string otherRevision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 		Assert.Equal(
 			"1.2.3+release",
 			RemoveSdkSourceRevisionSuffix("1.2.3+release", "", currentRevision));
@@ -1474,6 +1481,79 @@ public class LiquidOrdinaryWalletPlanWireTests
 				$"1.2.3+release.{currentRevision}",
 				currentRevision,
 				currentRevision));
+		AssertPinnedNixInformationalVersionAuthority(
+			$"2.0.0-20260812-{currentRevision}",
+			currentRevision,
+			pinnedNixProfile: true);
+		AssertPinnedNixInformationalVersionAuthority(
+			$"2.0.0-20260812-{currentRevision}+{currentRevision}",
+			currentRevision,
+			pinnedNixProfile: true);
+		AssertPinnedNixInformationalVersionAuthority(
+			"2.0.0-beta",
+			currentRevision,
+			pinnedNixProfile: false);
+		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+			AssertPinnedNixInformationalVersionAuthority(
+				"9.9.9",
+				currentRevision,
+				pinnedNixProfile: true));
+		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+			AssertPinnedNixInformationalVersionAuthority(
+				$"2.0.0-2026812-{currentRevision}+{currentRevision}",
+				currentRevision,
+				pinnedNixProfile: true));
+		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+			AssertPinnedNixInformationalVersionAuthority(
+				$"2.0.0-20260812-{otherRevision}+{currentRevision}",
+				currentRevision,
+				pinnedNixProfile: true));
+		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+			AssertPinnedNixInformationalVersionAuthority(
+				$"2.0.0-20260812-{currentRevision}+release",
+				currentRevision,
+				pinnedNixProfile: true));
+		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+			AssertPinnedNixInformationalVersionAuthority(
+				$"2.0.0-20260812-{currentRevision}+{otherRevision}",
+				currentRevision,
+				pinnedNixProfile: true));
+		AssertLoadedProductBuildIdentityAuthority(
+			"1.2.3.4",
+			"1.2.3.4",
+			"2.0.0-beta",
+			currentRevision,
+			pinnedNixProfile: false);
+		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+			AssertLoadedProductBuildIdentityAuthority(
+				"1.2.3.4",
+				"02.0.0.0",
+				"2.0.0-beta",
+				currentRevision,
+				pinnedNixProfile: false));
+		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+			AssertLoadedProductBuildIdentityAuthority(
+				"9.9.9.9",
+				"9.9.9.9",
+				$"2.0.0-20260812-{currentRevision}",
+				currentRevision,
+				pinnedNixProfile: true));
+		Assert.Equal(
+			"prefix-{ASSEMBLY_VERSION}-suffix",
+			ReplaceExactGeneratedAssemblyIdentity(
+				"prefix-1.2.3.4-suffix",
+				"1.2.3.4",
+				"{ASSEMBLY_VERSION}"));
+		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+			ReplaceExactGeneratedAssemblyIdentity(
+				"prefix-suffix",
+				"1.2.3.4",
+				"{ASSEMBLY_VERSION}"));
+		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+			ReplaceExactGeneratedAssemblyIdentity(
+				"1.2.3.4-prefix-1.2.3.4",
+				"1.2.3.4",
+				"{ASSEMBLY_VERSION}"));
 		Assert.True(IsValidGitReferenceName("refs/heads/release-é@candidate"));
 		Assert.False(IsValidGitReferenceName("refs/heads/../escape"));
 		Assert.False(IsValidGitReferenceName("refs/heads/control\u0001name"));
@@ -4126,6 +4206,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 			Path.DirectorySeparatorChar;
 		(string dotnetHost, string dotnetRoot) = GetApprovedDotnetHost();
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority = GetPinnedPackageAuthority(projectAssetsFile);
+		bool pinnedNixProfile = !ReadLockedPackageAuthority(
+			Path.Combine(expectedProductionRoot, "packages.lock.json"),
+			"net10.0").HasContentHashes;
 		string packageRoot = packageAuthority.PrimaryRoot;
 		string authorityRoot = Path.Combine(
 			Path.GetTempPath(),
@@ -4167,14 +4250,18 @@ public class LiquidOrdinaryWalletPlanWireTests
 #else
 			const string configuration = "Release";
 #endif
-			(string productVersion, string commitHash) = GetLoadedProductBuildIdentity();
+			var buildIdentity = GetLoadedProductBuildIdentity(pinnedNixProfile);
 			string sdkRoot = Path.Combine(dotnetRoot, "sdk/10.0.100");
 			string roslynRoot = Path.Combine(sdkRoot, "Roslyn");
 			var globalProperties = new Dictionary<string, string>(StringComparer.Ordinal)
 			{
 				["Configuration"] = configuration,
-				["Version"] = productVersion,
-				["CommitHash"] = commitHash,
+				["Version"] = buildIdentity.Version,
+				["AssemblyVersion"] = buildIdentity.AssemblyVersion,
+				["FileVersion"] = buildIdentity.FileVersion,
+				["InformationalVersion"] = buildIdentity.InformationalVersion,
+				["IncludeSourceRevisionInInformationalVersion"] = "false",
+				["CommitHash"] = buildIdentity.CommitHash,
 				["TargetFramework"] = "net10.0",
 				["Platform"] = "AnyCPU",
 				["BaseIntermediateOutputPath"] = baseIntermediateOutputPath,
@@ -4291,8 +4378,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				dotnetRoot,
 				packageRoot,
 				authorityRoot,
-				productVersion,
-				commitHash));
+				buildIdentity));
 			AssertExactChildEnvironment(
 				startInfo.Environment.ToDictionary(pair => pair.Key, pair => pair.Value ?? "", StringComparer.Ordinal),
 				CreateExpectedChildEnvironment(dotnetRoot, childHome, childTemp));
@@ -4426,7 +4512,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				dotnetRoot,
 				packageAuthority,
 				authorityRoot,
-				commitHash);
+				buildIdentity.CommitHash);
 			compilerInputAuthorityManifest += cscTraceManifest;
 			string toolchainAuthorityManifest =
 				BuildToolchainAuthorityManifest(dotnetHost, dotnetRoot) +
@@ -4542,16 +4628,20 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string dotnetRoot,
 		string packageRoot,
 		string authorityRoot,
-		string productVersion,
-		string commitHash)
+		(string Version, string AssemblyVersion, string FileVersion, string InformationalVersion, string CommitHash)
+			buildIdentity)
 	{
 		string sdkRoot = Path.Combine(dotnetRoot, "sdk/10.0.100");
 		string roslynRoot = Path.Combine(sdkRoot, "Roslyn");
 		return new Dictionary<string, string>(StringComparer.Ordinal)
 		{
 			["Configuration"] = configuration,
-			["Version"] = productVersion,
-			["CommitHash"] = commitHash,
+			["Version"] = buildIdentity.Version,
+			["AssemblyVersion"] = buildIdentity.AssemblyVersion,
+			["FileVersion"] = buildIdentity.FileVersion,
+			["InformationalVersion"] = buildIdentity.InformationalVersion,
+			["IncludeSourceRevisionInInformationalVersion"] = "false",
+			["CommitHash"] = buildIdentity.CommitHash,
 			["TargetFramework"] = "net10.0",
 			["Platform"] = "AnyCPU",
 			["BaseIntermediateOutputPath"] = Path.Combine(authorityRoot, "obj") + Path.DirectorySeparatorChar,
@@ -5106,7 +5196,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		{
 			rows.AddRange(items.Select((item, index) =>
 				$"{category}|{index:D4}|{NormalizeAuthorityPath(item.FullPath, repositoryRoot, dotnetRoot, packageAuthority, authorityRoot)}|" +
-				GetCompilerInputAuthoritySha256(item.FullPath, authorityRoot)));
+				GetCompilerInputAuthoritySha256(item.FullPath, authorityRoot, commitHash)));
 		}
 
 		foreach (string analyzerDirectory in analyzers
@@ -5186,7 +5276,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 			JsonSerializer.Serialize(canonicalUriPattern));
 	}
 
-	private static string GetCompilerInputAuthoritySha256(string path, string authorityRoot)
+	private static string GetCompilerInputAuthoritySha256(
+		string path,
+		string authorityRoot,
+		string commitHash)
 	{
 		string fullPath = Path.GetFullPath(path);
 		string relativePath = NormalizeRelativePath(Path.GetRelativePath(authorityRoot, fullPath));
@@ -5203,7 +5296,6 @@ public class LiquidOrdinaryWalletPlanWireTests
 			productAssembly.GetCustomAttributes<AssemblyFileVersionAttribute>()).Version;
 		string informationalVersion = Assert.Single(
 			productAssembly.GetCustomAttributes<AssemblyInformationalVersionAttribute>()).InformationalVersion;
-		(string _, string commitHash) = GetLoadedProductBuildIdentity();
 		string canonical = File.ReadAllText(fullPath);
 		canonical = ReplaceExactGeneratedAssemblyIdentity(
 			canonical,
@@ -6961,9 +7053,19 @@ public class LiquidOrdinaryWalletPlanWireTests
 		return (dotnetHost, dotnetRoot);
 	}
 
-	private static (string ProductVersion, string CommitHash) GetLoadedProductBuildIdentity()
+	private static (
+		string Version,
+		string AssemblyVersion,
+		string FileVersion,
+		string InformationalVersion,
+		string CommitHash)
+		GetLoadedProductBuildIdentity(bool pinnedNixProfile)
 	{
 		Assembly productAssembly = typeof(LiquidOrdinaryWalletPlanEncoder).Assembly;
+		string assemblyVersion = productAssembly.GetName().Version?.ToString() ??
+			throw new Xunit.Sdk.XunitException("The loaded product assembly version is absent.");
+		string fileVersion = Assert.Single(
+			productAssembly.GetCustomAttributes<AssemblyFileVersionAttribute>()).Version;
 		AssemblyInformationalVersionAttribute informationalVersion = Assert.Single(
 			productAssembly.GetCustomAttributes<AssemblyInformationalVersionAttribute>());
 		string value = informationalVersion.InformationalVersion;
@@ -6978,10 +7080,12 @@ public class LiquidOrdinaryWalletPlanWireTests
 			commitHash = metadata.Value;
 		}
 		Assert.NotNull(commitHash);
-		Assert.True(
-			commitHash.Length == 0 ||
-			Regex.IsMatch(commitHash, "^[0-9a-f]{40}$", RegexOptions.CultureInvariant),
-			"The loaded CommitHash metadata is not empty or a full lowercase Git identity.");
+		AssertLoadedProductBuildIdentityAuthority(
+			assemblyVersion,
+			fileVersion,
+			value,
+			commitHash,
+			pinnedNixProfile);
 		string productVersion = RemoveSdkSourceRevisionSuffix(
 			value,
 			commitHash,
@@ -6989,7 +7093,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		Assert.Matches(
 			"^[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*(?:\\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$",
 			productVersion);
-		return (productVersion, commitHash);
+		return (assemblyVersion, assemblyVersion, fileVersion, value, commitHash);
 	}
 
 	private static string RemoveSdkSourceRevisionSuffix(
@@ -7063,6 +7167,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string authorityRoot = Path.GetDirectoryName(Path.GetFullPath(generatedRoot))!;
 		string projectAssetsFile = Path.GetFullPath(Path.Combine(productionRoot, "obj/project.assets.json"));
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority = GetPinnedPackageAuthority(projectAssetsFile);
+		bool pinnedNixProfile = !ReadLockedPackageAuthority(
+			Path.Combine(productionRoot, "packages.lock.json"),
+			"net10.0").HasContentHashes;
 		string packageRoot = packageAuthority.PrimaryRoot;
 		string sdkRoot = Path.Combine(dotnetRoot, "sdk/10.0.100");
 		string roslynRoot = Path.Combine(sdkRoot, "Roslyn");
@@ -7070,13 +7177,17 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string intermediateOutputPath = Path.Combine(authorityRoot, "obj/net10.0") + Path.DirectorySeparatorChar;
 		string baseOutputPath = Path.Combine(authorityRoot, "base-bin") + Path.DirectorySeparatorChar;
 		string baseIntermediateOutputPath = Path.Combine(authorityRoot, "obj") + Path.DirectorySeparatorChar;
-		(string productVersion, string commitHash) = GetLoadedProductBuildIdentity();
+		var buildIdentity = GetLoadedProductBuildIdentity(pinnedNixProfile);
 		var expected = new Dictionary<string, string>(StringComparer.Ordinal)
 		{
 			["MSBuildProjectDirectory"] = Path.GetFullPath(productionRoot),
 			["Configuration"] = ExpectedConfiguration,
-			["Version"] = productVersion,
-			["CommitHash"] = commitHash,
+			["Version"] = buildIdentity.Version,
+			["AssemblyVersion"] = buildIdentity.AssemblyVersion,
+			["FileVersion"] = buildIdentity.FileVersion,
+			["InformationalVersion"] = buildIdentity.InformationalVersion,
+			["IncludeSourceRevisionInInformationalVersion"] = "false",
+			["CommitHash"] = buildIdentity.CommitHash,
 			["Platform"] = "AnyCPU",
 			["TargetFramework"] = "net10.0",
 			["TargetFrameworkIdentifier"] = ".NETCoreApp",
@@ -9280,5 +9391,52 @@ public class LiquidOrdinaryWalletPlanWireTests
 			packagePath,
 			NormalizeRelativePath(Path.GetRelativePath(packageRoot, current)));
 		return current;
+	}
+
+	private static void AssertPinnedNixInformationalVersionAuthority(
+		string informationalVersion,
+		string commitHash,
+		bool pinnedNixProfile)
+	{
+		if (!pinnedNixProfile)
+		{
+			return;
+		}
+		Assert.Matches("^[0-9a-f]{40}$", commitHash);
+		Match pinnedNixVersion = Regex.Match(
+			informationalVersion,
+			"^2\\.0\\.0-[0-9]{8}-(?<revision>[0-9a-f]{40})(?:\\+(?<sourceRevision>[0-9a-f]{40}))?$",
+			RegexOptions.CultureInvariant);
+		Assert.True(pinnedNixVersion.Success, "The pinned-Nix informational version is not canonical.");
+		Assert.Equal(commitHash, pinnedNixVersion.Groups["revision"].Value);
+		if (pinnedNixVersion.Groups["sourceRevision"].Success)
+		{
+			Assert.Equal(commitHash, pinnedNixVersion.Groups["sourceRevision"].Value);
+		}
+	}
+
+	private static void AssertLoadedProductBuildIdentityAuthority(
+		string assemblyVersion,
+		string fileVersion,
+		string informationalVersion,
+		string commitHash,
+		bool pinnedNixProfile)
+	{
+		Assert.True(
+			commitHash.Length == 0 ||
+			Regex.IsMatch(commitHash, "^[0-9a-f]{40}$", RegexOptions.CultureInvariant),
+			"The loaded CommitHash metadata is not empty or a full lowercase Git identity.");
+		AssertPinnedNixInformationalVersionAuthority(informationalVersion, commitHash, pinnedNixProfile);
+		Assert.True(Version.TryParse(assemblyVersion, out Version? parsedAssemblyVersion));
+		Assert.Equal(4, parsedAssemblyVersion.ToString().Split('.').Length);
+		Assert.Equal(assemblyVersion, parsedAssemblyVersion.ToString());
+		Assert.True(Version.TryParse(fileVersion, out Version? parsedFileVersion));
+		Assert.Equal(4, parsedFileVersion.ToString().Split('.').Length);
+		Assert.Equal(fileVersion, parsedFileVersion.ToString());
+		if (pinnedNixProfile)
+		{
+			Assert.Equal("2.0.0.0", assemblyVersion);
+			Assert.Equal(assemblyVersion, fileVersion);
+		}
 	}
 }
