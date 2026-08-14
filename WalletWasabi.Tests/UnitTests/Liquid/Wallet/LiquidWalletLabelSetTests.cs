@@ -1205,8 +1205,19 @@ public class LiquidWalletLabelSetTests
 		string[] rows = assembly.GetReferencedAssemblies()
 			.Select(reference =>
 			{
+				Version? normalizedVersion = reference.Version;
+				if (reference.Name is "WalletWasabi" or "WalletWasabi.Client" or
+					"WalletWasabi.Coordinator" or "WalletWasabi.Fluent")
+				{
+					Assert.Equal(typeof(LiquidWalletState).Assembly.GetName().Version, reference.Version);
+					Assert.True(string.IsNullOrEmpty(reference.CultureName));
+					Assert.Empty(reference.GetPublicKeyToken() ?? []);
+					Assert.Equal(AssemblyNameFlags.None, reference.Flags);
+					Assert.Equal(AssemblyContentType.Default, reference.ContentType);
+					normalizedVersion = new Version(1, 0, 0, 0);
+				}
 				string token = Convert.ToHexString(reference.GetPublicKeyToken() ?? []).ToLowerInvariant();
-				return $"{reference.Name}|{reference.Version}|{reference.CultureName ?? ""}|{token}|" +
+				return $"{reference.Name}|{normalizedVersion}|{reference.CultureName ?? ""}|{token}|" +
 					$"{(int)reference.Flags}|{(int)reference.ContentType}";
 			})
 			.OrderBy(value => value, StringComparer.Ordinal)
@@ -1236,7 +1247,8 @@ public class LiquidWalletLabelSetTests
 	private static string ModifierManifest(IEnumerable<Type> modifiers) =>
 		string.Join(",", modifiers.Select(TypeIdentity));
 
-	private static string TypeIdentity(Type? type) => type?.AssemblyQualifiedName ?? "null";
+	private static string TypeIdentity(Type? type) =>
+		LiquidWalletStateTests.NormalizeProductAssemblyVersion(type?.AssemblyQualifiedName ?? "null");
 
 	private static string MethodBaseIdentity(MethodBase method)
 	{

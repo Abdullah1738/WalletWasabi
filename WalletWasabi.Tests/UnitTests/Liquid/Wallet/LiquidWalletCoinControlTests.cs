@@ -4755,6 +4755,14 @@ public class LiquidWalletCoinControlTests
 
 	private static void AssertExactAssemblyTypeManifestsMatchBase()
 	{
+		string[] corpusTestTypes =
+		[
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireV1CorpusTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireV1CorpusTests+<>c__DisplayClass3_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus+<>c",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus+CorpusTree",
+		];
 #if DEBUG
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
@@ -4765,7 +4773,8 @@ public class LiquidWalletCoinControlTests
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
 			1_827,
-			"9f2ce539db7ff395f7f5ac96c958aa3d04ad5f70fcad0d094c49452ab41909d6");
+			"9f2ce539db7ff395f7f5ac96c958aa3d04ad5f70fcad0d094c49452ab41909d6",
+			corpusTestTypes);
 #else
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
@@ -4776,7 +4785,8 @@ public class LiquidWalletCoinControlTests
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
 			1_822,
-			"9d311b57b4f6b1b5585dfb3998b894989de5989b5a70fa9b91944b4247acde4f");
+			"9d311b57b4f6b1b5585dfb3998b894989de5989b5a70fa9b91944b4247acde4f",
+			corpusTestTypes);
 #endif
 	}
 
@@ -4784,26 +4794,26 @@ public class LiquidWalletCoinControlTests
 		Assembly assembly,
 		string expectedSimpleName,
 		int expectedCount,
-		string expectedSha256)
+		string expectedSha256,
+		IReadOnlyCollection<string>? permittedAddedTypes = null)
 	{
 		Assert.Equal(expectedSimpleName, assembly.GetName().Name);
 		Assert.Same(
 			System.Runtime.Loader.AssemblyLoadContext.Default,
 			System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(assembly));
-		Type[] types = assembly.GetTypes();
-		Assert.Equal(expectedCount, types.Length);
-		var rows = new List<string>(types.Length);
-		foreach (Type type in types)
+		var rows = new HashSet<string>(StringComparer.Ordinal);
+		foreach (Type type in assembly.GetTypes())
 		{
-			rows.Add(Assert.IsType<string>(type.FullName));
+			Assert.True(rows.Add(Assert.IsType<string>(type.FullName)));
 		}
-		rows.Sort(StringComparer.Ordinal);
-		for (int index = 1; index < rows.Count; index++)
+		foreach (string addedType in permittedAddedTypes ?? [])
 		{
-			Assert.NotEqual(rows[index - 1], rows[index]);
+			Assert.True(rows.Remove(addedType), $"Missing permitted added type: {addedType}");
 		}
+		Assert.Equal(expectedCount, rows.Count);
+		string[] orderedRows = rows.Order(StringComparer.Ordinal).ToArray();
 		byte[] manifest = System.Text.Encoding.UTF8.GetBytes(
-			expectedSimpleName + "\0" + string.Concat(rows.Select(row => row + "\0")));
+			expectedSimpleName + "\0" + string.Concat(orderedRows.Select(row => row + "\0")));
 		string actualSha256 = Convert.ToHexString(SHA256.HashData(manifest)).ToLowerInvariant();
 		Assert.True(StringComparer.Ordinal.Equals(expectedSha256, actualSha256), actualSha256);
 	}

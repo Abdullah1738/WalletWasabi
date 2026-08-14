@@ -327,7 +327,8 @@ public class LiquidWalletStateTests
 				{
 					string parameters = string.Join(",", method.GetParameters()
 						.Select(parameter => parameter.ParameterType.FullName));
-					return $"{method.Name}({parameters})->{method.ReturnType.FullName}";
+					return NormalizeProductAssemblyVersion(
+						$"{method.Name}({parameters})->{method.ReturnType.FullName}");
 				})
 				.OrderBy(value => value, StringComparer.Ordinal));
 		Assert.DoesNotContain(
@@ -2140,7 +2141,8 @@ public class LiquidWalletStateTests
 		_ => $"{TypeIdentity(member.DeclaringType)}::{member.Name}",
 	};
 
-	private static string TypeIdentity(Type? type) => type?.FullName ?? "null";
+	private static string TypeIdentity(Type? type) =>
+		NormalizeProductAssemblyVersion(type?.FullName ?? "null");
 
 	private static bool IsConditionalControlTransfer(OpCode opCode) =>
 		opCode.FlowControl == FlowControl.Cond_Branch;
@@ -2380,6 +2382,63 @@ public class LiquidWalletStateTests
 			expectedBaseSha256,
 			Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(manifest.ToString())))
 				.ToLowerInvariant());
+	}
+
+	[Fact]
+	public void ProductAssemblyVersionNormalizationIsNarrowAndFailClosed()
+	{
+		const string CanonicalIdentity =
+			"WalletWasabi, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+		string runtimeIdentity = Assert.IsType<string>(typeof(LiquidWalletState).Assembly.FullName);
+		Assert.Equal(
+			CanonicalIdentity,
+			NormalizeProductAssemblyVersion(runtimeIdentity));
+		string productTypeIdentity =
+			Assert.IsType<string>(typeof(LiquidWalletState).AssemblyQualifiedName);
+		string normalizedProductTypeIdentity = NormalizeProductAssemblyVersion(productTypeIdentity);
+		Assert.DoesNotContain(runtimeIdentity, normalizedProductTypeIdentity, StringComparison.Ordinal);
+		Assert.Contains(CanonicalIdentity, normalizedProductTypeIdentity, StringComparison.Ordinal);
+		string closedGenericIdentity = Assert.IsType<string>(
+			typeof(IReadOnlyList<LiquidWalletAssetBalanceQueryResult>).AssemblyQualifiedName);
+		string normalizedClosedGenericIdentity = NormalizeProductAssemblyVersion(closedGenericIdentity);
+		Assert.DoesNotContain(runtimeIdentity, normalizedClosedGenericIdentity, StringComparison.Ordinal);
+		Assert.Contains(CanonicalIdentity, normalizedClosedGenericIdentity, StringComparison.Ordinal);
+
+		const string AlternateVersionIdentity =
+			"WalletWasabi, Version=9.9.9.9, Culture=neutral, PublicKeyToken=null";
+		Assert.NotEqual(AlternateVersionIdentity, runtimeIdentity);
+		Assert.Equal(
+			AlternateVersionIdentity,
+			NormalizeProductAssemblyVersion(AlternateVersionIdentity));
+
+		string foreignIdentity = Assert.IsType<string>(typeof(string).AssemblyQualifiedName);
+		Assert.Equal(foreignIdentity, NormalizeProductAssemblyVersion(foreignIdentity));
+
+		foreach (string alteredIdentity in new[]
+		{
+			runtimeIdentity.Replace("WalletWasabi,", "ForeignWallet,", StringComparison.Ordinal),
+			runtimeIdentity.Replace("Culture=neutral", "Culture=en-US", StringComparison.Ordinal),
+			runtimeIdentity.Replace("PublicKeyToken=null", "PublicKeyToken=0011223344556677", StringComparison.Ordinal),
+		})
+		{
+			Assert.Equal(alteredIdentity, NormalizeProductAssemblyVersion(alteredIdentity));
+		}
+	}
+
+	internal static string NormalizeProductAssemblyVersion(string identity)
+	{
+		const string CanonicalIdentity =
+			"WalletWasabi, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+		Assembly productAssembly = typeof(LiquidWalletState).Assembly;
+		Version runtimeVersion = productAssembly.GetName().Version ??
+			throw new Xunit.Sdk.XunitException("The WalletWasabi assembly version is absent.");
+		string runtimeIdentity =
+			$"WalletWasabi, Version={runtimeVersion}, Culture=neutral, PublicKeyToken=null";
+		Assert.Equal(runtimeIdentity, productAssembly.FullName);
+		return identity.Replace(
+			runtimeIdentity,
+			CanonicalIdentity,
+			StringComparison.Ordinal);
 	}
 
 }

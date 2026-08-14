@@ -923,7 +923,8 @@ public class LiquidSuppliedConfidentialDestinationBatchTests
 	private static string ModifierManifest(IEnumerable<Type> modifiers) =>
 		string.Join(",", modifiers.Select(TypeIdentity));
 
-	private static string TypeIdentity(Type? type) => type?.AssemblyQualifiedName ?? "null";
+	private static string TypeIdentity(Type? type) =>
+		LiquidWalletStateTests.NormalizeProductAssemblyVersion(type?.AssemblyQualifiedName ?? "null");
 
 	private static string MethodBaseIdentity(MethodBase method)
 	{
