@@ -65,7 +65,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private const string ExpectedReleaseReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
 	private const string ExpectedDebugCompilerInputAuthoritySha256 = "bfea856edbef7d0f63be9ff1793d652ae55b86be1eeb626989b1675145c0d4da";
 	private const string ExpectedReleaseCompilerInputAuthoritySha256 = "8c6fb2e578c28bc89488be5e1b1cf638ea79c16554dd3b24def00d5bad2b8e99";
-	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 = "d9ee6e22e3ef1fc55a71a0355d4c0e62065ad77c28edc197b6a01d9188c61fab";
+	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 = "37cc68f484c4bcf067132754644d2644cd6750016d2a4ba3eaba08f7fb80dbc1";
 	private const string ExpectedLinuxX64ToolchainDependencyAuthoritySha256 = "PENDING-LINUX-X64-TOOLCHAIN-AUTHORITY";
 	private const string IssuedAssetHex =
 		"2222222222222222222222222222222222222222222222222222222222222222";
@@ -1821,6 +1821,15 @@ public class LiquidOrdinaryWalletPlanWireTests
 			string firstPayloadManifest = BuildPackagePayloadAuthorityManifest(firstAssets, firstAuthority);
 			string secondPayloadManifest = BuildPackagePayloadAuthorityManifest(secondAssets, secondAuthority);
 			Assert.Equal(firstPayloadManifest, secondPayloadManifest);
+			string firstMaterializationManifest =
+				BuildPackageMaterializationAuthorityManifest(firstAssets, firstAuthority);
+			string secondMaterializationManifest =
+				BuildPackageMaterializationAuthorityManifest(secondAssets, secondAuthority);
+			Assert.NotEqual(firstMaterializationManifest, secondMaterializationManifest);
+			Assert.Contains(
+				JsonSerializer.Serialize("[Content_Types].xml"),
+				secondMaterializationManifest,
+				StringComparison.Ordinal);
 			const string NativePayload = "runtimes/linux-x64/native/libexample.so";
 			string firstNativePayload = Path.Combine(
 				firstPrimary,
@@ -1846,6 +1855,100 @@ public class LiquidOrdinaryWalletPlanWireTests
 				BuildPackagePayloadAuthorityManifest(secondAssets, secondAuthority));
 			secondNativeBytes[^1] ^= 1;
 			File.WriteAllBytes(secondNativePayload, secondNativeBytes);
+			string secondContentTypesPath = Path.Combine(
+				secondFallback,
+				"example.package/1.2.3/[Content_Types].xml");
+			byte[] secondContentTypesBytes = File.ReadAllBytes(secondContentTypesPath);
+			secondContentTypesBytes[0] ^= 1;
+			File.WriteAllBytes(secondContentTypesPath, secondContentTypesBytes);
+			Assert.NotEqual(
+				secondMaterializationManifest,
+				BuildPackageMaterializationAuthorityManifest(secondAssets, secondAuthority));
+			secondContentTypesBytes[0] ^= 1;
+			File.WriteAllBytes(secondContentTypesPath, secondContentTypesBytes);
+			string unexpectedEmptyDirectory = Path.Combine(
+				secondFallback,
+				"example.package/1.2.3/unexpected-empty-directory");
+			Directory.CreateDirectory(unexpectedEmptyDirectory);
+			Assert.NotEqual(
+				secondMaterializationManifest,
+				BuildPackageMaterializationAuthorityManifest(secondAssets, secondAuthority));
+			Directory.Delete(unexpectedEmptyDirectory);
+			string unexpectedNixPackageFile = Path.Combine(
+				secondFallback,
+				"example.package/1.2.3/unexpected.bin");
+			File.WriteAllBytes(unexpectedNixPackageFile, [1]);
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			File.Delete(unexpectedNixPackageFile);
+			File.Delete(secondContentTypesPath);
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			File.WriteAllBytes(secondContentTypesPath, secondContentTypesBytes);
+			string secondRelationshipsPath = Path.Combine(
+				secondFallback,
+				"example.package/1.2.3/_rels/.rels");
+			byte[] secondRelationshipsBytes = File.ReadAllBytes(secondRelationshipsPath);
+			File.Delete(secondRelationshipsPath);
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			File.WriteAllBytes(secondRelationshipsPath, secondRelationshipsBytes);
+			string secondCorePropertiesDirectory = Path.Combine(
+				secondFallback,
+				"example.package/1.2.3/package/services/metadata/core-properties");
+			string secondCorePropertiesPath = Path.Combine(
+				secondCorePropertiesDirectory,
+				"fedcba9876543210fedcba9876543210.psmdcp");
+			File.WriteAllBytes(secondCorePropertiesPath, [1]);
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			File.Delete(secondCorePropertiesPath);
+			string invalidCorePropertiesPath = Path.Combine(
+				secondCorePropertiesDirectory,
+				"not-canonical.psmdcp");
+			File.WriteAllBytes(invalidCorePropertiesPath, [1]);
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			File.Delete(invalidCorePropertiesPath);
+			string aliasedContentTypesPath = Path.Combine(
+				secondFallback,
+				"example.package/1.2.3/[content_types].xml");
+			File.Delete(secondContentTypesPath);
+			File.WriteAllBytes(aliasedContentTypesPath, [1]);
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			File.Delete(aliasedContentTypesPath);
+			File.WriteAllBytes(secondContentTypesPath, secondContentTypesBytes);
+			string secondPackageIdDirectory = Path.Combine(secondFallback, "example.package");
+			string aliasedPackageIdDirectory = Path.Combine(secondFallback, "Example.Package");
+			string packageIdRenameDirectory = Path.Combine(secondFallback, "package-id-rename-tmp");
+			Directory.Move(secondPackageIdDirectory, packageIdRenameDirectory);
+			Directory.Move(packageIdRenameDirectory, aliasedPackageIdDirectory);
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority);
+			Directory.Move(aliasedPackageIdDirectory, packageIdRenameDirectory);
+			Directory.Move(packageIdRenameDirectory, secondPackageIdDirectory);
 			File.WriteAllText(
 				secondAssets,
 				File.ReadAllText(secondAssets).Replace(
@@ -4263,6 +4366,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				BuildPackageTransportAuthorityManifest(
 					Path.Combine(repositoryRoot, "WalletWasabi/packages.lock.json"),
 					"net10.0") +
+				BuildPackageMaterializationAuthorityManifest(projectAssetsFile, packageAuthority) +
 				BuildPackagePayloadAuthorityManifest(projectAssetsFile, packageAuthority);
 			AssertConfiguredAuthorityHashes(
 				importClosureManifest,
@@ -5112,12 +5216,12 @@ public class LiquidOrdinaryWalletPlanWireTests
 			string? selectedPackageDirectory = null;
 			foreach (string packageRoot in packageAuthority.OrderedRoots)
 			{
-				string candidate = Path.GetFullPath(Path.Combine(
+				string? candidate = TryResolveExactPackageDirectory(
 					packageRoot,
-					packagePath.Replace('/', Path.DirectorySeparatorChar)));
-				if (Directory.Exists(candidate))
+					packagePath,
+					$"package-payload directory for {package.Name}");
+				if (candidate is not null)
 				{
-					AssertRegularAuthorityDirectory(candidate, $"package-payload directory for {package.Name}");
 					selectedPackageDirectory = candidate;
 					break;
 				}
@@ -5862,14 +5966,14 @@ public class LiquidOrdinaryWalletPlanWireTests
 		int selectedRootIndex = -1;
 		for (int index = 0; index < packageAuthority.OrderedRoots.Length; index++)
 		{
-			string packageDirectory = Path.GetFullPath(Path.Combine(
+			string? packageDirectory = TryResolveExactPackageDirectory(
 				packageAuthority.OrderedRoots[index],
-				packagePath.Replace('/', Path.DirectorySeparatorChar)));
-			if (!Directory.Exists(packageDirectory))
+				packagePath,
+				$"resolved package directory for {packageId}/{resolvedVersion}");
+			if (packageDirectory is null)
 			{
 				continue;
 			}
-			AssertRegularAuthorityDirectory(packageDirectory, $"resolved package directory for {packageId}/{resolvedVersion}");
 			selectedPackageDirectory = packageDirectory;
 			selectedRootIndex = index;
 			break;
@@ -5888,11 +5992,17 @@ public class LiquidOrdinaryWalletPlanWireTests
 			AssertRegularAuthorityFile(physicalFile, $"declared package file for {libraryIdentity}/{relativeFile}");
 		}
 		var physicalIdentities = new HashSet<string>(StringComparer.Ordinal);
+		var physicalAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		foreach (string physicalFile in Directory.EnumerateFiles(selectedPackageDirectory, "*", SearchOption.AllDirectories))
 		{
 			AssertRegularAuthorityFile(physicalFile, $"materialized package file for {libraryIdentity}");
-			Assert.True(physicalIdentities.Add(NormalizeRelativePath(
-				Path.GetRelativePath(selectedPackageDirectory, physicalFile))));
+			string relativeFile = NormalizeRelativePath(
+				Path.GetRelativePath(selectedPackageDirectory, physicalFile));
+			AssertSafePackageRelativePath(relativeFile);
+			Assert.True(physicalIdentities.Add(relativeFile));
+			Assert.True(
+				physicalAliases.Add(relativeFile),
+				$"Duplicate or case-aliased materialized package file: {libraryIdentity}/{relativeFile}");
 		}
 		string metadataPath = Path.Combine(selectedPackageDirectory, ".nupkg.metadata");
 		if (normalProfile)
@@ -5918,7 +6028,26 @@ public class LiquidOrdinaryWalletPlanWireTests
 		}
 		else
 		{
-			Assert.Equal(fileIdentities.Order(StringComparer.Ordinal), physicalIdentities.Order(StringComparer.Ordinal));
+			string[] nixArchiveMetadata = physicalIdentities
+				.Except(fileIdentities, StringComparer.Ordinal)
+				.Order(StringComparer.Ordinal)
+				.ToArray();
+			Assert.Contains("[Content_Types].xml", nixArchiveMetadata, StringComparer.Ordinal);
+			Assert.Contains("_rels/.rels", nixArchiveMetadata, StringComparer.Ordinal);
+			int corePropertiesCount = 0;
+			foreach (string relativeFile in nixArchiveMetadata)
+			{
+				Assert.True(
+					IsPinnedNixArchiveMetadataPath(relativeFile),
+					$"The pinned-Nix package has an unapproved archive metadata file: {libraryIdentity}/{relativeFile}");
+				if (relativeFile.StartsWith(
+					"package/services/metadata/core-properties/",
+					StringComparison.Ordinal))
+				{
+					corePropertiesCount++;
+				}
+			}
+			Assert.InRange(corePropertiesCount, 0, 1);
 			Assert.Equal(Encoding.ASCII.GetBytes("{}\n"), File.ReadAllBytes(metadataPath));
 			Assert.Equal(0, new FileInfo(Path.Combine(selectedPackageDirectory, ".nix-patched")).Length);
 			Assert.False(File.Exists(Path.Combine(selectedPackageDirectory, ".signature.p7s")));
@@ -8333,6 +8462,21 @@ public class LiquidOrdinaryWalletPlanWireTests
 				Path.Combine(packageDirectory, ".nupkg.metadata"),
 				Encoding.ASCII.GetBytes("{}\n"));
 			File.WriteAllBytes(Path.Combine(packageDirectory, ".nix-patched"), []);
+			File.WriteAllBytes(
+				Path.Combine(packageDirectory, "[Content_Types].xml"),
+				Encoding.ASCII.GetBytes("<Types />\n"));
+			string relationshipsDirectory = Path.Combine(packageDirectory, "_rels");
+			Directory.CreateDirectory(relationshipsDirectory);
+			File.WriteAllBytes(
+				Path.Combine(relationshipsDirectory, ".rels"),
+				Encoding.ASCII.GetBytes("<Relationships />\n"));
+			string corePropertiesDirectory = Path.Combine(
+				packageDirectory,
+				"package/services/metadata/core-properties");
+			Directory.CreateDirectory(corePropertiesDirectory);
+			File.WriteAllBytes(
+				Path.Combine(corePropertiesDirectory, "0123456789abcdef0123456789abcdef.psmdcp"),
+				Encoding.ASCII.GetBytes("<coreProperties />\n"));
 		}
 		else
 		{
@@ -8850,5 +8994,172 @@ public class LiquidOrdinaryWalletPlanWireTests
 			manifest.Append('\n');
 		}
 		return manifest.ToString();
+	}
+
+	private static bool IsPinnedNixArchiveMetadataPath(string relativeFile)
+	{
+		if (relativeFile is "[Content_Types].xml" or "_rels/.rels")
+		{
+			return true;
+		}
+
+		const string CorePropertiesPrefix = "package/services/metadata/core-properties/";
+		const string CorePropertiesSuffix = ".psmdcp";
+		if (!relativeFile.StartsWith(CorePropertiesPrefix, StringComparison.Ordinal) ||
+			!relativeFile.EndsWith(CorePropertiesSuffix, StringComparison.Ordinal))
+		{
+			return false;
+		}
+		string identity = relativeFile[
+			CorePropertiesPrefix.Length..^CorePropertiesSuffix.Length];
+		return Regex.IsMatch(identity, "^[0-9a-f]{32}$", RegexOptions.CultureInvariant);
+	}
+
+	private static string BuildPackageMaterializationAuthorityManifest(
+		string projectAssetsFile,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		AssertRegularAuthorityFile(projectAssetsFile, "package-materialization project assets authority");
+		using JsonDocument document = JsonDocument.Parse(
+			File.ReadAllText(projectAssetsFile),
+			new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow, MaxDepth = 128 });
+		JsonElement libraries = document.RootElement.GetProperty("libraries");
+		Assert.Equal(JsonValueKind.Object, libraries.ValueKind);
+		JsonProperty[] packages = libraries.EnumerateObject().ToArray();
+		SortJsonProperties(packages);
+		var identities = new HashSet<string>(StringComparer.Ordinal);
+		var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		var manifest = new StringBuilder("PACKAGE_MATERIALIZATION_AUTHORITY_V2\n");
+		foreach (JsonProperty package in packages)
+		{
+			Assert.True(identities.Add(package.Name), $"Duplicate package-materialization identity: {package.Name}");
+			Assert.True(aliases.Add(package.Name), $"Duplicate or case-aliased package-materialization identity: {package.Name}");
+			string packagePath = GetRequiredJsonString(
+				package.Value.GetProperty("path"),
+				$"package-materialization path for {package.Name}");
+			AssertSafePackageRelativePath(packagePath);
+			string? selectedPackageDirectory = null;
+			foreach (string packageRoot in packageAuthority.OrderedRoots)
+			{
+				string? candidate = TryResolveExactPackageDirectory(
+					packageRoot,
+					packagePath,
+					$"package-materialization directory for {package.Name}");
+				if (candidate is not null)
+				{
+					selectedPackageDirectory = candidate;
+					break;
+				}
+			}
+			Assert.NotNull(selectedPackageDirectory);
+			var directories = new List<string>();
+			var directoryIdentities = new HashSet<string>(StringComparer.Ordinal);
+			var topologyAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (string physicalDirectory in Directory.EnumerateDirectories(
+				selectedPackageDirectory,
+				"*",
+				SearchOption.AllDirectories))
+			{
+				AssertRegularAuthorityDirectory(
+					physicalDirectory,
+					$"package-materialization directory for {package.Name}");
+				string relativeDirectory = NormalizeRelativePath(
+					Path.GetRelativePath(selectedPackageDirectory, physicalDirectory));
+				AssertSafePackageRelativePath(relativeDirectory);
+				Assert.True(directoryIdentities.Add(relativeDirectory));
+				Assert.True(
+					topologyAliases.Add(relativeDirectory),
+					$"Duplicate or case-aliased package-materialization path: {package.Name}/{relativeDirectory}");
+				directories.Add(relativeDirectory);
+			}
+			directories.Sort(StringComparer.Ordinal);
+			foreach (string relativeDirectory in directories)
+			{
+				manifest.Append("DIRECTORY|");
+				manifest.Append(JsonSerializer.Serialize(package.Name));
+				manifest.Append('|');
+				manifest.Append(JsonSerializer.Serialize(relativeDirectory));
+				manifest.Append('\n');
+			}
+
+			var files = new List<string>();
+			var fileIdentities = new HashSet<string>(StringComparer.Ordinal);
+			foreach (string physicalFile in Directory.EnumerateFiles(
+				selectedPackageDirectory,
+				"*",
+				SearchOption.AllDirectories))
+			{
+				AssertRegularAuthorityFile(physicalFile, $"package-materialization file for {package.Name}");
+				string relativeFile = NormalizeRelativePath(
+					Path.GetRelativePath(selectedPackageDirectory, physicalFile));
+				AssertSafePackageRelativePath(relativeFile);
+				Assert.True(fileIdentities.Add(relativeFile));
+				Assert.True(
+					topologyAliases.Add(relativeFile),
+					$"Duplicate or case-aliased package-materialization path: {package.Name}/{relativeFile}");
+				files.Add(relativeFile);
+			}
+			Assert.NotEmpty(files);
+			files.Sort(StringComparer.Ordinal);
+			foreach (string relativeFile in files)
+			{
+				string physicalFile = Path.GetFullPath(Path.Combine(
+					selectedPackageDirectory,
+					relativeFile.Replace('/', Path.DirectorySeparatorChar)));
+				Assert.True(IsPathWithin(physicalFile, selectedPackageDirectory));
+				manifest.Append("FILE|");
+				manifest.Append(JsonSerializer.Serialize(package.Name));
+				manifest.Append('|');
+				manifest.Append(JsonSerializer.Serialize(relativeFile));
+				manifest.Append('|');
+				manifest.Append(Sha256File(physicalFile));
+				manifest.Append('\n');
+			}
+		}
+		Assert.NotEmpty(identities);
+		return manifest.ToString();
+	}
+
+	private static string? TryResolveExactPackageDirectory(
+		string packageRoot,
+		string packagePath,
+		string description)
+	{
+		AssertRegularAuthorityDirectory(packageRoot, "package authority root");
+		AssertSafePackageRelativePath(packagePath);
+		string current = Path.GetFullPath(packageRoot);
+		foreach (string component in packagePath.Split('/'))
+		{
+			string? exactDirectory = null;
+			int aliasCount = 0;
+			foreach (string candidate in Directory.EnumerateDirectories(
+				current,
+				"*",
+				SearchOption.TopDirectoryOnly))
+			{
+				string actualComponent = Path.GetFileName(candidate);
+				if (!StringComparer.OrdinalIgnoreCase.Equals(actualComponent, component))
+				{
+					continue;
+				}
+				aliasCount++;
+				if (StringComparer.Ordinal.Equals(actualComponent, component))
+				{
+					exactDirectory = candidate;
+				}
+			}
+			if (aliasCount == 0)
+			{
+				return null;
+			}
+			Assert.Equal(1, aliasCount);
+			Assert.NotNull(exactDirectory);
+			AssertRegularAuthorityDirectory(exactDirectory, description);
+			current = Path.GetFullPath(exactDirectory);
+		}
+		Assert.Equal(
+			packagePath,
+			NormalizeRelativePath(Path.GetRelativePath(packageRoot, current)));
+		return current;
 	}
 }
