@@ -298,11 +298,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 				"PENDING-MACOS-ARM64-ANALYZER-AUTHORITY-V2",
 				GetExpectedAnalyzerAuthoritySha256(true, false, Architecture.Arm64));
 			Assert.Equal(
-				"PENDING-LINUX-X64-ANALYZER-AUTHORITY-V2",
+				"4939c19b5cd53069db3edcd5e6d5c42544e22418e8dadf46b07df1938f325291",
 				GetExpectedAnalyzerAuthoritySha256(false, true, Architecture.X64));
 			Assert.NotEqual(
 				"PENDING-MACOS-ARM64-ANALYZER-AUTHORITY-V2",
-				"PENDING-LINUX-X64-ANALYZER-AUTHORITY-V2");
+				"4939c19b5cd53069db3edcd5e6d5c42544e22418e8dadf46b07df1938f325291");
 			AssertAnalyzerAuthorityPlatformRejected(true, true, Architecture.Arm64);
 			AssertAnalyzerAuthorityPlatformRejected(false, false, Architecture.X64);
 			AssertAnalyzerAuthorityPlatformRejected(true, false, Architecture.X64);
@@ -12780,7 +12780,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		}
 		if (isLinux && !isMacOs && architecture == Architecture.X64)
 		{
-			return "PENDING-LINUX-X64-ANALYZER-AUTHORITY-V2";
+			return "4939c19b5cd53069db3edcd5e6d5c42544e22418e8dadf46b07df1938f325291";
 		}
 		throw new Xunit.Sdk.XunitException(
 			$"Unsupported analyzer authority platform flags/architecture: {isMacOs}/{isLinux}/{architecture}");
