@@ -70,9 +70,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedDebugCompilerInputAuthoritySha256 =
 		("PENDING-MACOS-ARM64-DEBUG-COMPILER-INPUT-AUTHORITY-V2", "PENDING-LINUX-X64-DEBUG-COMPILER-INPUT-AUTHORITY-V2");
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseCompilerInputAuthoritySha256 =
-		("PENDING-MACOS-ARM64-RELEASE-COMPILER-INPUT-AUTHORITY-V2", "5852634a154d697cbc41b9eae24ba4dbca2fad8032d86d8a212d2350b994992c");
-	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 = "37cc68f484c4bcf067132754644d2644cd6750016d2a4ba3eaba08f7fb80dbc1";
-	private const string ExpectedLinuxX64ToolchainDependencyAuthoritySha256 = "PENDING-LINUX-X64-TOOLCHAIN-AUTHORITY";
+		("PENDING-MACOS-ARM64-RELEASE-COMPILER-INPUT-AUTHORITY-V2", "PENDING-LINUX-X64-RELEASE-COMPILER-INPUT-AUTHORITY-V2");
+	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 =
+		"PENDING-MACOS-ARM64-TOOLCHAIN-AUTHORITY-V2";
+	private const string ExpectedLinuxX64ToolchainDependencyAuthoritySha256 =
+		"PENDING-LINUX-X64-TOOLCHAIN-AUTHORITY-V2";
 	private static readonly string[] CompilerAuthoritySectionOrder =
 	[
 		"ARG", "SOURCE", "ANALYZER", "REFERENCE", "ADDITIONAL", "ANALYZERCONFIG", "EMBED",
@@ -274,6 +276,147 @@ public class LiquidOrdinaryWalletPlanWireTests
 			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
 				AssertCanonicalCompilerInputAuthorityManifest(
 					CreateCompilerManifestWithInvalidAuxiliaryPrefix(presentAuxiliaryManifest)));
+
+			string syntheticToolchainManifest = BuildCanonicalToolchainFileAuthorityManifest(
+				[
+					("dotnet", SyntheticSha256),
+					($"host/fxr/{PinnedDotnetHostFxrVersion}/libhostfxr.so", new string('a', 64)),
+				]);
+			string[] syntheticToolchainRows = AssertCanonicalToolchainFileAuthorityManifest(
+				syntheticToolchainManifest);
+			Assert.Equal(2, syntheticToolchainRows.Length);
+			string mutatedToolchainContent = CreateToolchainFileManifestWithMutatedFirstSha256(
+				syntheticToolchainManifest);
+			_ = AssertCanonicalToolchainFileAuthorityManifest(mutatedToolchainContent);
+			Assert.NotEqual(Sha256Text(syntheticToolchainManifest), Sha256Text(mutatedToolchainContent));
+
+			AssertToolchainFileAuthorityManifestRejected(syntheticToolchainManifest[..^1]);
+			AssertToolchainFileAuthorityManifestRejected(syntheticToolchainManifest + "\n");
+			AssertToolchainFileAuthorityManifestRejected(
+				syntheticToolchainManifest.Replace("\n", "\r\n", StringComparison.Ordinal));
+			AssertToolchainFileAuthorityManifestRejected(
+				syntheticToolchainManifest.Replace(
+					"TOOLCHAIN_FILE_AUTHORITY_V2",
+					"TOOLCHAIN_FILE_AUTHORITY_V1",
+					StringComparison.Ordinal));
+			string[] syntheticToolchainLines = syntheticToolchainManifest.Split('\n', StringSplitOptions.None);
+			syntheticToolchainLines[1] = syntheticToolchainLines[1].Replace("|[", "|[ ", StringComparison.Ordinal);
+			AssertToolchainFileAuthorityManifestRejected(string.Join('\n', syntheticToolchainLines));
+			syntheticToolchainLines = syntheticToolchainManifest.Split('\n', StringSplitOptions.None);
+			string[] firstToolchainFields = ParseCanonicalAuthorityManifestRow(
+				syntheticToolchainLines[1],
+				"TOOLCHAIN_FILE_V2",
+				3);
+			firstToolchainFields[0] = "1";
+			syntheticToolchainLines[1] = BuildCanonicalAuthorityManifestRow(
+				"TOOLCHAIN_FILE_V2",
+				firstToolchainFields);
+			AssertToolchainFileAuthorityManifestRejected(string.Join('\n', syntheticToolchainLines));
+			syntheticToolchainLines = syntheticToolchainManifest.Split('\n', StringSplitOptions.None);
+			firstToolchainFields = ParseCanonicalAuthorityManifestRow(
+				syntheticToolchainLines[1],
+				"TOOLCHAIN_FILE_V2",
+				3);
+			string[] secondToolchainFields = ParseCanonicalAuthorityManifestRow(
+				syntheticToolchainLines[2],
+				"TOOLCHAIN_FILE_V2",
+				3);
+			(firstToolchainFields[1], secondToolchainFields[1]) =
+				(secondToolchainFields[1], firstToolchainFields[1]);
+			(firstToolchainFields[2], secondToolchainFields[2]) =
+				(secondToolchainFields[2], firstToolchainFields[2]);
+			syntheticToolchainLines[1] = BuildCanonicalAuthorityManifestRow(
+				"TOOLCHAIN_FILE_V2",
+				firstToolchainFields);
+			syntheticToolchainLines[2] = BuildCanonicalAuthorityManifestRow(
+				"TOOLCHAIN_FILE_V2",
+				secondToolchainFields);
+			AssertToolchainFileAuthorityManifestRejected(string.Join('\n', syntheticToolchainLines));
+			syntheticToolchainLines = syntheticToolchainManifest.Split('\n', StringSplitOptions.None);
+			secondToolchainFields = ParseCanonicalAuthorityManifestRow(
+				syntheticToolchainLines[2],
+				"TOOLCHAIN_FILE_V2",
+				3);
+			secondToolchainFields[1] = "dotnet";
+			syntheticToolchainLines[2] = BuildCanonicalAuthorityManifestRow(
+				"TOOLCHAIN_FILE_V2",
+				secondToolchainFields);
+			AssertToolchainFileAuthorityManifestRejected(string.Join('\n', syntheticToolchainLines));
+			secondToolchainFields = ParseCanonicalAuthorityManifestRow(
+				syntheticToolchainManifest.Split('\n', StringSplitOptions.None)[2],
+				"TOOLCHAIN_FILE_V2",
+				3);
+			secondToolchainFields[2] = secondToolchainFields[2].ToUpperInvariant();
+			syntheticToolchainLines = syntheticToolchainManifest.Split('\n', StringSplitOptions.None);
+			syntheticToolchainLines[2] = BuildCanonicalAuthorityManifestRow(
+				"TOOLCHAIN_FILE_V2",
+				secondToolchainFields);
+			AssertToolchainFileAuthorityManifestRejected(string.Join('\n', syntheticToolchainLines));
+			syntheticToolchainLines = syntheticToolchainManifest.Split('\n', StringSplitOptions.None);
+			firstToolchainFields = ParseCanonicalAuthorityManifestRow(
+				syntheticToolchainLines[1],
+				"TOOLCHAIN_FILE_V2",
+				3);
+			syntheticToolchainLines[1] = BuildCanonicalAuthorityManifestRow(
+				"TOOLCHAIN_FILE_V2",
+				[firstToolchainFields[0], firstToolchainFields[1], firstToolchainFields[2], "EXTRA"]);
+			AssertToolchainFileAuthorityManifestRejected(string.Join('\n', syntheticToolchainLines));
+			syntheticToolchainLines = syntheticToolchainManifest.Split('\n', StringSplitOptions.None);
+			firstToolchainFields = ParseCanonicalAuthorityManifestRow(
+				syntheticToolchainLines[1],
+				"TOOLCHAIN_FILE_V2",
+				3);
+			syntheticToolchainLines[1] = "TOOLCHAIN_FILE_V2|" + JsonSerializer.Serialize(
+				new object[] { 0, firstToolchainFields[1], firstToolchainFields[2] });
+			AssertToolchainFileAuthorityManifestRejected(string.Join('\n', syntheticToolchainLines));
+			AssertToolchainRelativeIdentityRejected("sdk/10.0.100/a\\b");
+			AssertToolchainRelativeIdentityRejected("sdk/10.0.100/a|b");
+			AssertToolchainRelativeIdentityRejected("sdk/10.0.100/a\rb");
+			AssertToolchainRelativeIdentityRejected("sdk/10.0.100/a\nb");
+
+			string fixtureSdkRoot = Path.Combine(dotnetRoot, "sdk", PinnedDotnetSdkVersion);
+			string fixtureHostFxrRoot = Path.Combine(dotnetRoot, "host/fxr", PinnedDotnetHostFxrVersion);
+			string fixtureRuntimeRoot = Path.Combine(
+				dotnetRoot,
+				"shared/Microsoft.NETCore.App",
+				PinnedDotnetRuntimeVersion);
+			Directory.CreateDirectory(Path.Combine(fixtureSdkRoot, "Sdks/Microsoft.NET.Sdk/Sdk"));
+			Directory.CreateDirectory(fixtureHostFxrRoot);
+			Directory.CreateDirectory(fixtureRuntimeRoot);
+			string fixtureDotnetHost = Path.Combine(
+				dotnetRoot,
+				OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+			File.WriteAllBytes(fixtureDotnetHost, [1]);
+			File.WriteAllBytes(Path.Combine(fixtureSdkRoot, "MSBuild.dll"), [2]);
+			File.WriteAllBytes(
+				Path.Combine(fixtureSdkRoot, "Sdks/Microsoft.NET.Sdk/Sdk/Sdk.props"),
+				[3]);
+			File.WriteAllBytes(Path.Combine(fixtureHostFxrRoot, GetPinnedHostFxrFileName()), [4]);
+			File.WriteAllBytes(Path.Combine(fixtureRuntimeRoot, "System.Private.CoreLib.dll"), [5]);
+			File.WriteAllBytes(Path.Combine(fixtureRuntimeRoot, GetPinnedHostPolicyFileName()), [6]);
+			AssertApprovedDotnetHost(fixtureDotnetHost, dotnetRoot, fixtureRuntimeRoot);
+			AssertExtraDotnetVersionDirectoryRejected(
+				fixtureDotnetHost,
+				dotnetRoot,
+				fixtureRuntimeRoot,
+				"sdk",
+				"10.0.101");
+			AssertExtraDotnetVersionDirectoryRejected(
+				fixtureDotnetHost,
+				dotnetRoot,
+				fixtureRuntimeRoot,
+				"host/fxr",
+				"10.0.1");
+			AssertExtraDotnetVersionDirectoryRejected(
+				fixtureDotnetHost,
+				dotnetRoot,
+				fixtureRuntimeRoot,
+				"shared/Microsoft.NETCore.App",
+				"10.0.1");
+			AssertApprovedDotnetHostRejected(
+				fixtureDotnetHost,
+				dotnetRoot,
+				Path.Combine(dotnetRoot, "shared/Microsoft.NETCore.App/10.0.1"));
 		}
 		finally
 		{
@@ -1263,7 +1406,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
 			AssertApprovedDotnetHost(
 				Path.Combine(Path.GetTempPath(), "fake-dotnet"),
-				buildAuthority.DotnetRoot));
+				buildAuthority.DotnetRoot,
+				GetLoadedRuntimeDirectory()));
 		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
 			AssertExactBuildAuthority(
 				MutateBuildProperty(buildAuthority.Properties, "Configuration", "Unexpected"),
@@ -1468,8 +1612,17 @@ public class LiquidOrdinaryWalletPlanWireTests
 			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
 				AssertCanonicalCompilerInputAuthorityManifest(malformedCompilerMutation));
 		}
+		string canonicalToolchainMutation = CreateCombinedToolchainAuthorityWithMutatedFirstFileSha256(
+			buildAuthority.ToolchainAuthorityManifest);
+		Assert.NotEqual(buildAuthority.ToolchainAuthorityManifest, canonicalToolchainMutation);
+		AssertConfiguredAuthorityHashesRejects(
+			buildAuthority.ImportClosureManifest,
+			buildAuthority.ReferenceAuthorityManifest,
+			buildAuthority.CompilerInputAuthorityManifest,
+			canonicalToolchainMutation);
 		string mutatedToolchainManifest =
-			buildAuthority.ToolchainAuthorityManifest + "TOOL|injected|" + new string('0', 64) + "\n";
+			buildAuthority.ToolchainAuthorityManifest +
+			"TOOLCHAIN_FILE_V2|[\"injected\",\"" + new string('0', 64) + "\"]\n";
 		Assert.NotEqual(buildAuthority.ToolchainAuthorityManifest, mutatedToolchainManifest);
 		AssertConfiguredAuthorityHashesRejects(
 			buildAuthority.ImportClosureManifest,
@@ -4976,7 +5129,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 					buildIdentity.InformationalVersion,
 					buildIdentity.CommitHash)
 				: null;
-			string sdkRoot = Path.Combine(dotnetRoot, "sdk/10.0.100");
+			string sdkRoot = Path.Combine(dotnetRoot, "sdk", PinnedDotnetSdkVersion);
 			string roslynRoot = Path.Combine(sdkRoot, "Roslyn");
 			var globalProperties = new Dictionary<string, string>(StringComparer.Ordinal)
 			{
@@ -5237,6 +5390,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 				dotnetRoot,
 				packageAuthority,
 				authorityRoot,
+				generatedRoot,
+				intermediateOutputPath,
 				buildIdentity.CommitHash,
 				diagnosticCscAuthorityEntries,
 				binaryTrace.CscAuthorityEntries);
@@ -5357,7 +5512,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		(string Version, string AssemblyVersion, string FileVersion, string InformationalVersion, string CommitHash)
 			buildIdentity)
 	{
-		string sdkRoot = Path.Combine(dotnetRoot, "sdk/10.0.100");
+		string sdkRoot = Path.Combine(dotnetRoot, "sdk", PinnedDotnetSdkVersion);
 		string roslynRoot = Path.Combine(sdkRoot, "Roslyn");
 		return new Dictionary<string, string>(StringComparer.Ordinal)
 		{
@@ -5611,7 +5766,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 		Match taskAssemblyMatch = Assert.Single(taskAssemblies);
 		string taskAssembly = Path.GetFullPath(taskAssemblyMatch.Groups["path"].Value);
 		Assert.Equal(
-			Path.Combine(dotnetRoot, "sdk/10.0.100/Roslyn/Microsoft.Build.Tasks.CodeAnalysis.dll"),
+			Path.Combine(
+				dotnetRoot,
+				"sdk",
+				PinnedDotnetSdkVersion,
+				"Roslyn/Microsoft.Build.Tasks.CodeAnalysis.dll"),
 			taskAssembly);
 		Match[] starts = Regex.Matches(diagnostic, "Task \"Csc\" \\(TaskId:(?<id>[0-9]+)\\)")
 			.Cast<Match>()
@@ -5620,7 +5779,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		Assert.Single(Regex.Matches(
 			diagnostic,
 			$"Done executing task \"Csc\"\\. \\(TaskId:{taskId}\\)").Cast<Match>());
-		string csc = Path.Combine(dotnetRoot, "sdk/10.0.100/Roslyn/bincore/csc");
+		string csc = Path.Combine(dotnetRoot, "sdk", PinnedDotnetSdkVersion, "Roslyn/bincore/csc");
 		string[] requiredParameters =
 		[
 			$"Task Parameter:GeneratedFilesOutputPath={generatedRoot} (TaskId:{taskId})",
@@ -5985,6 +6144,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string dotnetRoot,
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
 		string authorityRoot,
+		string generatedRoot,
+		string intermediateRoot,
 		string commitHash,
 		CompilerAuthorityEntry[] diagnosticCscAuthorityEntries,
 		CompilerAuthorityEntry[] binaryCscAuthorityEntries)
@@ -6008,15 +6169,28 @@ public class LiquidOrdinaryWalletPlanWireTests
 			("EMBED", embeddedFiles),
 		})
 		{
-			entries.AddRange(items.Select(item => CreateCompilerAuthorityEntry(
-				category,
-				NormalizeAuthorityPath(
+			entries.AddRange(items.Select(item =>
+			{
+				string identity = NormalizeAuthorityPath(
 					item.FullPath,
 					repositoryRoot,
 					dotnetRoot,
 					packageAuthority,
-					authorityRoot),
-				sha256: GetCompilerInputAuthoritySha256(item.FullPath, authorityRoot, commitHash))));
+					authorityRoot);
+				return CreateCompilerAuthorityEntry(
+					category,
+					identity,
+					sha256: GetCompilerInputAuthoritySha256(
+						category,
+						identity,
+						item.FullPath,
+						projectRoot,
+						repositoryRoot,
+						authorityRoot,
+						generatedRoot,
+						intermediateRoot,
+						commitHash));
+			}));
 		}
 
 		foreach (string analyzerDirectory in analyzers
@@ -6360,12 +6534,35 @@ public class LiquidOrdinaryWalletPlanWireTests
 	}
 
 	private static string GetCompilerInputAuthoritySha256(
+		string category,
+		string identity,
 		string path,
+		string projectRoot,
+		string repositoryRoot,
 		string authorityRoot,
+		string generatedRoot,
+		string intermediateRoot,
 		string commitHash)
 	{
 		string fullPath = Path.GetFullPath(path);
 		string relativePath = NormalizeRelativePath(Path.GetRelativePath(authorityRoot, fullPath));
+		if (StringComparer.Ordinal.Equals(category, "ANALYZERCONFIG") &&
+			StringComparer.Ordinal.Equals(
+				identity,
+				"AUTHORITY|obj/net10.0/WalletWasabi.GeneratedMSBuildEditorConfig.editorconfig"))
+		{
+			Assert.Equal(
+				"obj/net10.0/WalletWasabi.GeneratedMSBuildEditorConfig.editorconfig",
+				relativePath);
+			AssertRegularAuthorityFile(fullPath, "generated MSBuild editor-config authority");
+			return Sha256Text(CanonicalizeGeneratedMsBuildEditorConfigBytes(
+				File.ReadAllBytes(fullPath),
+				projectRoot,
+				repositoryRoot,
+				authorityRoot,
+				generatedRoot,
+				intermediateRoot));
+		}
 		if (!StringComparer.Ordinal.Equals(relativePath, "obj/net10.0/WalletWasabi.AssemblyInfo.cs"))
 		{
 			return Sha256File(fullPath);
@@ -6419,25 +6616,38 @@ public class LiquidOrdinaryWalletPlanWireTests
 
 	private static string BuildToolchainAuthorityManifest(string dotnetHost, string dotnetRoot)
 	{
-		string sdkRoot = Path.Combine(dotnetRoot, "sdk/10.0.100");
-		string hostFxrRoot = Path.Combine(dotnetRoot, "host/fxr/10.0.0");
-		string sharedRuntimeRoot = Path.Combine(dotnetRoot, "shared/Microsoft.NETCore.App/10.0.0");
+		AssertApprovedDotnetHost(dotnetHost, dotnetRoot, GetLoadedRuntimeDirectory());
+		string sdkRoot = Path.Combine(dotnetRoot, "sdk", PinnedDotnetSdkVersion);
+		string hostFxrRoot = Path.Combine(dotnetRoot, "host/fxr", PinnedDotnetHostFxrVersion);
+		string sharedRuntimeRoot = Path.Combine(
+			dotnetRoot,
+			"shared/Microsoft.NETCore.App",
+			PinnedDotnetRuntimeVersion);
 		AssertExactArtifactBytes(
 			File.ReadAllBytes(Path.Combine(sdkRoot, "Microsoft.Build.dll")),
 			File.ReadAllBytes(typeof(BinaryLogReplayEventSource).Assembly.Location));
 		AssertExactArtifactBytes(
 			File.ReadAllBytes(Path.Combine(sdkRoot, "Microsoft.Build.Framework.dll")),
 			File.ReadAllBytes(typeof(BuildEventArgs).Assembly.Location));
-		string[] files = new[] { dotnetHost }.Concat(new[] { sdkRoot, hostFxrRoot, sharedRuntimeRoot }
-			.SelectMany(root => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)))
-			.Distinct(StringComparer.Ordinal)
-			.Order(StringComparer.Ordinal)
-			.ToArray();
-		return string.Join('\n', files.Select(path =>
+		var files = new List<string> { Path.GetFullPath(dotnetHost) };
+		foreach (string root in new[] { sdkRoot, hostFxrRoot, sharedRuntimeRoot })
 		{
-			Assert.True(File.Exists(path), $"Pinned toolchain dependency is absent: {path}");
-			return $"TOOL|{NormalizeRelativePath(Path.GetRelativePath(dotnetRoot, path))}|{Sha256File(path)}";
-		})) + "\n";
+			files.AddRange(Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories));
+		}
+		var physicalPaths = new HashSet<string>(StringComparer.Ordinal);
+		var entries = new List<(string RelativePath, string Sha256)>();
+		foreach (string path in files)
+		{
+			string fullPath = Path.GetFullPath(path);
+			Assert.True(physicalPaths.Add(fullPath), $"Duplicate toolchain file path: {fullPath}");
+			AssertRegularAuthorityFile(fullPath, "pinned toolchain dependency");
+			entries.Add((
+				GetCanonicalToolchainRelativePath(dotnetRoot, fullPath),
+				Sha256File(fullPath)));
+		}
+		string executableName = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+		Assert.Contains(entries, entry => StringComparer.Ordinal.Equals(entry.RelativePath, executableName));
+		return BuildCanonicalToolchainFileAuthorityManifest(entries);
 	}
 
 	private static string BuildPackagePayloadAuthorityManifest(
@@ -6540,6 +6750,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 				? ExpectedLinuxX64ToolchainDependencyAuthoritySha256
 				: throw new Xunit.Sdk.XunitException(
 					$"Unsupported toolchain authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
+		_ = GetCanonicalToolchainFileAuthorityPrefix(toolchainManifest);
 		AssertExactSha256(expectedToolchain, toolchainManifest);
 	}
 
@@ -8212,13 +8423,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 
 	private static (string DotnetHost, string DotnetRoot) GetApprovedDotnetHost()
 	{
-		string runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location) ?? "";
+		string runtimeDirectory = GetLoadedRuntimeDirectory();
 		DirectoryInfo? dotnetRootDirectory = new DirectoryInfo(runtimeDirectory).Parent?.Parent?.Parent;
 		Assert.NotNull(dotnetRootDirectory);
 		string dotnetRoot = Path.GetFullPath(dotnetRootDirectory.FullName);
 		string executableName = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
 		string dotnetHost = Path.GetFullPath(Path.Combine(dotnetRoot, executableName));
-		AssertApprovedDotnetHost(dotnetHost, dotnetRoot);
+		AssertApprovedDotnetHost(dotnetHost, dotnetRoot, runtimeDirectory);
 		return (dotnetHost, dotnetRoot);
 	}
 
@@ -8299,14 +8510,43 @@ public class LiquidOrdinaryWalletPlanWireTests
 			: informationalVersion[..(metadataSeparator + 1 + revisionSeparator)];
 	}
 
-	private static void AssertApprovedDotnetHost(string candidate, string dotnetRoot)
+	private static void AssertApprovedDotnetHost(
+		string candidate,
+		string dotnetRoot,
+		string loadedRuntimeDirectory)
 	{
+		string canonicalRoot = Path.GetFullPath(dotnetRoot);
 		string executableName = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
-		string expected = Path.GetFullPath(Path.Combine(dotnetRoot, executableName));
+		string expected = Path.GetFullPath(Path.Combine(canonicalRoot, executableName));
 		Assert.Equal(expected, Path.GetFullPath(candidate));
-		Assert.True(File.Exists(expected), $"The running runtime's canonical dotnet host is absent: {expected}");
-		Assert.True(File.Exists(Path.Combine(dotnetRoot, "sdk/10.0.100/MSBuild.dll")));
-		Assert.True(File.Exists(Path.Combine(dotnetRoot, "sdk/10.0.100/Sdks/Microsoft.NET.Sdk/Sdk/Sdk.props")));
+		AssertRegularAuthorityFile(expected, "running runtime's canonical dotnet host");
+		AssertExactDotnetVersionDirectories(canonicalRoot, "sdk", PinnedDotnetSdkVersion);
+		AssertExactDotnetVersionDirectories(canonicalRoot, "host/fxr", PinnedDotnetHostFxrVersion);
+		AssertExactDotnetVersionDirectories(
+			canonicalRoot,
+			"shared/Microsoft.NETCore.App",
+			PinnedDotnetRuntimeVersion);
+		string sdkRoot = Path.Combine(canonicalRoot, "sdk", PinnedDotnetSdkVersion);
+		string hostFxrRoot = Path.Combine(canonicalRoot, "host/fxr", PinnedDotnetHostFxrVersion);
+		string runtimeRoot = Path.Combine(
+			canonicalRoot,
+			"shared/Microsoft.NETCore.App",
+			PinnedDotnetRuntimeVersion);
+		Assert.Equal(Path.GetFullPath(runtimeRoot), Path.GetFullPath(loadedRuntimeDirectory));
+		AssertRegularAuthorityDirectory(loadedRuntimeDirectory, "loaded pinned runtime");
+		AssertRegularAuthorityFile(Path.Combine(sdkRoot, "MSBuild.dll"), "pinned MSBuild entry point");
+		AssertRegularAuthorityFile(
+			Path.Combine(sdkRoot, "Sdks/Microsoft.NET.Sdk/Sdk/Sdk.props"),
+			"pinned .NET SDK entry point");
+		AssertRegularAuthorityFile(
+			Path.Combine(hostFxrRoot, GetPinnedHostFxrFileName()),
+			"pinned hostfxr entry point");
+		AssertRegularAuthorityFile(
+			Path.Combine(runtimeRoot, "System.Private.CoreLib.dll"),
+			"loaded pinned runtime core library");
+		AssertRegularAuthorityFile(
+			Path.Combine(runtimeRoot, GetPinnedHostPolicyFileName()),
+			"pinned hostpolicy entry point");
 	}
 
 	private static void AssertExactBuildAuthority(
@@ -8340,7 +8580,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 			Path.Combine(productionRoot, "packages.lock.json"),
 			"net10.0").HasContentHashes;
 		string packageRoot = packageAuthority.PrimaryRoot;
-		string sdkRoot = Path.Combine(dotnetRoot, "sdk/10.0.100");
+		string sdkRoot = Path.Combine(dotnetRoot, "sdk", PinnedDotnetSdkVersion);
 		string roslynRoot = Path.Combine(sdkRoot, "Roslyn");
 		string outputPath = Path.Combine(authorityRoot, "bin") + Path.DirectorySeparatorChar;
 		string intermediateOutputPath = Path.Combine(authorityRoot, "obj/net10.0") + Path.DirectorySeparatorChar;
@@ -8364,7 +8604,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 			["TargetFrameworks"] = "",
 			["RuntimeIdentifier"] = "",
 			["RuntimeIdentifiers"] = "",
-			["NETCoreSdkVersion"] = "10.0.100",
+			["NETCoreSdkVersion"] = PinnedDotnetSdkVersion,
 			["MSBuildVersion"] = "18.0.2",
 			["LangVersion"] = "14",
 			["DefineConstants"] = ExpectedDefineConstants,
@@ -9976,7 +10216,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 		json.Append("\"Example.Package\":{\"target\":\"Package\",\"version\":");
 		json.Append(JsonSerializer.Serialize($"[{dependencyVersion}, )"));
 		json.Append("}},\"runtimeIdentifierGraphPath\":");
-		json.Append(JsonSerializer.Serialize(Path.Combine(dotnetRoot, "sdk/10.0.100/PortableRuntimeIdentifierGraph.json")));
+		json.Append(JsonSerializer.Serialize(Path.Combine(
+			dotnetRoot,
+			"sdk",
+			PinnedDotnetSdkVersion,
+			"PortableRuntimeIdentifierGraph.json")));
 		json.Append("}}}}");
 		File.WriteAllText(assetsPath, json.ToString(), Encoding.UTF8);
 		WriteSemanticPackagesLockFixture(
@@ -10752,24 +10996,6 @@ public class LiquidOrdinaryWalletPlanWireTests
 			$"Unsupported reference authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
 	}
 
-	private static string GetExpectedCompilerInputAuthoritySha256(bool debug)
-	{
-		if (OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64)
-		{
-			return debug
-				? ExpectedDebugCompilerInputAuthoritySha256.MacOsArm64
-				: ExpectedReleaseCompilerInputAuthoritySha256.MacOsArm64;
-		}
-		if (OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64)
-		{
-			return debug
-				? ExpectedDebugCompilerInputAuthoritySha256.LinuxX64
-				: ExpectedReleaseCompilerInputAuthoritySha256.LinuxX64;
-		}
-		throw new Xunit.Sdk.XunitException(
-			$"Unsupported compiler input authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
-	}
-
 	private static string NormalizeAndValidateUnexpandedImportProject(
 		string value,
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
@@ -10967,7 +11193,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 
 	private static string BuildCanonicalAuthorityManifestRow(string prefix, IReadOnlyList<string> fields)
 	{
-		Assert.True(prefix is "IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2" or "COMPILER_INPUT_V2");
+		Assert.True(prefix is
+			"IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2" or "COMPILER_INPUT_V2" or
+			"TOOLCHAIN_FILE_V2");
 		var values = new string[fields.Count];
 		var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 		for (int index = 0; index < fields.Count; index++)
@@ -10997,7 +11225,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string expectedPrefix,
 		int expectedFieldCount)
 	{
-		Assert.True(expectedPrefix is "IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2" or "COMPILER_INPUT_V2");
+		Assert.True(expectedPrefix is
+			"IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2" or "COMPILER_INPUT_V2" or
+			"TOOLCHAIN_FILE_V2");
 		string prefix = expectedPrefix + "|";
 		Assert.StartsWith(prefix, row, StringComparison.Ordinal);
 		string payload = row[prefix.Length..];
@@ -11559,5 +11789,669 @@ public class LiquidOrdinaryWalletPlanWireTests
 			}
 		}
 		return rows;
+	}
+
+	[Fact]
+	public void GeneratedMsBuildEditorConfigAuthorityCanonicalizesOnlyProjectDirectory()
+	{
+		string fixtureRoot = Path.Combine(
+			Path.GetTempPath(),
+			$"walletwasabi-wlpq-editorconfig-authority-{Guid.NewGuid():N}");
+		try
+		{
+			string firstRepositoryRoot = Path.Combine(fixtureRoot, "first/repository");
+			string secondRepositoryRoot = Path.Combine(fixtureRoot, "second/repository");
+			string firstProjectRoot = Path.Combine(firstRepositoryRoot, "WalletWasabi");
+			string secondProjectRoot = Path.Combine(secondRepositoryRoot, "WalletWasabi");
+			string firstAuthorityRoot = Path.Combine(fixtureRoot, "first/authority");
+			string secondAuthorityRoot = Path.Combine(fixtureRoot, "second/authority");
+			string firstGeneratedRoot = Path.Combine(firstAuthorityRoot, "generated");
+			string secondGeneratedRoot = Path.Combine(secondAuthorityRoot, "generated");
+			string firstIntermediateRoot = Path.Combine(firstAuthorityRoot, "obj/net10.0");
+			string secondIntermediateRoot = Path.Combine(secondAuthorityRoot, "obj/net10.0");
+			Directory.CreateDirectory(firstProjectRoot);
+			Directory.CreateDirectory(secondProjectRoot);
+			Directory.CreateDirectory(firstGeneratedRoot);
+			Directory.CreateDirectory(secondGeneratedRoot);
+			Directory.CreateDirectory(firstIntermediateRoot);
+			Directory.CreateDirectory(secondIntermediateRoot);
+
+			string firstProjectLine = "build_property.ProjectDir = " +
+				Path.GetFullPath(firstProjectRoot).Replace('\\', '/').TrimEnd('/') + "/";
+			string secondProjectLine = "build_property.ProjectDir = " +
+				Path.GetFullPath(secondProjectRoot).Replace('\\', '/').TrimEnd('/') + "/";
+			string firstSource =
+				"is_global = true\n" +
+				"build_property.RootNamespace = WalletWasabi\n" +
+				firstProjectLine + "\n" +
+				"build_property.Stable = value\n";
+			string secondSource = firstSource.Replace(
+				firstProjectLine,
+				secondProjectLine,
+				StringComparison.Ordinal);
+			byte[] firstSourceBytes = Encoding.UTF8.GetBytes(firstSource);
+			byte[] secondSourceBytes = Encoding.UTF8.GetBytes(secondSource);
+			string firstCanonical = CanonicalizeGeneratedMsBuildEditorConfigBytes(
+				firstSourceBytes,
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+			string secondCanonical = CanonicalizeGeneratedMsBuildEditorConfigBytes(
+				secondSourceBytes,
+				secondProjectRoot,
+				secondRepositoryRoot,
+				secondAuthorityRoot,
+				secondGeneratedRoot,
+				secondIntermediateRoot);
+			Assert.Equal(firstCanonical, secondCanonical);
+			Assert.Equal(Sha256Text(firstCanonical), Sha256Text(secondCanonical));
+			Assert.Contains(
+				"build_property.ProjectDir = {REPO}/WalletWasabi/\n",
+				firstCanonical,
+				StringComparison.Ordinal);
+
+			byte[] utf8BomSource = new byte[firstSourceBytes.Length + 3];
+			utf8BomSource[0] = 0xef;
+			utf8BomSource[1] = 0xbb;
+			utf8BomSource[2] = 0xbf;
+			firstSourceBytes.CopyTo(utf8BomSource, 3);
+			AssertGeneratedMsBuildEditorConfigBytesRejected(
+				utf8BomSource,
+				"must not have a UTF-8 BOM",
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+
+			byte[] utf16LittleEndianPayload = Encoding.Unicode.GetBytes(firstSource);
+			byte[] utf16LittleEndianSource = new byte[utf16LittleEndianPayload.Length + 2];
+			utf16LittleEndianSource[0] = 0xff;
+			utf16LittleEndianSource[1] = 0xfe;
+			utf16LittleEndianPayload.CopyTo(utf16LittleEndianSource, 2);
+			AssertGeneratedMsBuildEditorConfigBytesRejected(
+				utf16LittleEndianSource,
+				"must not have a UTF-16 little-endian BOM",
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+
+			byte[] utf16BigEndianPayload = Encoding.BigEndianUnicode.GetBytes(firstSource);
+			byte[] utf16BigEndianSource = new byte[utf16BigEndianPayload.Length + 2];
+			utf16BigEndianSource[0] = 0xfe;
+			utf16BigEndianSource[1] = 0xff;
+			utf16BigEndianPayload.CopyTo(utf16BigEndianSource, 2);
+			AssertGeneratedMsBuildEditorConfigBytesRejected(
+				utf16BigEndianSource,
+				"must not have a UTF-16 big-endian BOM",
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+			byte[] malformedUtf8Source = Encoding.UTF8.GetBytes(
+				firstSource.Replace("value", "vXlue", StringComparison.Ordinal));
+			int malformedByteIndex = -1;
+			for (int index = 0; index < malformedUtf8Source.Length; index++)
+			{
+				if (malformedUtf8Source[index] != (byte)'X')
+				{
+					continue;
+				}
+				Assert.Equal(-1, malformedByteIndex);
+				malformedByteIndex = index;
+			}
+			Assert.True(malformedByteIndex >= 0);
+			malformedUtf8Source[malformedByteIndex] = 0xff;
+			AssertGeneratedMsBuildEditorConfigBytesRejected(
+				malformedUtf8Source,
+				"is not strict BOM-less UTF-8",
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+
+			AssertGeneratedMsBuildEditorConfigRejected(
+				firstSource.Replace(firstProjectLine + "\n", "", StringComparison.Ordinal),
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+			AssertGeneratedMsBuildEditorConfigRejected(
+				firstSource.Replace(
+					firstProjectLine + "\n",
+					firstProjectLine + "\n" + firstProjectLine + "\n",
+					StringComparison.Ordinal),
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+			AssertGeneratedMsBuildEditorConfigRejected(
+				secondSource,
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+			AssertGeneratedMsBuildEditorConfigRejected(
+				firstSource.Replace("\n", "\r\n", StringComparison.Ordinal),
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+			AssertGeneratedMsBuildEditorConfigRejected(
+				firstSource[..^1],
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+			AssertGeneratedMsBuildEditorConfigRejected(
+				firstSource + "\n",
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+			AssertGeneratedMsBuildEditorConfigRejected(
+				firstSource.Replace("value", "{REPO}", StringComparison.Ordinal),
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+			byte[] singleByteMutation = Encoding.UTF8.GetBytes(
+				firstSource.Replace("value", "walue", StringComparison.Ordinal));
+			Assert.Equal(firstSourceBytes.Length, singleByteMutation.Length);
+			int differingByteCount = 0;
+			for (int index = 0; index < firstSourceBytes.Length; index++)
+			{
+				if (firstSourceBytes[index] != singleByteMutation[index])
+				{
+					differingByteCount++;
+				}
+			}
+			Assert.Equal(1, differingByteCount);
+			string nonvolatileMutation = CanonicalizeGeneratedMsBuildEditorConfigBytes(
+				singleByteMutation,
+				firstProjectRoot,
+				firstRepositoryRoot,
+				firstAuthorityRoot,
+				firstGeneratedRoot,
+				firstIntermediateRoot);
+			Assert.NotEqual(Sha256Text(firstCanonical), Sha256Text(nonvolatileMutation));
+		}
+		finally
+		{
+			Directory.Delete(fixtureRoot, recursive: true);
+		}
+	}
+
+	private static string BuildCanonicalToolchainFileAuthorityManifest(
+		IReadOnlyList<(string RelativePath, string Sha256)> entries)
+	{
+		Assert.NotEmpty(entries);
+		(string RelativePath, string Sha256)[] ordered = entries.ToArray();
+		for (int index = 1; index < ordered.Length; index++)
+		{
+			(string RelativePath, string Sha256) current = ordered[index];
+			int insertion = index;
+			while (insertion > 0 && StringComparer.Ordinal.Compare(
+				ordered[insertion - 1].RelativePath,
+				current.RelativePath) > 0)
+			{
+				ordered[insertion] = ordered[insertion - 1];
+				insertion--;
+			}
+			ordered[insertion] = current;
+		}
+		string[] rows = new string[ordered.Length];
+		for (int index = 0; index < ordered.Length; index++)
+		{
+			string relativePath = NormalizeAndValidateToolchainRelativePath(ordered[index].RelativePath);
+			Assert.Matches("^[0-9a-f]{64}$", ordered[index].Sha256);
+			rows[index] = BuildCanonicalAuthorityManifestRow(
+				"TOOLCHAIN_FILE_V2",
+				[
+					index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+					relativePath,
+					ordered[index].Sha256,
+				]);
+		}
+		string manifest = "TOOLCHAIN_FILE_AUTHORITY_V2\n" + string.Join('\n', rows) + "\n";
+		_ = AssertCanonicalToolchainFileAuthorityManifest(manifest);
+		return manifest;
+	}
+
+	private static string[] AssertCanonicalToolchainFileAuthorityManifest(string manifest)
+	{
+		Assert.DoesNotContain('\r', manifest);
+		Assert.True(manifest.EndsWith('\n'));
+		string[] lines = manifest.Split('\n', StringSplitOptions.None);
+		Assert.True(lines.Length >= 3);
+		Assert.Equal("", lines[^1]);
+		Assert.Equal("TOOLCHAIN_FILE_AUTHORITY_V2", lines[0]);
+		var identities = new HashSet<string>(StringComparer.Ordinal);
+		var rows = new string[lines.Length - 2];
+		string? priorIdentity = null;
+		for (int lineIndex = 1; lineIndex < lines.Length - 1; lineIndex++)
+		{
+			string row = lines[lineIndex];
+			Assert.False(string.IsNullOrEmpty(row));
+			rows[lineIndex - 1] = row;
+			string[] fields = ParseCanonicalAuthorityManifestRow(row, "TOOLCHAIN_FILE_V2", 3);
+			Assert.Equal(
+				(lineIndex - 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+				fields[0]);
+			string identity = NormalizeAndValidateToolchainRelativePath(fields[1]);
+			Assert.Equal(fields[1], identity);
+			Assert.True(identities.Add(identity), $"Duplicate toolchain file identity: {identity}");
+			if (priorIdentity is not null)
+			{
+				Assert.True(
+					StringComparer.Ordinal.Compare(priorIdentity, identity) < 0,
+					$"Toolchain file identity is out of order: {identity}");
+			}
+			priorIdentity = identity;
+			Assert.Matches("^[0-9a-f]{64}$", fields[2]);
+		}
+		return rows;
+	}
+
+	private static string GetCanonicalToolchainRelativePath(string dotnetRoot, string path)
+	{
+		string canonicalRoot = Path.GetFullPath(dotnetRoot);
+		string fullPath = Path.GetFullPath(path);
+		Assert.True(IsPathWithin(fullPath, canonicalRoot), $"Toolchain file is outside the pinned root: {fullPath}");
+		return NormalizeAndValidateToolchainRelativePath(Path.GetRelativePath(canonicalRoot, fullPath));
+	}
+
+	private static string NormalizeAndValidateToolchainRelativePath(string relativePath)
+	{
+		Assert.False(string.IsNullOrWhiteSpace(relativePath));
+		Assert.False(Path.IsPathFullyQualified(relativePath));
+		Assert.DoesNotContain('\\', relativePath);
+		Assert.DoesNotContain('|', relativePath);
+		Assert.DoesNotContain('\r', relativePath);
+		Assert.DoesNotContain('\n', relativePath);
+		Assert.DoesNotContain('\0', relativePath);
+		string normalized = NormalizeRelativePath(relativePath);
+		Assert.Equal(relativePath, normalized);
+		AssertSafePackageRelativePath(normalized);
+		return normalized;
+	}
+
+	private static string GetCanonicalToolchainFileAuthorityPrefix(string combinedManifest)
+	{
+		const string PackageBoundary = "PACKAGE_TRANSPORT_AUTHORITY_V1\n";
+		int boundary = combinedManifest.IndexOf(PackageBoundary, StringComparison.Ordinal);
+		Assert.True(boundary > 0, "The package-transport authority boundary is absent.");
+		Assert.Equal(boundary, combinedManifest.LastIndexOf(PackageBoundary, StringComparison.Ordinal));
+		string toolchainFileManifest = combinedManifest[..boundary];
+		_ = AssertCanonicalToolchainFileAuthorityManifest(toolchainFileManifest);
+		return toolchainFileManifest;
+	}
+
+	private static string CreateToolchainFileManifestWithMutatedFirstSha256(string manifest)
+	{
+		_ = AssertCanonicalToolchainFileAuthorityManifest(manifest);
+		string[] lines = manifest.Split('\n', StringSplitOptions.None);
+		string[] fields = ParseCanonicalAuthorityManifestRow(lines[1], "TOOLCHAIN_FILE_V2", 3);
+		fields[2] = fields[2][0] == '0'
+			? "1" + fields[2][1..]
+			: "0" + fields[2][1..];
+		lines[1] = BuildCanonicalAuthorityManifestRow("TOOLCHAIN_FILE_V2", fields);
+		string mutated = string.Join('\n', lines);
+		_ = AssertCanonicalToolchainFileAuthorityManifest(mutated);
+		return mutated;
+	}
+
+	private static string CreateCombinedToolchainAuthorityWithMutatedFirstFileSha256(string manifest)
+	{
+		string fileManifest = GetCanonicalToolchainFileAuthorityPrefix(manifest);
+		return CreateToolchainFileManifestWithMutatedFirstSha256(fileManifest) + manifest[fileManifest.Length..];
+	}
+
+	private static void AssertToolchainFileAuthorityManifestRejected(string manifest)
+	{
+		bool rejected = false;
+		try
+		{
+			_ = AssertCanonicalToolchainFileAuthorityManifest(manifest);
+		}
+		catch (Xunit.Sdk.XunitException)
+		{
+			rejected = true;
+		}
+		Assert.True(rejected, "The malformed toolchain-file authority manifest was accepted.");
+	}
+
+	private static void AssertToolchainRelativeIdentityRejected(string relativePath)
+	{
+		bool rejected = false;
+		try
+		{
+			_ = NormalizeAndValidateToolchainRelativePath(relativePath);
+		}
+		catch (Xunit.Sdk.XunitException)
+		{
+			rejected = true;
+		}
+		Assert.True(rejected, "The unsafe toolchain-file identity was accepted.");
+	}
+
+	private static string GetLoadedRuntimeDirectory()
+	{
+		string? runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location);
+		Assert.False(string.IsNullOrWhiteSpace(runtimeDirectory));
+		return Path.GetFullPath(runtimeDirectory);
+	}
+
+	private static string GetPinnedHostFxrFileName()
+	{
+		if (OperatingSystem.IsWindows())
+		{
+			return "hostfxr.dll";
+		}
+		if (OperatingSystem.IsMacOS())
+		{
+			return "libhostfxr.dylib";
+		}
+		if (OperatingSystem.IsLinux())
+		{
+			return "libhostfxr.so";
+		}
+		throw new Xunit.Sdk.XunitException("Unsupported pinned hostfxr platform.");
+	}
+
+	private static string GetPinnedHostPolicyFileName()
+	{
+		if (OperatingSystem.IsWindows())
+		{
+			return "hostpolicy.dll";
+		}
+		if (OperatingSystem.IsMacOS())
+		{
+			return "libhostpolicy.dylib";
+		}
+		if (OperatingSystem.IsLinux())
+		{
+			return "libhostpolicy.so";
+		}
+		throw new Xunit.Sdk.XunitException("Unsupported pinned hostpolicy platform.");
+	}
+
+	private static void AssertExactDotnetVersionDirectories(
+		string dotnetRoot,
+		string relativeParent,
+		string expectedVersion)
+	{
+		string canonicalRoot = Path.GetFullPath(dotnetRoot);
+		string versionParent = Path.GetFullPath(Path.Combine(canonicalRoot, relativeParent));
+		Assert.True(IsPathWithin(versionParent, canonicalRoot));
+		AssertRegularAuthorityDirectory(versionParent, $"pinned {relativeParent} version parent");
+		string[] directories = Directory.EnumerateDirectories(
+			versionParent,
+			"*",
+			SearchOption.TopDirectoryOnly).ToArray();
+		var versions = new string[directories.Length];
+		for (int index = 0; index < directories.Length; index++)
+		{
+			AssertRegularAuthorityDirectory(directories[index], $"pinned {relativeParent} version directory");
+			versions[index] = Path.GetFileName(Path.TrimEndingDirectorySeparator(directories[index]));
+		}
+		Array.Sort(versions, StringComparer.Ordinal);
+		Assert.Equal([expectedVersion], versions);
+	}
+
+	private static void AssertApprovedDotnetHostRejected(
+		string candidate,
+		string dotnetRoot,
+		string loadedRuntimeDirectory)
+	{
+		bool rejected = false;
+		try
+		{
+			AssertApprovedDotnetHost(candidate, dotnetRoot, loadedRuntimeDirectory);
+		}
+		catch (Xunit.Sdk.XunitException)
+		{
+			rejected = true;
+		}
+		Assert.True(rejected, "The mismatched pinned .NET host authority was accepted.");
+	}
+
+	private static void AssertExtraDotnetVersionDirectoryRejected(
+		string candidate,
+		string dotnetRoot,
+		string loadedRuntimeDirectory,
+		string relativeParent,
+		string extraVersion)
+	{
+		string extraDirectory = Path.GetFullPath(Path.Combine(dotnetRoot, relativeParent, extraVersion));
+		Assert.True(IsPathWithin(extraDirectory, dotnetRoot));
+		Directory.CreateDirectory(extraDirectory);
+		try
+		{
+			AssertApprovedDotnetHostRejected(candidate, dotnetRoot, loadedRuntimeDirectory);
+		}
+		finally
+		{
+			Directory.Delete(extraDirectory);
+		}
+	}
+
+	private static string CanonicalizeGeneratedMsBuildEditorConfig(
+		string source,
+		string projectRoot,
+		string repositoryRoot,
+		string authorityRoot,
+		string generatedRoot,
+		string intermediateRoot)
+	{
+		string canonicalRepositoryRoot = Path.GetFullPath(repositoryRoot);
+		string canonicalProjectRoot = Path.GetFullPath(projectRoot);
+		Assert.True(
+			StringComparer.Ordinal.Equals(
+				Path.GetFullPath(Path.Combine(canonicalRepositoryRoot, "WalletWasabi")),
+				canonicalProjectRoot),
+			"The generated MSBuild editor-config project root is invalid.");
+		AssertNoReservedGeneratedEditorConfigTokens(source);
+		Assert.False(
+			source.Contains('\r'),
+			"The generated MSBuild editor-config must use LF line endings.");
+		Assert.True(
+			source.EndsWith('\n'),
+			"The generated MSBuild editor-config must have one terminal LF.");
+		Assert.True(
+			source.Length == 1 || source[^2] != '\n',
+			"The generated MSBuild editor-config must have exactly one terminal LF.");
+		string[] lines = source.Split('\n', StringSplitOptions.None);
+		Assert.True(lines.Length >= 2);
+		Assert.Equal("", lines[^1]);
+		const string ProjectDirectoryPrefix = "build_property.ProjectDir = ";
+		string expectedProjectDirectoryLine = ProjectDirectoryPrefix +
+			canonicalProjectRoot.Replace('\\', '/').TrimEnd('/') + "/";
+		int projectDirectoryIndex = -1;
+		int projectDirectoryCount = 0;
+		for (int index = 0; index < lines.Length - 1; index++)
+		{
+			if (!lines[index].StartsWith(ProjectDirectoryPrefix, StringComparison.Ordinal))
+			{
+				continue;
+			}
+			projectDirectoryCount++;
+			projectDirectoryIndex = index;
+			Assert.True(
+				StringComparer.Ordinal.Equals(expectedProjectDirectoryLine, lines[index]),
+				"The generated MSBuild editor-config ProjectDir line is invalid.");
+		}
+		Assert.Equal(1, projectDirectoryCount);
+		Assert.True(projectDirectoryIndex >= 0);
+		lines[projectDirectoryIndex] = "build_property.ProjectDir = {REPO}/WalletWasabi/";
+		string canonical = string.Join('\n', lines);
+		foreach (string root in new[]
+		{
+			canonicalRepositoryRoot,
+			canonicalProjectRoot,
+			Path.GetFullPath(authorityRoot),
+			Path.GetFullPath(generatedRoot),
+			Path.GetFullPath(intermediateRoot),
+		})
+		{
+			string normalizedRoot = root.Replace('\\', '/').TrimEnd('/');
+			Assert.False(string.IsNullOrEmpty(normalizedRoot));
+			Assert.False(
+				canonical.Contains(normalizedRoot, StringComparison.Ordinal),
+				"The canonical generated MSBuild editor-config retains a physical root.");
+		}
+		Assert.True(
+			canonical.Contains(
+				"build_property.ProjectDir = {REPO}/WalletWasabi/\n",
+				StringComparison.Ordinal),
+			"The canonical generated MSBuild editor-config ProjectDir line is absent.");
+		return canonical;
+	}
+
+	private static void AssertNoReservedGeneratedEditorConfigTokens(string source)
+	{
+		foreach (string token in new[]
+		{
+			"{REPO}", "{DOTNET}", "{AUTHORITY}", "{NUGET}", "{GENERATED}", "{INTERMEDIATE}",
+			"{TASK}", "{FILE_VERSION}", "{INFORMATIONAL_VERSION}", "{ASSEMBLY_VERSION}",
+			"{COMMIT_HASH}", "{PROJECT_DIR}", "{HOME}", "{NUGET_IMPORT}", "{NUGET_PRIMARY}",
+			"{ABSENT_PINNED_NIX_CONTENT_HASH}", "{VALIDATED_CONFIG_FILE_TOPOLOGY}",
+			"{VALIDATED_PACKAGE_CONTENT_AUTHORITY}", "{VALIDATED_PACKAGE_ROOT_TOPOLOGY}",
+			"{VALIDATED_PACKAGE_TRANSPORT_PROFILE}", "{VALIDATED_PINNED_NIX_PROJECT_VERSION}",
+			"{VALIDATED_RESTORE_AUDIT_PROFILE}", "{VALIDATED_RESTORE_SOURCE}",
+		})
+		{
+			AssertNoCanonicalAuthorityToken(source, token);
+		}
+	}
+
+	private static void AssertGeneratedMsBuildEditorConfigRejected(
+		string source,
+		string projectRoot,
+		string repositoryRoot,
+		string authorityRoot,
+		string generatedRoot,
+		string intermediateRoot)
+	{
+		bool rejected = false;
+		try
+		{
+			_ = CanonicalizeGeneratedMsBuildEditorConfig(
+				source,
+				projectRoot,
+				repositoryRoot,
+				authorityRoot,
+				generatedRoot,
+				intermediateRoot);
+		}
+		catch (Xunit.Sdk.XunitException)
+		{
+			rejected = true;
+		}
+		Assert.True(rejected, "The malformed generated MSBuild editor-config authority was accepted.");
+	}
+
+	private static string GetExpectedCompilerInputAuthoritySha256(bool debug)
+	{
+		if (OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64)
+		{
+			return debug
+				? ExpectedDebugCompilerInputAuthoritySha256.MacOsArm64
+				: ExpectedReleaseCompilerInputAuthoritySha256.MacOsArm64;
+		}
+		if (OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64)
+		{
+			return debug
+				? ExpectedDebugCompilerInputAuthoritySha256.LinuxX64
+				: ExpectedReleaseCompilerInputAuthoritySha256.LinuxX64;
+		}
+		throw new Xunit.Sdk.XunitException(
+			$"Unsupported compiler input authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
+	}
+
+	private const string PinnedDotnetSdkVersion = "10.0.100";
+	private const string PinnedDotnetHostFxrVersion = "10.0.0";
+	private const string PinnedDotnetRuntimeVersion = "10.0.0";
+
+	private static string CanonicalizeGeneratedMsBuildEditorConfigBytes(
+		ReadOnlySpan<byte> source,
+		string projectRoot,
+		string repositoryRoot,
+		string authorityRoot,
+		string generatedRoot,
+		string intermediateRoot)
+	{
+		Assert.False(
+			source.Length >= 3 && source[0] == 0xef && source[1] == 0xbb && source[2] == 0xbf,
+			"The generated MSBuild editor-config must not have a UTF-8 BOM.");
+		Assert.False(
+			source.Length >= 2 && source[0] == 0xff && source[1] == 0xfe,
+			"The generated MSBuild editor-config must not have a UTF-16 little-endian BOM.");
+		Assert.False(
+			source.Length >= 2 && source[0] == 0xfe && source[1] == 0xff,
+			"The generated MSBuild editor-config must not have a UTF-16 big-endian BOM.");
+		var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+		string decoded;
+		try
+		{
+			decoded = strictUtf8.GetString(source);
+		}
+		catch (DecoderFallbackException)
+		{
+			throw new Xunit.Sdk.XunitException(
+				"The generated MSBuild editor-config is not strict BOM-less UTF-8.");
+		}
+		byte[] reencoded = strictUtf8.GetBytes(decoded);
+		Assert.True(
+			source.SequenceEqual(reencoded),
+			"The generated MSBuild editor-config failed the UTF-8 round-trip check.");
+		return CanonicalizeGeneratedMsBuildEditorConfig(
+			decoded,
+			projectRoot,
+			repositoryRoot,
+			authorityRoot,
+			generatedRoot,
+			intermediateRoot);
+	}
+
+	private static void AssertGeneratedMsBuildEditorConfigBytesRejected(
+		byte[] source,
+		string expectedFailure,
+		string projectRoot,
+		string repositoryRoot,
+		string authorityRoot,
+		string generatedRoot,
+		string intermediateRoot)
+	{
+		Xunit.Sdk.XunitException? rejection = null;
+		try
+		{
+			_ = CanonicalizeGeneratedMsBuildEditorConfigBytes(
+				source,
+				projectRoot,
+				repositoryRoot,
+				authorityRoot,
+				generatedRoot,
+				intermediateRoot);
+		}
+		catch (Xunit.Sdk.XunitException exception)
+		{
+			rejection = exception;
+		}
+		Assert.NotNull(rejection);
+		Assert.Contains(expectedFailure, rejection.Message, StringComparison.Ordinal);
 	}
 }
