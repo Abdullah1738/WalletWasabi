@@ -59,8 +59,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private const string ExpectedReleaseAmbientClosureSha256 = "190c3955f0e3a75fcf1497e92604b514ce93769c31d601e66c54862da397deee";
 	private const string ExpectedDebugGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
 	private const string ExpectedReleaseGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
-	private const string ExpectedDebugImportClosureSha256 = "48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6";
-	private const string ExpectedReleaseImportClosureSha256 = "48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6";
+	private const string ExpectedMacOsArm64DebugImportClosureSha256 = "48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6";
+	private const string ExpectedMacOsArm64ReleaseImportClosureSha256 = "48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6";
+	private const string ExpectedLinuxX64DebugImportClosureSha256 = "PENDING-LINUX-X64-DEBUG-IMPORT-AUTHORITY";
+	private const string ExpectedLinuxX64ReleaseImportClosureSha256 = "aac51133d8c7c0fbb471660161e3cf56df09947222958e7096bb2770ce73fed3";
 	private const string ExpectedDebugReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
 	private const string ExpectedReleaseReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
 	private const string ExpectedDebugCompilerInputAuthoritySha256 = "bfea856edbef7d0f63be9ff1793d652ae55b86be1eeb626989b1675145c0d4da";
@@ -5463,11 +5465,21 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string toolchainManifest)
 	{
 #if DEBUG
-		string expectedImport = ExpectedDebugImportClosureSha256;
+		string expectedImport = OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64
+			? ExpectedMacOsArm64DebugImportClosureSha256
+			: OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
+				? ExpectedLinuxX64DebugImportClosureSha256
+				: throw new Xunit.Sdk.XunitException(
+					$"Unsupported import authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
 		string expectedReferences = ExpectedDebugReferenceAuthoritySha256;
 		string expectedCompiler = ExpectedDebugCompilerInputAuthoritySha256;
 #else
-		string expectedImport = ExpectedReleaseImportClosureSha256;
+		string expectedImport = OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64
+			? ExpectedMacOsArm64ReleaseImportClosureSha256
+			: OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
+				? ExpectedLinuxX64ReleaseImportClosureSha256
+				: throw new Xunit.Sdk.XunitException(
+					$"Unsupported import authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
 		string expectedReferences = ExpectedReleaseReferenceAuthoritySha256;
 		string expectedCompiler = ExpectedReleaseCompilerInputAuthoritySha256;
 #endif
