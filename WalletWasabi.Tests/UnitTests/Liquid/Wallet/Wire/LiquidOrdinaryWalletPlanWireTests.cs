@@ -62,7 +62,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedDebugImportClosureSha256 =
 		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "PENDING-LINUX-X64-DEBUG-IMPORT-AUTHORITY-V2");
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseImportClosureSha256 =
-		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "PENDING-LINUX-X64-RELEASE-IMPORT-AUTHORITY-V2");
+		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "4f418cb07ab04171f0406ded8b4ca8836324602cf45bdfb37376354fed7f1342");
 	private const string ExpectedDebugReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
 	private const string ExpectedReleaseReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
 	private const string ExpectedDebugCompilerInputAuthoritySha256 = "bfea856edbef7d0f63be9ff1793d652ae55b86be1eeb626989b1675145c0d4da";
@@ -1186,6 +1186,22 @@ public class LiquidOrdinaryWalletPlanWireTests
 				buildAuthority.CompilerInputAuthorityManifest,
 				buildAuthority.ToolchainAuthorityManifest);
 		}
+		string mutatedReferenceManifest =
+			buildAuthority.ReferenceAuthorityManifest + "REFERENCE|INJECTED|SHA256|" + new string('0', 64) + "\n";
+		Assert.NotEqual(buildAuthority.ReferenceAuthorityManifest, mutatedReferenceManifest);
+		AssertConfiguredAuthorityHashesRejects(
+			buildAuthority.ImportClosureManifest,
+			mutatedReferenceManifest,
+			buildAuthority.CompilerInputAuthorityManifest,
+			buildAuthority.ToolchainAuthorityManifest);
+		string mutatedToolchainManifest =
+			buildAuthority.ToolchainAuthorityManifest + "TOOL|injected|" + new string('0', 64) + "\n";
+		Assert.NotEqual(buildAuthority.ToolchainAuthorityManifest, mutatedToolchainManifest);
+		AssertConfiguredAuthorityHashesRejects(
+			buildAuthority.ImportClosureManifest,
+			buildAuthority.ReferenceAuthorityManifest,
+			buildAuthority.CompilerInputAuthorityManifest,
+			mutatedToolchainManifest);
 
 		string packageMutationRoot = Path.Combine(
 			Path.GetTempPath(),
@@ -10170,7 +10186,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		{
 			rejected = true;
 		}
-		Assert.True(rejected, "The mutated import-authority manifest was accepted.");
+		Assert.True(rejected, "The mutated build-authority manifest was accepted.");
 	}
 
 	private static string CreateImportManifestWithDuplicatedLastImport(string manifest)
