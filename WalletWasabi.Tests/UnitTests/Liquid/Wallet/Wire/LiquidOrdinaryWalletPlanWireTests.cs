@@ -1767,6 +1767,20 @@ public class LiquidOrdinaryWalletPlanWireTests
 			$"2.0.0-20260812-{currentRevision}+{currentRevision}",
 			currentRevision,
 			pinnedNixProfile: true);
+		Assert.Equal(
+			$"2.0.0-20260812-{currentRevision}",
+			GetPinnedNixProjectAssetsVersion(
+				$"2.0.0-20260812-{currentRevision}",
+				currentRevision));
+		Assert.Equal(
+			$"2.0.0-20260812-{currentRevision}",
+			GetPinnedNixProjectAssetsVersion(
+				$"2.0.0-20260812-{currentRevision}+{currentRevision}",
+				currentRevision));
+		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+			GetPinnedNixProjectAssetsVersion(
+				$"2.0.0-20260812-{currentRevision}+{otherRevision}",
+				currentRevision));
 		AssertPinnedNixInformationalVersionAuthority(
 			"2.0.0-beta",
 			currentRevision,
@@ -2171,6 +2185,80 @@ public class LiquidOrdinaryWalletPlanWireTests
 			Assert.Equal(firstManifest, secondManifest);
 			string canonicalFirstAssets = File.ReadAllText(firstAssets);
 			string canonicalSecondAssets = File.ReadAllText(secondAssets);
+			const string CanonicalFixtureProjectVersion = "\"project\":{\"version\":\"1.0.0\"";
+			string changedNonNixProjectVersion = canonicalFirstAssets.Replace(
+				CanonicalFixtureProjectVersion,
+				"\"project\":{\"version\":\"1.0.1\"",
+				StringComparison.Ordinal);
+			Assert.NotEqual(canonicalFirstAssets, changedNonNixProjectVersion);
+			File.WriteAllText(firstAssets, changedNonNixProjectVersion, Encoding.UTF8);
+			Assert.NotEqual(
+				firstManifest,
+				BuildSemanticRestoreFixtureManifest(
+					firstAssets,
+					firstRepository,
+					firstDotnet,
+					firstAuthority));
+			File.WriteAllText(firstAssets, canonicalFirstAssets, Encoding.UTF8);
+
+			string currentPinnedNixProjectVersion = $"2.0.0-20260812-{currentRevision}";
+			string otherPinnedNixProjectVersion = $"2.0.0-20260812-{otherRevision}";
+			string currentPinnedNixAssets = canonicalSecondAssets.Replace(
+				CanonicalFixtureProjectVersion,
+				"\"project\":{\"version\":" + JsonSerializer.Serialize(currentPinnedNixProjectVersion),
+				StringComparison.Ordinal);
+			string otherPinnedNixAssets = canonicalSecondAssets.Replace(
+				CanonicalFixtureProjectVersion,
+				"\"project\":{\"version\":" + JsonSerializer.Serialize(otherPinnedNixProjectVersion),
+				StringComparison.Ordinal);
+			Assert.NotEqual(canonicalSecondAssets, currentPinnedNixAssets);
+			Assert.NotEqual(currentPinnedNixAssets, otherPinnedNixAssets);
+			File.WriteAllText(secondAssets, currentPinnedNixAssets, Encoding.UTF8);
+			string currentPinnedNixManifest = BuildSemanticRestoreFixtureManifest(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority,
+				currentPinnedNixProjectVersion);
+			File.WriteAllText(secondAssets, otherPinnedNixAssets, Encoding.UTF8);
+			Assert.Equal(
+				currentPinnedNixManifest,
+				BuildSemanticRestoreFixtureManifest(
+					secondAssets,
+					secondRepository,
+					secondDotnet,
+					secondAuthority,
+					otherPinnedNixProjectVersion));
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority,
+				currentPinnedNixProjectVersion);
+			string invalidPinnedNixProjectVersionType = currentPinnedNixAssets.Replace(
+				JsonSerializer.Serialize(currentPinnedNixProjectVersion),
+				"7",
+				StringComparison.Ordinal);
+			Assert.NotEqual(currentPinnedNixAssets, invalidPinnedNixProjectVersionType);
+			File.WriteAllText(secondAssets, invalidPinnedNixProjectVersionType, Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				secondAssets,
+				secondRepository,
+				secondDotnet,
+				secondAuthority,
+				currentPinnedNixProjectVersion);
+			string injectedMarkerAssets = canonicalFirstAssets.Replace(
+				CanonicalFixtureProjectVersion,
+				"\"project\":{\"version\":\"{VALIDATED_PINNED_NIX_PROJECT_VERSION}\"",
+				StringComparison.Ordinal);
+			File.WriteAllText(firstAssets, injectedMarkerAssets, Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+			File.WriteAllText(firstAssets, canonicalFirstAssets, Encoding.UTF8);
+			File.WriteAllText(secondAssets, canonicalSecondAssets, Encoding.UTF8);
 			string secondOfflineSource = Path.Combine(secondRoot, "source");
 			string secondLibraryPacksSource = Path.Combine(secondDotnet, "library-packs");
 			string serializedOfflineSource = JsonSerializer.Serialize(secondOfflineSource);
@@ -4553,6 +4641,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 			const string configuration = "Release";
 #endif
 			var buildIdentity = GetLoadedProductBuildIdentity(pinnedNixProfile);
+			string? expectedPinnedNixProjectVersion = pinnedNixProfile
+				? GetPinnedNixProjectAssetsVersion(
+					buildIdentity.InformationalVersion,
+					buildIdentity.CommitHash)
+				: null;
 			string sdkRoot = Path.Combine(dotnetRoot, "sdk/10.0.100");
 			string roslynRoot = Path.Combine(sdkRoot, "Roslyn");
 			var globalProperties = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -4790,7 +4883,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 				packageAuthority,
 				authorityRoot,
 				projectPath,
-				projectAssetsFile);
+				projectAssetsFile,
+				expectedPinnedNixProjectVersion);
 			Assert.Equal(cscCommandLineArgs, binaryTrace.CommandLineArgs);
 			AssertCscTaskInputsMatchArguments(binaryTrace, evaluatedProjectRoot);
 			string[] importedProjects = binaryTrace.ImportedProjects;
@@ -5229,7 +5323,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
 		string authorityRoot,
 		string projectPath,
-		string projectAssetsFile)
+		string projectAssetsFile,
+		string? expectedPinnedNixProjectVersion)
 	{
 		string packagesLockFile = Path.Combine(
 			Path.GetDirectoryName(projectPath)!,
@@ -5353,7 +5448,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 					ExpectedTargetFramework,
 					repositoryRoot,
 					dotnetRoot,
-					packageAuthority);
+					packageAuthority,
+					expectedPinnedNixProjectVersion);
 			}
 			rows.Add(BuildCanonicalImportManifestRow(
 				"IMPORT_EVENT_V2",
@@ -5396,7 +5492,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 						ExpectedTargetFramework,
 						repositoryRoot,
 						dotnetRoot,
-						packageAuthority),
+						packageAuthority,
+						expectedPinnedNixProjectVersion),
 				]));
 		}
 		string[] cscInputRows = inputs
@@ -5959,7 +6056,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string expectedTargetFramework,
 		string repositoryRoot,
 		string dotnetRoot,
-		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		string? expectedPinnedNixProjectVersion = null)
 	{
 		string fullPath = Path.GetFullPath(path);
 		string fullAssetsPath = Path.GetFullPath(projectAssetsFile);
@@ -5980,7 +6078,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 				expectedTargetFramework,
 				repositoryRoot,
 				dotnetRoot,
-				packageAuthority));
+				packageAuthority,
+				expectedPinnedNixProjectVersion));
 		}
 
 		string fileName = Path.GetFileName(fullPath);
@@ -6004,7 +6103,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string expectedTargetFramework,
 		string repositoryRoot,
 		string dotnetRoot,
-		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		string? expectedPinnedNixProjectVersion)
 	{
 		Assert.Equal("net10.0", expectedTargetFramework);
 		string expectedLockFile = Path.GetFullPath(Path.Combine(
@@ -6044,7 +6144,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 			repositoryRoot,
 			dotnetRoot,
 			packageAuthority,
-			lockedPackages);
+			lockedPackages,
+			expectedPinnedNixProjectVersion);
 		return manifest.ToString();
 	}
 
@@ -6622,8 +6723,14 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string repositoryRoot,
 		string dotnetRoot,
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
-		IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages)
+		IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages,
+		string? expectedPinnedNixProjectVersion = null)
 	{
+		if (StringComparer.Ordinal.Equals(jsonPath, "$.project.version") &&
+			expectedPinnedNixProjectVersion is not null)
+		{
+			Assert.Equal(JsonValueKind.String, value.ValueKind);
+		}
 		switch (value.ValueKind)
 		{
 			case JsonValueKind.Object:
@@ -6708,7 +6815,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 							repositoryRoot,
 							dotnetRoot,
 							packageAuthority,
-							lockedPackages);
+							lockedPackages,
+							expectedPinnedNixProjectVersion);
 					}
 				}
 				manifest.Append('}');
@@ -6725,11 +6833,12 @@ public class LiquidOrdinaryWalletPlanWireTests
 					AppendCanonicalProjectAssetsJson(
 						manifest,
 						item,
-							jsonPath + "[]",
-							repositoryRoot,
-							dotnetRoot,
-							packageAuthority,
-							lockedPackages);
+						jsonPath + "[]",
+						repositoryRoot,
+						dotnetRoot,
+						packageAuthority,
+						lockedPackages,
+						expectedPinnedNixProjectVersion);
 					index++;
 				}
 				manifest.Append(']');
@@ -6740,7 +6849,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 					jsonPath,
 					repositoryRoot,
 					dotnetRoot,
-					packageAuthority)));
+					packageAuthority,
+					expectedPinnedNixProjectVersion)));
 				break;
 			case JsonValueKind.Number:
 				manifest.Append(value.GetRawText());
@@ -6954,8 +7064,24 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string jsonPath,
 		string repositoryRoot,
 		string dotnetRoot,
-		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		string? expectedPinnedNixProjectVersion)
 	{
+		const string ValidatedPinnedNixProjectVersionMarker =
+			"{VALIDATED_PINNED_NIX_PROJECT_VERSION}";
+		if (StringComparer.Ordinal.Equals(jsonPath, "$.project.version"))
+		{
+			if (expectedPinnedNixProjectVersion is null)
+			{
+				Assert.NotEqual(ValidatedPinnedNixProjectVersionMarker, value);
+				return value;
+			}
+			Assert.Matches(
+				"^2\\.0\\.0-[0-9]{8}-[0-9a-f]{40}$",
+				expectedPinnedNixProjectVersion);
+			Assert.Equal(expectedPinnedNixProjectVersion, value);
+			return ValidatedPinnedNixProjectVersionMarker;
+		}
 		if (StringComparer.Ordinal.Equals(jsonPath, "$.project.restore.packagesPath"))
 		{
 			Assert.True(PackagePathComparer.Equals(
@@ -8968,7 +9094,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string dependencyVersion,
 		string contentHash,
 		string libraryPath,
-		bool usePinnedNixFallbackProfile = false)
+		bool usePinnedNixFallbackProfile = false,
+		string projectVersion = "1.0.0")
 	{
 		string projectRoot = Path.Combine(repositoryRoot, "WalletWasabi");
 		string generatedRoot = Path.Combine(projectRoot, "obj");
@@ -9066,7 +9193,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 			json.Append(JsonSerializer.Serialize(orderedPackageRoots[index]));
 			json.Append(":{}");
 		}
-		json.Append("},\"project\":{\"version\":\"1.0.0\",\"restore\":{");
+		json.Append("},\"project\":{\"version\":");
+		json.Append(JsonSerializer.Serialize(projectVersion));
+		json.Append(",\"restore\":{");
 		json.Append("\"projectUniqueName\":");
 		json.Append(JsonSerializer.Serialize(projectPath));
 		json.Append(",\"projectName\":\"WalletWasabi\",\"projectPath\":");
@@ -9244,7 +9373,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string projectAssetsFile,
 		string repositoryRoot,
 		string dotnetRoot,
-		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		string? expectedPinnedNixProjectVersion = null)
 	{
 		string generatedRoot = Path.GetDirectoryName(projectAssetsFile)!;
 		string packagesLockFile = Path.Combine(repositoryRoot, "WalletWasabi/packages.lock.json");
@@ -9256,7 +9386,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 			ExpectedTargetFramework,
 			repositoryRoot,
 			dotnetRoot,
-			packageAuthority) + "|" +
+			packageAuthority,
+			expectedPinnedNixProjectVersion) + "|" +
 			GetBuildAuthorityFileSha256(
 				Path.Combine(generatedRoot, "WalletWasabi.csproj.nuget.g.props"),
 				projectAssetsFile,
@@ -9264,7 +9395,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 				ExpectedTargetFramework,
 				repositoryRoot,
 				dotnetRoot,
-				packageAuthority) + "|" +
+				packageAuthority,
+				expectedPinnedNixProjectVersion) + "|" +
 			GetBuildAuthorityFileSha256(
 				Path.Combine(generatedRoot, "WalletWasabi.csproj.nuget.g.targets"),
 				projectAssetsFile,
@@ -9272,14 +9404,16 @@ public class LiquidOrdinaryWalletPlanWireTests
 				ExpectedTargetFramework,
 				repositoryRoot,
 				dotnetRoot,
-				packageAuthority);
+				packageAuthority,
+				expectedPinnedNixProjectVersion);
 	}
 
 	private static void AssertSemanticRestoreFixtureRejected(
 		string projectAssetsFile,
 		string repositoryRoot,
 		string dotnetRoot,
-		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		string? expectedPinnedNixProjectVersion = null)
 	{
 		bool rejected = false;
 		try
@@ -9288,7 +9422,8 @@ public class LiquidOrdinaryWalletPlanWireTests
 				projectAssetsFile,
 				repositoryRoot,
 				dotnetRoot,
-				packageAuthority);
+				packageAuthority,
+				expectedPinnedNixProjectVersion);
 		}
 		catch (Xunit.Sdk.XunitException)
 		{
@@ -9755,6 +9890,22 @@ public class LiquidOrdinaryWalletPlanWireTests
 		{
 			Assert.Equal(commitHash, pinnedNixVersion.Groups["sourceRevision"].Value);
 		}
+	}
+
+	private static string GetPinnedNixProjectAssetsVersion(
+		string informationalVersion,
+		string commitHash)
+	{
+		AssertPinnedNixInformationalVersionAuthority(
+			informationalVersion,
+			commitHash,
+			pinnedNixProfile: true);
+		int metadataSeparator = informationalVersion.IndexOf('+', StringComparison.Ordinal);
+		string projectVersion = metadataSeparator < 0
+			? informationalVersion
+			: informationalVersion[..metadataSeparator];
+		Assert.Matches("^2\\.0\\.0-[0-9]{8}-[0-9a-f]{40}$", projectVersion);
+		return projectVersion;
 	}
 
 	private static void AssertLoadedProductBuildIdentityAuthority(
