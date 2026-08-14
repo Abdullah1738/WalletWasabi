@@ -1774,15 +1774,6 @@ public class LiquidOrdinaryWalletPlanWireTests
 				usePinnedNixFallbackProfile: true);
 			string firstLock = Path.Combine(firstRepository, "WalletWasabi/packages.lock.json");
 			string secondLock = Path.Combine(secondRepository, "WalletWasabi/packages.lock.json");
-			string secondOfflineSource = Path.Combine(secondRoot, "source");
-			Directory.CreateDirectory(secondOfflineSource);
-			File.WriteAllText(
-				secondAssets,
-				File.ReadAllText(secondAssets).Replace(
-					JsonSerializer.Serialize("https://api.nuget.org/v3/index.json") + ":{}",
-					JsonSerializer.Serialize(secondOfflineSource) + ":{}",
-					StringComparison.Ordinal),
-				Encoding.UTF8);
 			(string PrimaryRoot, string[] OrderedRoots) firstAuthority = GetPinnedPackageAuthority(firstAssets);
 			(string PrimaryRoot, string[] OrderedRoots) secondAuthority = GetPinnedPackageAuthority(secondAssets);
 			string firstManifest = BuildSemanticRestoreFixtureManifest(
@@ -1796,6 +1787,81 @@ public class LiquidOrdinaryWalletPlanWireTests
 				secondDotnet,
 				secondAuthority);
 			Assert.Equal(firstManifest, secondManifest);
+			string canonicalFirstAssets = File.ReadAllText(firstAssets);
+			string canonicalSecondAssets = File.ReadAllText(secondAssets);
+			string secondLibraryPacksSource = Path.Combine(secondDotnet, "library-packs");
+			string serializedPrimarySource = JsonSerializer.Serialize(secondPrimary);
+			string serializedLibraryPacksSource = JsonSerializer.Serialize(secondLibraryPacksSource);
+			string primarySourceEntry = $"{serializedPrimarySource}:{{}}";
+			string libraryPacksEntry = $"{serializedLibraryPacksSource}:{{}}";
+			string canonicalPinnedNixSources =
+				$"\"sources\":{{{primarySourceEntry},{libraryPacksEntry}}}";
+			Assert.Contains(canonicalPinnedNixSources, canonicalSecondAssets, StringComparison.Ordinal);
+			string extraRestoreSource = Path.Combine(secondRoot, "unexpected-source");
+			string[] rejectedPinnedNixSources =
+			[
+				$"\"sources\":{{{primarySourceEntry}}}",
+				$"\"sources\":{{{libraryPacksEntry}}}",
+				$"\"sources\":{{{libraryPacksEntry},{primarySourceEntry}}}",
+				$"\"sources\":{{{primarySourceEntry},{libraryPacksEntry}," +
+					$"{JsonSerializer.Serialize(extraRestoreSource)}:{{}}}}",
+				$"\"sources\":{{{primarySourceEntry}," +
+					$"{JsonSerializer.Serialize(Path.Combine(secondDotnet, "Library-Packs"))}:{{}}}}",
+				$"\"sources\":{{{primarySourceEntry}," +
+					$"{JsonSerializer.Serialize(secondLibraryPacksSource + Path.DirectorySeparatorChar)}:{{}}}}",
+				$"\"sources\":{{{primarySourceEntry}," +
+					$"{JsonSerializer.Serialize(Path.Combine(secondDotnet, "sdk", "..", "library-packs"))}:{{}}}}",
+				$"\"sources\":{{{primarySourceEntry}," +
+					$"{JsonSerializer.Serialize(Path.Combine(secondDotnet, "library-packs-copy"))}:{{}}}}",
+				$"\"sources\":{{" +
+					$"{JsonSerializer.Serialize(Path.Combine(secondPrimary, "..", Path.GetFileName(secondPrimary)))}:{{}}," +
+					$"{libraryPacksEntry}}}",
+				$"\"sources\":{{{primarySourceEntry},{serializedLibraryPacksSource}:{{\"unexpected\":true}}}}",
+				$"\"sources\":{{{primarySourceEntry},{primarySourceEntry},{libraryPacksEntry}}}",
+				$"\"sources\":{{" +
+					$"{JsonSerializer.Serialize("https://api.nuget.org/v3/index.json")}:{{}},{libraryPacksEntry}}}",
+				$"\"sources\":{{{JsonSerializer.Serialize("https://api.nuget.org/v3/index.json")}:{{}}}}",
+			];
+			foreach (string rejectedSources in rejectedPinnedNixSources)
+			{
+				AssertPinnedNixRestoreSourcesRejected(
+					secondAssets,
+					canonicalSecondAssets,
+					canonicalPinnedNixSources,
+					rejectedSources,
+					secondRepository,
+					secondDotnet,
+					secondAuthority);
+			}
+			File.WriteAllText(secondAssets, canonicalSecondAssets, Encoding.UTF8);
+			const string NuGetSourceEntry = "\"https://api.nuget.org/v3/index.json\":{}";
+			Assert.Contains(NuGetSourceEntry, canonicalFirstAssets, StringComparison.Ordinal);
+			File.WriteAllText(
+				firstAssets,
+				canonicalFirstAssets.Replace(
+					NuGetSourceEntry,
+					$"{NuGetSourceEntry},{JsonSerializer.Serialize(Path.Combine(firstDotnet, "library-packs"))}:{{}}",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+			File.WriteAllText(
+				firstAssets,
+				canonicalFirstAssets.Replace(
+					$"\"sources\":{{{NuGetSourceEntry}}}",
+					$"\"sources\":{{{JsonSerializer.Serialize(firstPrimary)}:{{}}," +
+					$"{JsonSerializer.Serialize(Path.Combine(firstDotnet, "library-packs"))}:{{}}}}",
+					StringComparison.Ordinal),
+				Encoding.UTF8);
+			AssertSemanticRestoreFixtureRejected(
+				firstAssets,
+				firstRepository,
+				firstDotnet,
+				firstAuthority);
+			File.WriteAllText(firstAssets, canonicalFirstAssets, Encoding.UTF8);
 			string firstTransportManifest = BuildPackageTransportAuthorityManifest(firstLock, "net10.0");
 			string secondTransportManifest = BuildPackageTransportAuthorityManifest(secondLock, "net10.0");
 			Assert.Contains("PROFILE|CONTENT_HASHES_PRESENT\n", firstTransportManifest, StringComparison.Ordinal);
@@ -6187,7 +6253,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 					}
 					else if (StringComparer.Ordinal.Equals(childPath, "$.project.restore.sources"))
 					{
-						AssertProjectAssetsRestoreSources(property.Value, packageAuthority);
+						AssertProjectAssetsRestoreSources(
+							property.Value,
+							dotnetRoot,
+							packageAuthority,
+							lockedPackages);
 						manifest.Append(JsonSerializer.Serialize("{VALIDATED_RESTORE_SOURCE}"));
 					}
 					else if (StringComparer.Ordinal.Equals(childPath, "$.project.restore.restoreAuditProperties"))
@@ -6418,22 +6488,27 @@ public class LiquidOrdinaryWalletPlanWireTests
 
 	private static void AssertProjectAssetsRestoreSources(
 		JsonElement sources,
-		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		IReadOnlyDictionary<string, LockedPackageAuthority> lockedPackages)
 	{
 		Assert.Equal(JsonValueKind.Object, sources.ValueKind);
-		JsonProperty source = Assert.Single(sources.EnumerateObject());
-		Assert.Equal(JsonValueKind.Object, source.Value.ValueKind);
-		Assert.Empty(source.Value.EnumerateObject());
-		if (StringComparer.Ordinal.Equals(source.Name, "https://api.nuget.org/v3/index.json"))
+		bool pinnedNixProfile = lockedPackages.Values.All(package => package.ContentHash is null);
+		string expectedLibraryPacks = Path.Combine(dotnetRoot, "library-packs");
+		string[] expectedSources = pinnedNixProfile
+			? [packageAuthority.PrimaryRoot, expectedLibraryPacks]
+			: ["https://api.nuget.org/v3/index.json"];
+		AssertExactJsonProperties(sources, expectedSources);
+		foreach (JsonProperty source in sources.EnumerateObject())
 		{
-			return;
+			Assert.Equal(JsonValueKind.Object, source.Value.ValueKind);
+			Assert.Empty(source.Value.EnumerateObject());
 		}
-
-		string primaryParent = Directory.GetParent(packageAuthority.PrimaryRoot)?.FullName ??
-			throw new Xunit.Sdk.XunitException("The primary package root has no parent.");
-		string expectedOfflineSource = Path.GetFullPath(Path.Combine(primaryParent, "source"));
-		Assert.True(PackagePathComparer.Equals(Path.GetFullPath(source.Name), expectedOfflineSource));
-		AssertRegularAuthorityDirectory(expectedOfflineSource, "offline restore source");
+		if (pinnedNixProfile)
+		{
+			AssertRegularAuthorityDirectory(packageAuthority.PrimaryRoot, "pinned-Nix package restore source");
+			AssertRegularAuthorityDirectory(expectedLibraryPacks, "SDK library-packs restore source");
+		}
 	}
 
 	private static string NormalizeProjectAssetsString(
@@ -8547,7 +8622,21 @@ public class LiquidOrdinaryWalletPlanWireTests
 		json.Append(JsonSerializer.Serialize(Path.Combine(repositoryRoot, "NuGet.Config")));
 		json.Append(',');
 		json.Append(JsonSerializer.Serialize(Path.Combine(repositoryRoot, "home/.nuget/NuGet/NuGet.Config")));
-		json.Append("],\"originalTargetFrameworks\":[\"net10.0\"],\"sources\":{\"https://api.nuget.org/v3/index.json\":{}},");
+		json.Append("],\"originalTargetFrameworks\":[\"net10.0\"],\"sources\":{");
+		if (usePinnedNixFallbackProfile)
+		{
+			string libraryPacksSource = Path.Combine(dotnetRoot, "library-packs");
+			Directory.CreateDirectory(libraryPacksSource);
+			json.Append(JsonSerializer.Serialize(primaryPackageRoot));
+			json.Append(":{},");
+			json.Append(JsonSerializer.Serialize(libraryPacksSource));
+			json.Append(":{}");
+		}
+		else
+		{
+			json.Append("\"https://api.nuget.org/v3/index.json\":{}");
+		}
+		json.Append("},");
 		json.Append("\"restoreAuditProperties\":{\"enableAudit\":\"true\",\"auditLevel\":\"low\",\"auditMode\":\"all\",");
 		json.Append("\"suppressedAdvisories\":{\"https://github.com/advisories/GHSA-2m69-gcr7-jv3q\":null}},");
 		if (orderedPackageRoots.Length > 1)
@@ -8745,6 +8834,28 @@ public class LiquidOrdinaryWalletPlanWireTests
 			rejected = true;
 		}
 		Assert.True(rejected, "Invalid semantic restore authority was accepted.");
+	}
+
+	private static void AssertPinnedNixRestoreSourcesRejected(
+		string projectAssetsFile,
+		string canonicalProjectAssets,
+		string canonicalSources,
+		string mutatedSources,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
+	{
+		string mutatedProjectAssets = canonicalProjectAssets.Replace(
+			canonicalSources,
+			mutatedSources,
+			StringComparison.Ordinal);
+		Assert.NotEqual(canonicalProjectAssets, mutatedProjectAssets);
+		File.WriteAllText(projectAssetsFile, mutatedProjectAssets, Encoding.UTF8);
+		AssertSemanticRestoreFixtureRejected(
+			projectAssetsFile,
+			repositoryRoot,
+			dotnetRoot,
+			packageAuthority);
 	}
 
 	private static void AssertPackageAuthorityRejected(string projectAssetsFile)
