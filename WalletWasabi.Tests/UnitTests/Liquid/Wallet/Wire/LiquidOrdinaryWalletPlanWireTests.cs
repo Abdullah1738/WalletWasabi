@@ -59,10 +59,10 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private const string ExpectedReleaseAmbientClosureSha256 = "190c3955f0e3a75fcf1497e92604b514ce93769c31d601e66c54862da397deee";
 	private const string ExpectedDebugGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
 	private const string ExpectedReleaseGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
-	private const string ExpectedMacOsArm64DebugImportClosureSha256 = "48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6";
-	private const string ExpectedMacOsArm64ReleaseImportClosureSha256 = "48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6";
-	private const string ExpectedLinuxX64DebugImportClosureSha256 = "PENDING-LINUX-X64-DEBUG-IMPORT-AUTHORITY";
-	private const string ExpectedLinuxX64ReleaseImportClosureSha256 = "aac51133d8c7c0fbb471660161e3cf56df09947222958e7096bb2770ce73fed3";
+	private static readonly (string MacOsArm64, string LinuxX64) ExpectedDebugImportClosureSha256 =
+		("48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6", "PENDING-LINUX-X64-DEBUG-IMPORT-AUTHORITY");
+	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseImportClosureSha256 =
+		("48a85d3060610c75a5c1b8af6897546192a3a0556c79650ec513119555916cf6", "aac51133d8c7c0fbb471660161e3cf56df09947222958e7096bb2770ce73fed3");
 	private const string ExpectedDebugReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
 	private const string ExpectedReleaseReferenceAuthoritySha256 = "c1e1aec3f78fd9d1004aea913de286096e88b7a46ab2d890bb2b29b01fa052df";
 	private const string ExpectedDebugCompilerInputAuthoritySha256 = "bfea856edbef7d0f63be9ff1793d652ae55b86be1eeb626989b1675145c0d4da";
@@ -1257,6 +1257,20 @@ public class LiquidOrdinaryWalletPlanWireTests
 				$"/reference:{fallbackPackageRoot}-undeclared/{relativePackageFile}",
 				multiRoot);
 			Assert.DoesNotContain("{NUGET}", adjacentRootLookalike, StringComparison.Ordinal);
+			string normalizedImportExpression = NormalizeAuthorityStringWithPackages(
+				$"$(ImportRoot)={buildAuthority.RepositoryRoot}/Directory.Build.props",
+				multiRoot,
+				("{REPO}", buildAuthority.RepositoryRoot),
+				("{DOTNET}", buildAuthority.DotnetRoot),
+				("{AUTHORITY}", nestedPackageRoot));
+			Assert.Equal("$(ImportRoot)={REPO}/Directory.Build.props", normalizedImportExpression);
+			string adjacentRepositoryLookalike = NormalizeAuthorityStringWithPackages(
+				$"$(ImportRoot)={buildAuthority.RepositoryRoot}-undeclared/Directory.Build.props",
+				multiRoot,
+				("{REPO}", buildAuthority.RepositoryRoot),
+				("{DOTNET}", buildAuthority.DotnetRoot),
+				("{AUTHORITY}", nestedPackageRoot));
+			Assert.DoesNotContain("{REPO}", adjacentRepositoryLookalike, StringComparison.Ordinal);
 
 			File.WriteAllBytes(fallbackPackageFile, [1, 2, 3, 5]);
 			AssertPackagePathRejected(
@@ -5044,7 +5058,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 		{
 			ProjectImportedEventArgs imported = imports[index];
 			string importedPath = imported.ImportedProjectFile ?? "";
-			string rowPrefix = $"IMPORT_EVENT|{index:D3}|IGNORED|{imported.ImportIgnored}|UNEXPANDED|{imported.UnexpandedProject}|" +
+			string unexpandedProject = NormalizeAuthorityStringWithPackages(
+				imported.UnexpandedProject ?? "",
+				packageAuthority,
+				("{REPO}", repositoryRoot),
+				("{DOTNET}", dotnetRoot),
+				("{AUTHORITY}", authorityRoot));
+			string rowPrefix = $"IMPORT_EVENT|{index:D3}|IGNORED|{imported.ImportIgnored}|UNEXPANDED|{unexpandedProject}|" +
 				$"SOURCE|{NormalizeOptionalAuthorityPath(imported.ProjectFile, repositoryRoot, dotnetRoot, packageAuthority)}|" +
 				$"LOCATION|{imported.LineNumber}:{imported.ColumnNumber}";
 			if (string.IsNullOrWhiteSpace(importedPath))
@@ -5465,25 +5485,15 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string toolchainManifest)
 	{
 #if DEBUG
-		string expectedImport = OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64
-			? ExpectedMacOsArm64DebugImportClosureSha256
-			: OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
-				? ExpectedLinuxX64DebugImportClosureSha256
-				: throw new Xunit.Sdk.XunitException(
-					$"Unsupported import authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
+		string expectedImport = GetExpectedImportClosureSha256(debug: true);
 		string expectedReferences = ExpectedDebugReferenceAuthoritySha256;
 		string expectedCompiler = ExpectedDebugCompilerInputAuthoritySha256;
 #else
-		string expectedImport = OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64
-			? ExpectedMacOsArm64ReleaseImportClosureSha256
-			: OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
-				? ExpectedLinuxX64ReleaseImportClosureSha256
-				: throw new Xunit.Sdk.XunitException(
-					$"Unsupported import authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
+		string expectedImport = GetExpectedImportClosureSha256(debug: false);
 		string expectedReferences = ExpectedReleaseReferenceAuthoritySha256;
 		string expectedCompiler = ExpectedReleaseCompilerInputAuthoritySha256;
 #endif
-		AssertExactSha256(expectedImport, importManifest);
+		AssertExactImportAuthoritySha256(expectedImport, importManifest);
 		AssertExactSha256(expectedReferences, referenceManifest);
 		AssertExactSha256(expectedCompiler, compilerManifest);
 		string expectedToolchain = OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64
@@ -9536,5 +9546,63 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string versionProperty = string.Join('.', numericComponents.Take(4));
 		Assert.True(Version.TryParse(versionProperty, out Version? parsedVersion));
 		return parsedVersion.ToString();
+	}
+
+	private static string GetExpectedImportClosureSha256(bool debug)
+	{
+		if (OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64)
+		{
+			return debug
+				? ExpectedDebugImportClosureSha256.MacOsArm64
+				: ExpectedReleaseImportClosureSha256.MacOsArm64;
+		}
+		if (OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64)
+		{
+			return debug
+				? ExpectedDebugImportClosureSha256.LinuxX64
+				: ExpectedReleaseImportClosureSha256.LinuxX64;
+		}
+		throw new Xunit.Sdk.XunitException(
+			$"Unsupported import authority platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
+	}
+
+	private static void AssertExactImportAuthoritySha256(string expectedSha256, string manifest)
+	{
+		string actualSha256 = Sha256Text(manifest);
+		if (StringComparer.Ordinal.Equals(expectedSha256, actualSha256))
+		{
+			return;
+		}
+
+		string[] rows = manifest.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+		var importRows = new StringBuilder();
+		var pinRows = new StringBuilder();
+		var diagnostics = new StringBuilder(actualSha256);
+		for (int index = 0; index < rows.Length; index++)
+		{
+			string row = rows[index];
+			if (row.StartsWith("IMPORT_EVENT|", StringComparison.Ordinal))
+			{
+				importRows.Append(row).Append('\n');
+			}
+			else if (row.StartsWith("PIN|", StringComparison.Ordinal))
+			{
+				pinRows.Append(row).Append('\n');
+			}
+			else
+			{
+				throw new Xunit.Sdk.XunitException($"Unknown import-authority row category at index {index}.");
+			}
+			diagnostics.Append("\nROW_SHA256|");
+			diagnostics.Append(index.ToString("D3", System.Globalization.CultureInfo.InvariantCulture));
+			diagnostics.Append('|');
+			diagnostics.Append(Sha256Text(row));
+		}
+		string[] sortedRows = rows.ToArray();
+		Array.Sort(sortedRows, StringComparer.Ordinal);
+		diagnostics.Append("\nIMPORT_ROWS_SHA256|").Append(Sha256Text(importRows.ToString()));
+		diagnostics.Append("\nPIN_ROWS_SHA256|").Append(Sha256Text(pinRows.ToString()));
+		diagnostics.Append("\nSORTED_ROWS_SHA256|").Append(Sha256Text(string.Join('\n', sortedRows) + "\n"));
+		throw new Xunit.Sdk.XunitException(diagnostics.ToString());
 	}
 }
