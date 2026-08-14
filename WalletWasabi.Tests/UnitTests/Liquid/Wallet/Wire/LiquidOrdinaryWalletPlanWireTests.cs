@@ -67,10 +67,23 @@ public class LiquidOrdinaryWalletPlanWireTests
 		("ef61142bc45c04415be4ee870ff4b4db9345dc8beb787c67ee67bc6c7d3d8fdb", "PENDING-LINUX-X64-DEBUG-REFERENCE-AUTHORITY-V2");
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseReferenceAuthoritySha256 =
 		("ef61142bc45c04415be4ee870ff4b4db9345dc8beb787c67ee67bc6c7d3d8fdb", "9e4db43c7921291756478b9a2fed358d8082a7d9ebaff84a6920dc51f71fead7");
-	private const string ExpectedDebugCompilerInputAuthoritySha256 = "bfea856edbef7d0f63be9ff1793d652ae55b86be1eeb626989b1675145c0d4da";
-	private const string ExpectedReleaseCompilerInputAuthoritySha256 = "8c6fb2e578c28bc89488be5e1b1cf638ea79c16554dd3b24def00d5bad2b8e99";
+	private const string ExpectedDebugCompilerInputAuthoritySha256 =
+		"PENDING-MACOS-ARM64-DEBUG-COMPILER-INPUT-AUTHORITY-V2";
+	private const string ExpectedReleaseCompilerInputAuthoritySha256 =
+		"PENDING-MACOS-ARM64-RELEASE-COMPILER-INPUT-AUTHORITY-V2";
 	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 = "37cc68f484c4bcf067132754644d2644cd6750016d2a4ba3eaba08f7fb80dbc1";
 	private const string ExpectedLinuxX64ToolchainDependencyAuthoritySha256 = "PENDING-LINUX-X64-TOOLCHAIN-AUTHORITY";
+	private static readonly string[] CompilerAuthoritySectionOrder =
+	[
+		"ARG", "SOURCE", "ANALYZER", "REFERENCE", "ADDITIONAL", "ANALYZERCONFIG", "EMBED",
+		"ANALYZER_DEP", "AUX", "DIAGNOSTIC_TASK", "DIAGNOSTIC_COMPILER", "DIAGNOSTIC_PARAMETER",
+		"CSC_START", "CSC_INPUT", "CSC_ARG",
+	];
+	private static readonly string[] CompilerAuxiliaryPrefixes =
+	[
+		"/ruleset:", "/appconfig:", "/keyfile:", "/win32icon:", "/win32res:",
+		"/win32manifest:", "/sourcelink:", "/resource:", "/linkresource:", "/addmodule:",
+	];
 	private const string IssuedAssetHex =
 		"2222222222222222222222222222222222222222222222222222222222222222";
 	private const string PublicKeyHex =
@@ -78,6 +91,142 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private const string FirstScriptHex = "00140102030405060708090a0b0c0d0e0f1011121314";
 	private const string SecondScriptHex = "001415161718191a1b1c1d1e1f202122232425262728";
 	private static readonly byte[] SourceEpoch = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+
+	[Fact]
+	public void CompilerAuthorityNormalizationRejectsReservedTokensAndCoversEveryAddModule()
+	{
+		string fixtureRoot = Path.Combine(
+			Path.GetTempPath(),
+			$"walletwasabi-wlpq-compiler-authority-{Guid.NewGuid():N}");
+		try
+		{
+			string repositoryRoot = Path.Combine(fixtureRoot, "repo");
+			string dotnetRoot = Path.Combine(fixtureRoot, "dotnet");
+			string packageRoot = Path.Combine(fixtureRoot, "packages");
+			string authorityRoot = Path.Combine(fixtureRoot, "authority");
+			string generatedRoot = Path.Combine(fixtureRoot, "generated");
+			string intermediateRoot = Path.Combine(fixtureRoot, "intermediate");
+			Directory.CreateDirectory(repositoryRoot);
+			Directory.CreateDirectory(dotnetRoot);
+			Directory.CreateDirectory(packageRoot);
+			Directory.CreateDirectory(authorityRoot);
+			Directory.CreateDirectory(generatedRoot);
+			Directory.CreateDirectory(intermediateRoot);
+			var packageAuthority = (PrimaryRoot: packageRoot, OrderedRoots: new[] { packageRoot });
+			foreach ((string token, string physicalRoot) in new[]
+			{
+				("{REPO}", repositoryRoot),
+				("{DOTNET}", dotnetRoot),
+				("{AUTHORITY}", authorityRoot),
+				("{NUGET}", packageRoot),
+			})
+			{
+				string expected = $"/reference:{token}/lib/Compiler.dll";
+				Assert.Equal(
+					expected,
+					NormalizeCompilerAuthorityStringWithPackages(
+						$"/reference:{Path.Combine(physicalRoot, "lib/Compiler.dll")}",
+						packageAuthority,
+						("{REPO}", repositoryRoot),
+						("{DOTNET}", dotnetRoot),
+						("{AUTHORITY}", authorityRoot)));
+				Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+					NormalizeCompilerAuthorityStringWithPackages(
+						expected,
+						packageAuthority,
+						("{REPO}", repositoryRoot),
+						("{DOTNET}", dotnetRoot),
+						("{AUTHORITY}", authorityRoot)));
+			}
+			foreach ((string token, string physicalRoot) in new[]
+			{
+				("{GENERATED}", generatedRoot),
+				("{INTERMEDIATE}", intermediateRoot),
+			})
+			{
+				string expected = $"Output={token}/Compiler.dll";
+				Assert.Equal(
+					expected,
+					NormalizeCompilerAuthorityString(
+						$"Output={Path.Combine(physicalRoot, "Compiler.dll")}",
+						("{GENERATED}", generatedRoot),
+						("{INTERMEDIATE}", intermediateRoot)));
+				Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+					NormalizeCompilerAuthorityString(
+						expected,
+						("{GENERATED}", generatedRoot),
+						("{INTERMEDIATE}", intermediateRoot)));
+			}
+			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+				NormalizeCompilerAuthorityString(
+					"TaskId:{TASK}",
+					("{DOTNET}", dotnetRoot)));
+			string backslashMetadata = NormalizeCompilerAuthorityStringWithPackages(
+				$"/resource:{Path.Combine(repositoryRoot, "resource.bin")},Logical\\Name",
+				packageAuthority,
+				("{REPO}", repositoryRoot));
+			string slashMetadata = NormalizeCompilerAuthorityStringWithPackages(
+				$"/resource:{Path.Combine(repositoryRoot, "resource.bin")},Logical/Name",
+				packageAuthority,
+				("{REPO}", repositoryRoot));
+			Assert.Equal("/resource:{REPO}/resource.bin,Logical\\Name", backslashMetadata);
+			Assert.Equal("/resource:{REPO}/resource.bin,Logical/Name", slashMetadata);
+			Assert.NotEqual(backslashMetadata, slashMetadata);
+
+			string moduleRoot = Path.Combine(repositoryRoot, "modules");
+			Directory.CreateDirectory(moduleRoot);
+			string firstModule = Path.Combine(moduleRoot, "first.netmodule");
+			string secondModule = Path.Combine(moduleRoot, "second.netmodule");
+			File.WriteAllBytes(firstModule, [1, 2, 3]);
+			File.WriteAllBytes(secondModule, [4, 5, 6]);
+			CompilerAuthorityEntry[] initialEntries = CreateCompilerAuxiliaryAuthorityEntries(
+				$"/addmodule:{firstModule},{secondModule}",
+				repositoryRoot,
+				repositoryRoot,
+				dotnetRoot,
+				packageAuthority,
+				authorityRoot,
+				new string('0', 40));
+			Assert.Equal(2, initialEntries.Length);
+			Assert.Equal("REPO|modules/first.netmodule", initialEntries[0].Detail);
+			Assert.Equal("REPO|modules/second.netmodule", initialEntries[1].Detail);
+			string[] initialRows = BuildSyntheticCompilerAuthorityRows(initialEntries);
+
+			File.WriteAllBytes(secondModule, [7, 8, 9]);
+			CompilerAuthorityEntry[] mutatedEntries = CreateCompilerAuxiliaryAuthorityEntries(
+				$"/addmodule:{firstModule},{secondModule}",
+				repositoryRoot,
+				repositoryRoot,
+				dotnetRoot,
+				packageAuthority,
+				authorityRoot,
+				new string('0', 40));
+			string[] mutatedRows = BuildSyntheticCompilerAuthorityRows(mutatedEntries);
+			Assert.Equal(initialRows[0], mutatedRows[0]);
+			Assert.NotEqual(initialRows[1], mutatedRows[1]);
+			Assert.NotEqual(
+				Sha256Text(string.Join('\n', initialRows) + "\n"),
+				Sha256Text(string.Join('\n', mutatedRows) + "\n"));
+
+			string resource = Path.Combine(moduleRoot, "resource,with-comma.bin");
+			File.WriteAllBytes(resource, [10, 11, 12]);
+			CompilerAuthorityEntry resourceEntry = Assert.Single(
+				CreateCompilerAuxiliaryAuthorityEntries(
+					$"/resource:\"{resource}\",LogicalName,public",
+					repositoryRoot,
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority,
+					authorityRoot,
+					new string('0', 40)));
+			Assert.Equal("/resource:", resourceEntry.Identity);
+			Assert.Equal("REPO|modules/resource,with-comma.bin", resourceEntry.Detail);
+		}
+		finally
+		{
+			Directory.Delete(fixtureRoot, recursive: true);
+		}
+	}
 
 	[Fact]
 	public void ErrorCodesAndMessagesAreFrozenAndPrivacyRedacted()
@@ -1196,6 +1345,61 @@ public class LiquidOrdinaryWalletPlanWireTests
 			mutatedReferenceManifest,
 			buildAuthority.CompilerInputAuthorityManifest,
 			buildAuthority.ToolchainAuthorityManifest);
+
+		const string HostileCompilerArgument = "/define:PIPE=left|right\nLINE=second";
+		string hostileCompilerArgumentRow = BuildCanonicalAuthorityManifestRow(
+			"COMPILER_INPUT_V2",
+			["0", "ARG", "0", HostileCompilerArgument, "", "", "", ""]);
+		Assert.DoesNotContain('\n', hostileCompilerArgumentRow);
+		Assert.Equal(
+			HostileCompilerArgument,
+			ParseCanonicalAuthorityManifestRow(hostileCompilerArgumentRow, "COMPILER_INPUT_V2", 8)[3]);
+		string hostileCompilerValues = JsonSerializer.Serialize(new[] { "left|right", "second\nline" });
+		string hostileCompilerInputRow = BuildCanonicalAuthorityManifestRow(
+			"COMPILER_INPUT_V2",
+			["0", "CSC_INPUT", "0", "Sources", "", "Compile", hostileCompilerValues, ""]);
+		string[] hostileCompilerInputFields = ParseCanonicalAuthorityManifestRow(
+			hostileCompilerInputRow,
+			"COMPILER_INPUT_V2",
+			8);
+		Assert.Equal(
+			new[] { "left|right", "second\nline" },
+			ParseCanonicalCompilerAuthorityValues(hostileCompilerInputFields[6]));
+
+		foreach (string canonicalCompilerMutation in new[]
+		{
+			CreateCompilerManifestWithoutFirstArgument(buildAuthority.CompilerInputAuthorityManifest),
+			CreateCompilerManifestWithDuplicatedFirstArgument(buildAuthority.CompilerInputAuthorityManifest),
+			CreateCompilerManifestWithSwappedFirstArguments(buildAuthority.CompilerInputAuthorityManifest),
+			CreateCompilerManifestWithMutatedFirstAuxiliarySha256(buildAuthority.CompilerInputAuthorityManifest),
+		})
+		{
+			Assert.NotEqual(buildAuthority.CompilerInputAuthorityManifest, canonicalCompilerMutation);
+			_ = AssertCanonicalCompilerInputAuthorityManifest(canonicalCompilerMutation);
+			AssertConfiguredAuthorityHashesRejects(
+				buildAuthority.ImportClosureManifest,
+				buildAuthority.ReferenceAuthorityManifest,
+				canonicalCompilerMutation,
+				buildAuthority.ToolchainAuthorityManifest);
+		}
+		foreach (string malformedCompilerMutation in new[]
+		{
+			buildAuthority.CompilerInputAuthorityManifest[..^1],
+			buildAuthority.CompilerInputAuthorityManifest + "\n",
+			buildAuthority.CompilerInputAuthorityManifest.Replace("\n", "\r\n", StringComparison.Ordinal),
+			CreateCompilerManifestWithV1Header(buildAuthority.CompilerInputAuthorityManifest),
+			CreateCompilerManifestWithNonCanonicalFirstRow(buildAuthority.CompilerInputAuthorityManifest),
+			CreateCompilerManifestWithSkippedGlobalIndex(buildAuthority.CompilerInputAuthorityManifest),
+			CreateCompilerManifestWithSkippedSectionIndex(buildAuthority.CompilerInputAuthorityManifest),
+			CreateCompilerManifestWithUnknownFirstSection(buildAuthority.CompilerInputAuthorityManifest),
+			CreateCompilerManifestWithExtraFirstField(buildAuthority.CompilerInputAuthorityManifest),
+			CreateCompilerManifestWithNumericFirstIndex(buildAuthority.CompilerInputAuthorityManifest),
+			CreateCompilerManifestWithInvalidAuxiliaryPrefix(buildAuthority.CompilerInputAuthorityManifest),
+		})
+		{
+			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+				AssertCanonicalCompilerInputAuthorityManifest(malformedCompilerMutation));
+		}
 		string mutatedToolchainManifest =
 			buildAuthority.ToolchainAuthorityManifest + "TOOL|injected|" + new string('0', 64) + "\n";
 		Assert.NotEqual(buildAuthority.ToolchainAuthorityManifest, mutatedToolchainManifest);
@@ -1714,14 +1918,14 @@ public class LiquidOrdinaryWalletPlanWireTests
 			"BeforeTargets=\"CoreCompile\"",
 			buildAuthority.InjectedAnalyzerTargetContent,
 			StringComparison.Ordinal);
-		Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
-			AssertConfiguredAuthorityHashes(
-				buildAuthority.ImportClosureManifest,
-				buildAuthority.ReferenceAuthorityManifest,
-				buildAuthority.CompilerInputAuthorityManifest +
-					"CSC_INPUT|INJECTED|Analyzers|/wlpq/injected-analyzer.dll\n" +
-					"CSC_ARG|INJECTED|/analyzer:/wlpq/injected-analyzer.dll\n",
-				buildAuthority.ToolchainAuthorityManifest));
+		string injectedAnalyzerCompilerManifest = CreateCompilerManifestWithInjectedAnalyzerArguments(
+			buildAuthority.CompilerInputAuthorityManifest);
+		_ = AssertCanonicalCompilerInputAuthorityManifest(injectedAnalyzerCompilerManifest);
+		AssertConfiguredAuthorityHashesRejects(
+			buildAuthority.ImportClosureManifest,
+			buildAuthority.ReferenceAuthorityManifest,
+			injectedAnalyzerCompilerManifest,
+			buildAuthority.ToolchainAuthorityManifest);
 		Assert.Contains(
 			"<Analyzer Include=\"/wlpq/injected-analyzer.dll\" />",
 			buildAuthority.InjectedAnalyzerTargetContent,
@@ -1895,6 +2099,20 @@ public class LiquidOrdinaryWalletPlanWireTests
 				"1.2.3.4-prefix-1.2.3.4",
 				"1.2.3.4",
 				"{ASSEMBLY_VERSION}"));
+		foreach (string replacement in new[]
+		{
+			"{FILE_VERSION}",
+			"{INFORMATIONAL_VERSION}",
+			"{ASSEMBLY_VERSION}",
+			"{COMMIT_HASH}",
+		})
+		{
+			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+				ReplaceExactGeneratedAssemblyIdentity(
+					$"prefix-{replacement}-1.2.3.4",
+					"1.2.3.4",
+					replacement));
+		}
 		Assert.True(IsValidGitReferenceName("refs/heads/release-é@candidate"));
 		Assert.False(IsValidGitReferenceName("refs/heads/../escape"));
 		Assert.False(IsValidGitReferenceName("refs/heads/control\u0001name"));
@@ -1953,6 +2171,18 @@ public class LiquidOrdinaryWalletPlanWireTests
 				reservedSourceLinkTokenRejected = true;
 			}
 			Assert.True(reservedSourceLinkTokenRejected, "A reserved SourceLink authority token was accepted as raw input.");
+			File.WriteAllText(
+				sourceLinkFixture,
+				$"{{\"documents\":{{{JsonSerializer.Serialize(sourcePattern)}:" +
+				$"{JsonSerializer.Serialize($"https://raw.githubusercontent.com/Abdullah1738/WalletWasabi/{{COMMIT_HASH}}/{currentRevision}/*")}}}}}",
+				Encoding.UTF8);
+			Assert.ThrowsAny<Xunit.Sdk.XunitException>(() =>
+				GetCompilerAuxiliaryInputAuthoritySha256(
+					"/sourcelink:",
+					sourceLinkFixture,
+					firstRepository,
+					firstRoot,
+					currentRevision));
 
 			const string SystemEventsIdentity = "Microsoft.Win32.SystemEvents/10.0.2";
 			const string SqliteIdentity = "SQLitePCLRaw.lib.e_sqlite3/2.1.11";
@@ -4569,12 +4799,19 @@ public class LiquidOrdinaryWalletPlanWireTests
 		IReadOnlyDictionary<string, string> Metadata);
 
 	private sealed record GeneratedBuildFile(string RelativePath, string Source, string Sha256);
+	private sealed record CompilerAuthorityEntry(
+		string Section,
+		string Identity,
+		string Detail,
+		string Qualifier,
+		string Values,
+		string Sha256);
 	private sealed record BinaryBuildTrace(
 		string[] CommandLineArgs,
 		IReadOnlyDictionary<string, string[]> TaskInputs,
 		string[] ImportedProjects,
 		string ImportManifest,
-		string CscManifest);
+		CompilerAuthorityEntry[] CscAuthorityEntries);
 	private readonly record struct BuildContextKey(
 		int NodeId,
 		int ProjectContextId,
@@ -4896,7 +5133,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 			Assert.True(File.Exists(binaryLog), "The single Rebuild did not produce its binary evaluation trace.");
 			Assert.True(new FileInfo(binaryLog).Length > 0, "The binary evaluation trace is empty.");
 			Assert.True(File.Exists(diagnosticLog), "The single Rebuild did not produce its diagnostic trace.");
-			string diagnosticCscManifest = AssertCscDiagnosticAuthority(
+			CompilerAuthorityEntry[] diagnosticCscAuthorityEntries = AssertCscDiagnosticAuthority(
 				File.ReadAllText(diagnosticLog),
 				dotnetRoot,
 				generatedRoot,
@@ -4914,7 +5151,6 @@ public class LiquidOrdinaryWalletPlanWireTests
 			AssertCscTaskInputsMatchArguments(binaryTrace, evaluatedProjectRoot);
 			string[] importedProjects = binaryTrace.ImportedProjects;
 			string importClosureManifest = binaryTrace.ImportManifest;
-			string cscTraceManifest = diagnosticCscManifest + binaryTrace.CscManifest;
 			string referenceAuthorityManifest = BuildReferenceAuthorityManifest(
 				referencePaths,
 				repositoryRoot,
@@ -4933,8 +5169,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 				dotnetRoot,
 				packageAuthority,
 				authorityRoot,
-				buildIdentity.CommitHash);
-			compilerInputAuthorityManifest += cscTraceManifest;
+				buildIdentity.CommitHash,
+				diagnosticCscAuthorityEntries,
+				binaryTrace.CscAuthorityEntries);
 			string toolchainAuthorityManifest =
 				BuildToolchainAuthorityManifest(dotnetHost, dotnetRoot) +
 				BuildPackageTransportAuthorityManifest(
@@ -5292,7 +5529,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 			? path[8..]
 			: path;
 
-	private static string AssertCscDiagnosticAuthority(
+	private static CompilerAuthorityEntry[] AssertCscDiagnosticAuthority(
 		string diagnostic,
 		string dotnetRoot,
 		string generatedRoot,
@@ -5331,14 +5568,26 @@ public class LiquidOrdinaryWalletPlanWireTests
 		Assert.Single(diagnostic.Split('\n'), line =>
 			line.TrimStart().StartsWith(csc + " /noconfig ", StringComparison.Ordinal) &&
 			line.Contains($"(TaskId:{taskId})", StringComparison.Ordinal));
-		return ($"TASK|{NormalizeRelativePath(Path.GetRelativePath(dotnetRoot, taskAssembly))}|{Sha256File(taskAssembly)}\n" +
-			$"COMPILER|{NormalizeRelativePath(Path.GetRelativePath(dotnetRoot, csc))}|{Sha256File(csc)}\n" +
-			string.Join('\n', requiredParameters.Select(parameter => NormalizeAuthorityString(
+		var entries = new List<CompilerAuthorityEntry>
+		{
+			CreateCompilerAuthorityEntry(
+				"DIAGNOSTIC_TASK",
+				"DOTNET|" + NormalizeRelativePath(Path.GetRelativePath(dotnetRoot, taskAssembly)),
+				sha256: Sha256File(taskAssembly)),
+			CreateCompilerAuthorityEntry(
+				"DIAGNOSTIC_COMPILER",
+				"DOTNET|" + NormalizeRelativePath(Path.GetRelativePath(dotnetRoot, csc)),
+				sha256: Sha256File(csc)),
+		};
+		entries.AddRange(requiredParameters.Select(parameter => CreateCompilerAuthorityEntry(
+			"DIAGNOSTIC_PARAMETER",
+			NormalizeCompilerAuthorityString(
 				parameter,
 				("{DOTNET}", dotnetRoot),
 				("{GENERATED}", generatedRoot),
-				("{INTERMEDIATE}", intermediateOutputPath)))) + "\n")
-			.Replace($"TaskId:{taskId}", "TaskId:{TASK}", StringComparison.Ordinal);
+				("{INTERMEDIATE}", intermediateOutputPath))
+				.Replace($"TaskId:{taskId}", "TaskId:{TASK}", StringComparison.Ordinal))));
+		return entries.ToArray();
 	}
 
 	private static BinaryBuildTrace ReadAndAssertBinaryBuildTrace(
@@ -5521,34 +5770,51 @@ public class LiquidOrdinaryWalletPlanWireTests
 						expectedPinnedNixProjectVersion),
 				]));
 		}
-		string[] cscInputRows = inputs
+		CompilerAuthorityEntry[] cscInputEntries = inputs
 			.OrderBy(input => input.ParameterName ?? "", StringComparer.Ordinal)
 			.ThenBy(input => input.PropertyName ?? "", StringComparer.Ordinal)
 			.ThenBy(input => input.ItemType ?? "", StringComparer.Ordinal)
-			.Select((input, index) =>
-			$"CSC_INPUT|{index:D3}|{input.ParameterName}|{input.PropertyName}|{input.ItemType}|" +
-			string.Join('|', input.Items.Cast<object>().Select(item => NormalizeAuthorityStringWithPackages(
-				GetBuildItemSpec(item),
-				packageAuthority,
-				("{REPO}", repositoryRoot),
-				("{DOTNET}", dotnetRoot),
-				("{AUTHORITY}", authorityRoot))))).ToArray();
-		string[] cscArgumentRows = orderedArgs.Select((argument, index) =>
-			$"CSC_ARG|{index:D4}|" + NormalizeAuthorityStringWithPackages(
-				argument,
-				packageAuthority,
-				("{REPO}", repositoryRoot),
-				("{DOTNET}", dotnetRoot),
-				("{AUTHORITY}", authorityRoot))).ToArray();
-		string cscManifest = $"CSC_START|{NormalizeAuthorityPath(cscStart.TaskAssemblyLocation, repositoryRoot, dotnetRoot, packageAuthority)}|" +
-			$"{Sha256File(cscStart.TaskAssemblyLocation)}\n" + string.Join('\n', cscInputRows) + "\n" +
-			string.Join('\n', cscArgumentRows) + "\n";
+			.Select(input => CreateCompilerAuthorityEntry(
+				"CSC_INPUT",
+				input.ParameterName ?? "",
+				detail: input.PropertyName ?? "",
+				qualifier: input.ItemType ?? "",
+				values: JsonSerializer.Serialize(input.Items.Cast<object>().Select(item =>
+					NormalizeCompilerAuthorityStringWithPackages(
+						GetBuildItemSpec(item),
+						packageAuthority,
+						("{REPO}", repositoryRoot),
+						("{DOTNET}", dotnetRoot),
+						("{AUTHORITY}", authorityRoot))).ToArray())))
+			.ToArray();
+		CompilerAuthorityEntry[] cscArgumentEntries = orderedArgs.Select(argument =>
+			CreateCompilerAuthorityEntry(
+				"CSC_ARG",
+				NormalizeCompilerAuthorityStringWithPackages(
+					argument,
+					packageAuthority,
+					("{REPO}", repositoryRoot),
+					("{DOTNET}", dotnetRoot),
+					("{AUTHORITY}", authorityRoot)))).ToArray();
+		var cscAuthorityEntries = new List<CompilerAuthorityEntry>
+		{
+			CreateCompilerAuthorityEntry(
+				"CSC_START",
+				NormalizeAuthorityPath(
+					cscStart.TaskAssemblyLocation,
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority),
+				sha256: Sha256File(cscStart.TaskAssemblyLocation)),
+		};
+		cscAuthorityEntries.AddRange(cscInputEntries);
+		cscAuthorityEntries.AddRange(cscArgumentEntries);
 		return new BinaryBuildTrace(
 			orderedArgs,
 			taskInputs,
 			paths.ToArray(),
 			"IMPORT_AUTHORITY_V2\n" + string.Join('\n', rows) + "\n",
-			cscManifest);
+			cscAuthorityEntries.ToArray());
 	}
 
 	private static string GetBuildItemSpec(object item)
@@ -5651,10 +5917,18 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string dotnetRoot,
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
 		string authorityRoot,
-		string commitHash)
+		string commitHash,
+		CompilerAuthorityEntry[] diagnosticCscAuthorityEntries,
+		CompilerAuthorityEntry[] binaryCscAuthorityEntries)
 	{
-		var rows = arguments.Select((argument, index) =>
-			$"ARG|{index:D4}|{NormalizeAuthorityStringWithPackages(argument, packageAuthority, ("{REPO}", repositoryRoot), ("{DOTNET}", dotnetRoot), ("{AUTHORITY}", authorityRoot))}")
+		var entries = arguments.Select(argument => CreateCompilerAuthorityEntry(
+			"ARG",
+			NormalizeCompilerAuthorityStringWithPackages(
+				argument,
+				packageAuthority,
+				("{REPO}", repositoryRoot),
+				("{DOTNET}", dotnetRoot),
+				("{AUTHORITY}", authorityRoot))))
 			.ToList();
 		foreach ((string category, EvaluatedBuildItem[] items) in new[]
 		{
@@ -5666,9 +5940,15 @@ public class LiquidOrdinaryWalletPlanWireTests
 			("EMBED", embeddedFiles),
 		})
 		{
-			rows.AddRange(items.Select((item, index) =>
-				$"{category}|{index:D4}|{NormalizeAuthorityPath(item.FullPath, repositoryRoot, dotnetRoot, packageAuthority, authorityRoot)}|" +
-				GetCompilerInputAuthoritySha256(item.FullPath, authorityRoot, commitHash)));
+			entries.AddRange(items.Select(item => CreateCompilerAuthorityEntry(
+				category,
+				NormalizeAuthorityPath(
+					item.FullPath,
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority,
+					authorityRoot),
+				sha256: GetCompilerInputAuthoritySha256(item.FullPath, authorityRoot, commitHash))));
 		}
 
 		foreach (string analyzerDirectory in analyzers
@@ -5676,30 +5956,293 @@ public class LiquidOrdinaryWalletPlanWireTests
 			.Distinct(StringComparer.Ordinal)
 			.Order(StringComparer.Ordinal))
 		{
-			rows.AddRange(Directory.EnumerateFiles(analyzerDirectory, "*.dll", SearchOption.TopDirectoryOnly)
+			entries.AddRange(Directory.EnumerateFiles(analyzerDirectory, "*.dll", SearchOption.TopDirectoryOnly)
 				.Order(StringComparer.Ordinal)
-				.Select(path => $"ANALYZER_DEP|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority)}|{Sha256File(path)}"));
+				.Select(path => CreateCompilerAuthorityEntry(
+					"ANALYZER_DEP",
+					NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority),
+					sha256: Sha256File(path))));
 		}
 
-		string[] auxiliaryPrefixes =
-		[
-			"/ruleset:", "/appconfig:", "/keyfile:", "/win32icon:", "/win32res:",
-			"/win32manifest:", "/sourcelink:", "/resource:", "/linkresource:", "/addmodule:",
-		];
 		foreach (string argument in arguments)
 		{
-			string? prefix = auxiliaryPrefixes.FirstOrDefault(candidate => argument.StartsWith(candidate, StringComparison.Ordinal));
-			if (prefix is null)
+			entries.AddRange(CreateCompilerAuxiliaryAuthorityEntries(
+				argument,
+				projectRoot,
+				repositoryRoot,
+				dotnetRoot,
+				packageAuthority,
+				authorityRoot,
+				commitHash));
+		}
+		entries.AddRange(diagnosticCscAuthorityEntries);
+		entries.AddRange(binaryCscAuthorityEntries);
+		return BuildCanonicalCompilerInputAuthorityManifest(entries);
+	}
+
+	private static CompilerAuthorityEntry CreateCompilerAuthorityEntry(
+		string section,
+		string identity,
+		string detail = "",
+		string qualifier = "",
+		string values = "",
+		string sha256 = "") =>
+		new(section, identity, detail, qualifier, values, sha256);
+
+	private static CompilerAuthorityEntry[] CreateCompilerAuxiliaryAuthorityEntries(
+		string argument,
+		string projectRoot,
+		string repositoryRoot,
+		string dotnetRoot,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		string authorityRoot,
+		string commitHash)
+	{
+		string? prefix = CompilerAuxiliaryPrefixes.FirstOrDefault(candidate =>
+			argument.StartsWith(candidate, StringComparison.Ordinal));
+		if (prefix is null)
+		{
+			return [];
+		}
+		AssertNoReservedCompilerAuthorityTokens(argument);
+		string[] values = SplitCompilerAuxiliaryArgumentValues(
+			argument[prefix.Length..],
+			includeEveryValue: StringComparer.Ordinal.Equals(prefix, "/addmodule:"));
+		return values.Select(value =>
+		{
+			string unquotedValue = value.Trim().Trim('"');
+			Assert.False(string.IsNullOrEmpty(unquotedValue));
+			string path = Path.GetFullPath(
+				Path.IsPathRooted(unquotedValue)
+					? unquotedValue
+					: Path.Combine(projectRoot, unquotedValue));
+			Assert.True(File.Exists(path), $"Compiler auxiliary input is absent: {path}");
+			return CreateCompilerAuthorityEntry(
+				"AUX",
+				prefix,
+				detail: NormalizeAuthorityPath(
+					path,
+					repositoryRoot,
+					dotnetRoot,
+					packageAuthority,
+					authorityRoot),
+				sha256: GetCompilerAuxiliaryInputAuthoritySha256(
+					prefix,
+					path,
+					repositoryRoot,
+					authorityRoot,
+					commitHash));
+		}).ToArray();
+	}
+
+	private static string[] SplitCompilerAuxiliaryArgumentValues(
+		string value,
+		bool includeEveryValue)
+	{
+		var result = new List<string>();
+		int start = 0;
+		bool quoted = false;
+		for (int index = 0; index < value.Length; index++)
+		{
+			if (value[index] == '"')
+			{
+				quoted = !quoted;
+				continue;
+			}
+			if (value[index] != ',' || quoted)
 			{
 				continue;
 			}
-			string value = argument[prefix.Length..].Trim('"').Split(',')[0];
-			string path = Path.GetFullPath(Path.IsPathRooted(value) ? value : Path.Combine(projectRoot, value));
-			Assert.True(File.Exists(path), $"Compiler auxiliary input is absent: {path}");
-			rows.Add($"AUX|{prefix}|{NormalizeAuthorityPath(path, repositoryRoot, dotnetRoot, packageAuthority, authorityRoot)}|" +
-				GetCompilerAuxiliaryInputAuthoritySha256(prefix, path, repositoryRoot, authorityRoot, commitHash));
+			result.Add(value[start..index]);
+			if (!includeEveryValue)
+			{
+				return result.ToArray();
+			}
+			start = index + 1;
 		}
-		return string.Join('\n', rows) + "\n";
+		Assert.False(quoted, "Compiler auxiliary input has an unterminated quote.");
+		result.Add(value[start..]);
+		return result.ToArray();
+	}
+
+	private static string[] BuildSyntheticCompilerAuthorityRows(
+		IReadOnlyList<CompilerAuthorityEntry> entries) =>
+		entries.Select((entry, index) => BuildCanonicalAuthorityManifestRow(
+			"COMPILER_INPUT_V2",
+			[
+				index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+				entry.Section,
+				index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+				entry.Identity,
+				entry.Detail,
+				entry.Qualifier,
+				entry.Values,
+				entry.Sha256,
+			])).ToArray();
+
+	private static string BuildCanonicalCompilerInputAuthorityManifest(
+		IReadOnlyList<CompilerAuthorityEntry> entries)
+	{
+		Assert.NotEmpty(entries);
+		var sectionIndexes = new Dictionary<string, int>(StringComparer.Ordinal);
+		string[] rows = entries.Select((entry, globalIndex) =>
+		{
+			int sectionIndex = sectionIndexes.GetValueOrDefault(entry.Section);
+			sectionIndexes[entry.Section] = sectionIndex + 1;
+			return BuildCanonicalAuthorityManifestRow(
+				"COMPILER_INPUT_V2",
+				[
+					globalIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+					entry.Section,
+					sectionIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+					entry.Identity,
+					entry.Detail,
+					entry.Qualifier,
+					entry.Values,
+					entry.Sha256,
+				]);
+		}).ToArray();
+		string manifest = "COMPILER_INPUT_AUTHORITY_V2\n" + string.Join('\n', rows) + "\n";
+		_ = AssertCanonicalCompilerInputAuthorityManifest(manifest);
+		return manifest;
+	}
+
+	private static string[] AssertCanonicalCompilerInputAuthorityManifest(string manifest)
+	{
+		Assert.DoesNotContain('\r', manifest);
+		Assert.True(manifest.EndsWith('\n'));
+		string[] lines = manifest.Split('\n', StringSplitOptions.None);
+		Assert.True(lines.Length >= 3);
+		Assert.Equal("", lines[^1]);
+		Assert.Equal("COMPILER_INPUT_AUTHORITY_V2", lines[0]);
+		var rows = new string[lines.Length - 2];
+		var sectionCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+		int priorSectionOrdinal = -1;
+		for (int lineIndex = 1; lineIndex < lines.Length - 1; lineIndex++)
+		{
+			string row = lines[lineIndex];
+			Assert.False(string.IsNullOrEmpty(row));
+			rows[lineIndex - 1] = row;
+			string[] fields = ParseCanonicalAuthorityManifestRow(row, "COMPILER_INPUT_V2", 8);
+			Assert.Equal(
+				(lineIndex - 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+				fields[0]);
+			int sectionOrdinal = Array.IndexOf(CompilerAuthoritySectionOrder, fields[1]);
+			Assert.True(sectionOrdinal >= 0, "Unknown compiler authority section.");
+			Assert.True(
+				sectionOrdinal >= priorSectionOrdinal,
+				$"Compiler authority section is out of order: {fields[1]}");
+			priorSectionOrdinal = sectionOrdinal;
+			int expectedSectionIndex = sectionCounts.GetValueOrDefault(fields[1]);
+			Assert.Equal(
+				expectedSectionIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+				fields[2]);
+			sectionCounts[fields[1]] = expectedSectionIndex + 1;
+			AssertCanonicalCompilerAuthorityEntry(fields);
+		}
+
+		Assert.True(sectionCounts.GetValueOrDefault("ARG") > 0);
+		Assert.True(sectionCounts.GetValueOrDefault("SOURCE") > 0);
+		Assert.True(sectionCounts.GetValueOrDefault("ANALYZER") > 0);
+		Assert.True(sectionCounts.GetValueOrDefault("REFERENCE") > 0);
+		Assert.True(sectionCounts.GetValueOrDefault("ANALYZER_DEP") > 0);
+		Assert.True(sectionCounts.GetValueOrDefault("AUX") > 0);
+		Assert.Equal(1, sectionCounts.GetValueOrDefault("DIAGNOSTIC_TASK"));
+		Assert.Equal(1, sectionCounts.GetValueOrDefault("DIAGNOSTIC_COMPILER"));
+		Assert.Equal(7, sectionCounts.GetValueOrDefault("DIAGNOSTIC_PARAMETER"));
+		Assert.Equal(1, sectionCounts.GetValueOrDefault("CSC_START"));
+		Assert.True(sectionCounts.GetValueOrDefault("CSC_INPUT") > 0);
+		Assert.True(sectionCounts.GetValueOrDefault("CSC_ARG") > 0);
+		return rows;
+	}
+
+	private static void AssertCanonicalCompilerAuthorityEntry(string[] fields)
+	{
+		string section = fields[1];
+		string identity = fields[3];
+		string detail = fields[4];
+		string qualifier = fields[5];
+		string values = fields[6];
+		string sha256 = fields[7];
+		switch (section)
+		{
+			case "ARG":
+			case "DIAGNOSTIC_PARAMETER":
+			case "CSC_ARG":
+				Assert.False(string.IsNullOrEmpty(identity));
+				Assert.Equal("", detail);
+				Assert.Equal("", qualifier);
+				Assert.Equal("", values);
+				Assert.Equal("", sha256);
+				break;
+			case "SOURCE":
+			case "ANALYZER":
+			case "REFERENCE":
+			case "ADDITIONAL":
+			case "ANALYZERCONFIG":
+			case "EMBED":
+			case "ANALYZER_DEP":
+			case "DIAGNOSTIC_TASK":
+			case "DIAGNOSTIC_COMPILER":
+			case "CSC_START":
+				AssertCanonicalCompilerAuthorityPath(identity);
+				Assert.Equal("", detail);
+				Assert.Equal("", qualifier);
+				Assert.Equal("", values);
+				Assert.Matches("^[0-9a-f]{64}$", sha256);
+				break;
+			case "AUX":
+				Assert.Contains(identity, CompilerAuxiliaryPrefixes);
+				AssertCanonicalCompilerAuthorityPath(detail);
+				Assert.Equal("", qualifier);
+				Assert.Equal("", values);
+				Assert.Matches("^[0-9a-f]{64}$", sha256);
+				break;
+			case "CSC_INPUT":
+				Assert.True(
+					!string.IsNullOrEmpty(identity) ||
+					!string.IsNullOrEmpty(detail) ||
+					!string.IsNullOrEmpty(qualifier));
+				_ = ParseCanonicalCompilerAuthorityValues(values);
+				Assert.Equal("", sha256);
+				break;
+			default:
+				throw new Xunit.Sdk.XunitException("Unknown compiler authority section.");
+		}
+	}
+
+	private static void AssertCanonicalCompilerAuthorityPath(string value)
+	{
+		Assert.True(
+			value.StartsWith("REPO|", StringComparison.Ordinal) ||
+			value.StartsWith("DOTNET|", StringComparison.Ordinal) ||
+			value.StartsWith("NUGET|", StringComparison.Ordinal) ||
+			value.StartsWith("AUTHORITY|", StringComparison.Ordinal));
+		int delimiter = value.IndexOf('|');
+		Assert.True(delimiter > 0 && delimiter < value.Length - 1);
+		AssertSafePackageRelativePath(value[(delimiter + 1)..]);
+	}
+
+	private static string[] ParseCanonicalCompilerAuthorityValues(string value)
+	{
+		using JsonDocument document = JsonDocument.Parse(
+			value,
+			new JsonDocumentOptions
+			{
+				AllowTrailingCommas = false,
+				CommentHandling = JsonCommentHandling.Disallow,
+				MaxDepth = 4,
+			});
+		Assert.Equal(JsonValueKind.Array, document.RootElement.ValueKind);
+		var result = new string[document.RootElement.GetArrayLength()];
+		for (int index = 0; index < result.Length; index++)
+		{
+			JsonElement item = document.RootElement[index];
+			Assert.Equal(JsonValueKind.String, item.ValueKind);
+			result[index] = Assert.IsType<string>(item.GetString());
+		}
+		Assert.Equal(value, JsonSerializer.Serialize(result));
+		return result;
 	}
 
 	private static string GetCompilerAuxiliaryInputAuthoritySha256(
@@ -5735,6 +6278,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 			("{AUTHORITY}", authorityRoot));
 		Assert.Equal("{REPO}/*", normalizedSourcePattern);
 		string uriPattern = GetRequiredJsonString(mapping.Value, "SourceLink URI pattern");
+		AssertNoCanonicalAuthorityToken(uriPattern, "{COMMIT_HASH}");
 		string revisionSegment = $"/{commitHash}/";
 		Assert.Equal(2, uriPattern.Split(revisionSegment, StringSplitOptions.None).Length);
 		Assert.EndsWith("/*", uriPattern, StringComparison.Ordinal);
@@ -5793,6 +6337,15 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string expected,
 		string replacement)
 	{
+		string[] replacementTokens = new[]
+		{
+			"{FILE_VERSION}",
+			"{INFORMATIONAL_VERSION}",
+			"{ASSEMBLY_VERSION}",
+			"{COMMIT_HASH}",
+		}.Where(token => replacement.Contains(token, StringComparison.Ordinal)).ToArray();
+		Assert.NotEmpty(replacementTokens);
+		Assert.All(replacementTokens, token => AssertNoCanonicalAuthorityToken(source, token));
 		Assert.Equal(2, source.Split(expected, StringSplitOptions.None).Length);
 		return source.Replace(expected, replacement, StringComparison.Ordinal);
 	}
@@ -5913,7 +6466,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 #endif
 		AssertExactImportAuthoritySha256(expectedImport, importManifest);
 		AssertExactReferenceAuthoritySha256(expectedReferences, referenceManifest);
-		AssertExactSha256(expectedCompiler, compilerManifest);
+		AssertExactCompilerInputAuthoritySha256(expectedCompiler, compilerManifest);
 		string expectedToolchain = OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64
 			? ExpectedMacOsArm64ToolchainDependencyAuthoritySha256
 			: OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
@@ -5972,6 +6525,54 @@ public class LiquidOrdinaryWalletPlanWireTests
 			normalized = ReplaceAuthorityRoot(normalized, root, token);
 		}
 		return normalized;
+	}
+
+	private static string NormalizeCompilerAuthorityString(
+		string value,
+		params (string Token, string Root)[] roots)
+	{
+		AssertNoReservedCompilerAuthorityTokens(value, roots.Select(root => root.Token).ToArray());
+		return NormalizeCompilerAuthorityRoots(value, roots);
+	}
+
+	private static string NormalizeCompilerAuthorityRoots(
+		string value,
+		params (string Token, string Root)[] roots)
+	{
+		string normalized = value;
+		SortAuthorityRootsMostSpecific(roots);
+		foreach ((string token, string root) in roots)
+		{
+			normalized = ReplaceAuthorityRoot(normalized, root, token);
+		}
+		return normalized;
+	}
+
+	private static void AssertNoReservedCompilerAuthorityTokens(
+		string value,
+		params string[] rootTokens)
+	{
+		string[] reservedTokens =
+		[
+			"{REPO}", "{DOTNET}", "{AUTHORITY}", "{NUGET}",
+			"{GENERATED}", "{INTERMEDIATE}", "{TASK}",
+			"{FILE_VERSION}", "{INFORMATIONAL_VERSION}", "{ASSEMBLY_VERSION}", "{COMMIT_HASH}",
+			.. rootTokens,
+		];
+		foreach (string token in reservedTokens.Distinct(StringComparer.Ordinal))
+		{
+			AssertNoCanonicalAuthorityToken(value, token);
+		}
+	}
+
+	private static void AssertNoCanonicalAuthorityToken(string value, string token)
+	{
+		int tokenOffset = value.IndexOf(token, StringComparison.Ordinal);
+		if (tokenOffset >= 0)
+		{
+			throw new Xunit.Sdk.XunitException(
+				$"Reserved compiler authority token at offset {tokenOffset}; value SHA256 {Sha256Text(value)}.");
+		}
 	}
 
 	private static void SortAuthorityRootsMostSpecific((string Token, string Root)[] roots)
@@ -9096,6 +9697,34 @@ public class LiquidOrdinaryWalletPlanWireTests
 		return NormalizeAuthorityString(normalized, roots);
 	}
 
+	private static string NormalizeCompilerAuthorityStringWithPackages(
+		string value,
+		(string PrimaryRoot, string[] OrderedRoots) packageAuthority,
+		params (string Token, string Root)[] roots)
+	{
+		AssertNoReservedCompilerAuthorityTokens(
+			value,
+			[.. roots.Select(root => root.Token), "{NUGET}"]);
+		string normalized = value;
+		string[] packageRoots = packageAuthority.OrderedRoots.ToArray();
+		for (int index = 1; index < packageRoots.Length; index++)
+		{
+			string current = packageRoots[index];
+			int insertion = index;
+			while (insertion > 0 && packageRoots[insertion - 1].Length < current.Length)
+			{
+				packageRoots[insertion] = packageRoots[insertion - 1];
+				insertion--;
+			}
+			packageRoots[insertion] = current;
+		}
+		foreach (string packageRoot in packageRoots)
+		{
+			normalized = ReplaceAuthorityRoot(normalized, packageRoot, "{NUGET}");
+		}
+		return NormalizeCompilerAuthorityRoots(normalized, roots);
+	}
+
 	private static void WritePackageAssetsAuthorityFixture(
 		string path,
 		string primaryRoot,
@@ -10253,7 +10882,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 
 	private static string BuildCanonicalAuthorityManifestRow(string prefix, IReadOnlyList<string> fields)
 	{
-		Assert.True(prefix is "IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2");
+		Assert.True(prefix is "IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2" or "COMPILER_INPUT_V2");
 		var values = new string[fields.Count];
 		var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 		for (int index = 0; index < fields.Count; index++)
@@ -10283,7 +10912,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string expectedPrefix,
 		int expectedFieldCount)
 	{
-		Assert.True(expectedPrefix is "IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2");
+		Assert.True(expectedPrefix is "IMPORT_EVENT_V2" or "PIN_V2" or "REFERENCE_V2" or "COMPILER_INPUT_V2");
 		string prefix = expectedPrefix + "|";
 		Assert.StartsWith(prefix, row, StringComparison.Ordinal);
 		string payload = row[prefix.Length..];
@@ -10405,6 +11034,181 @@ public class LiquidOrdinaryWalletPlanWireTests
 			rejected = true;
 		}
 		Assert.True(rejected, "The mutated build-authority manifest was accepted.");
+	}
+
+	private static string CreateCompilerManifestWithoutFirstArgument(string manifest)
+	{
+		List<string[]> fields = ReadCanonicalCompilerAuthorityFields(manifest);
+		int firstArgument = fields.FindIndex(row => row[1] == "ARG");
+		Assert.True(firstArgument >= 0);
+		Assert.True(fields.Count(row => row[1] == "ARG") > 1);
+		fields.RemoveAt(firstArgument);
+		return RebuildCanonicalCompilerInputAuthorityManifest(fields);
+	}
+
+	private static string CreateCompilerManifestWithDuplicatedFirstArgument(string manifest)
+	{
+		List<string[]> fields = ReadCanonicalCompilerAuthorityFields(manifest);
+		int firstArgument = fields.FindIndex(row => row[1] == "ARG");
+		Assert.True(firstArgument >= 0);
+		fields.Insert(firstArgument + 1, fields[firstArgument].ToArray());
+		return RebuildCanonicalCompilerInputAuthorityManifest(fields);
+	}
+
+	private static string CreateCompilerManifestWithSwappedFirstArguments(string manifest)
+	{
+		List<string[]> fields = ReadCanonicalCompilerAuthorityFields(manifest);
+		int firstArgument = fields.FindIndex(row => row[1] == "ARG");
+		int secondArgument = fields.FindIndex(firstArgument + 1, row => row[1] == "ARG");
+		Assert.True(firstArgument >= 0 && secondArgument > firstArgument);
+		(fields[firstArgument], fields[secondArgument]) = (fields[secondArgument], fields[firstArgument]);
+		return RebuildCanonicalCompilerInputAuthorityManifest(fields);
+	}
+
+	private static string CreateCompilerManifestWithMutatedFirstAuxiliarySha256(string manifest)
+	{
+		List<string[]> fields = ReadCanonicalCompilerAuthorityFields(manifest);
+		string[] auxiliary = Assert.Single(
+			fields,
+			row => row[1] == "AUX" && row[3] == "/sourcelink:");
+		auxiliary[7] = auxiliary[7][0] == '0'
+			? "1" + auxiliary[7][1..]
+			: "0" + auxiliary[7][1..];
+		return RebuildCanonicalCompilerInputAuthorityManifest(fields);
+	}
+
+	private static string CreateCompilerManifestWithInjectedAnalyzerArguments(string manifest)
+	{
+		List<string[]> fields = ReadCanonicalCompilerAuthorityFields(manifest);
+		int firstNonArgument = fields.FindIndex(row => row[1] != "ARG");
+		Assert.True(firstNonArgument > 0);
+		fields.Insert(
+			firstNonArgument,
+			CreateCompilerAuthorityFields("ARG", "/analyzer:/wlpq/injected-analyzer.dll"));
+		int firstCscArgument = fields.FindIndex(row => row[1] == "CSC_ARG");
+		Assert.True(firstCscArgument > 0);
+		fields.Insert(
+			firstCscArgument,
+			CreateCompilerAuthorityFields(
+				"CSC_INPUT",
+				"Analyzers",
+				qualifier: "Analyzer",
+				values: JsonSerializer.Serialize(new[] { "/wlpq/injected-analyzer.dll" })));
+		fields.Add(CreateCompilerAuthorityFields("CSC_ARG", "/analyzer:/wlpq/injected-analyzer.dll"));
+		return RebuildCanonicalCompilerInputAuthorityManifest(fields);
+	}
+
+	private static string CreateCompilerManifestWithV1Header(string manifest)
+	{
+		const string Header = "COMPILER_INPUT_AUTHORITY_V2";
+		Assert.StartsWith(Header + "\n", manifest, StringComparison.Ordinal);
+		return "COMPILER_INPUT_AUTHORITY_V1" + manifest[Header.Length..];
+	}
+
+	private static string CreateCompilerManifestWithNonCanonicalFirstRow(string manifest)
+	{
+		string[] lines = SplitCanonicalCompilerInputAuthorityManifest(manifest);
+		Assert.Contains("|[", lines[1], StringComparison.Ordinal);
+		lines[1] = lines[1].Replace("|[", "|[ ", StringComparison.Ordinal);
+		return string.Join('\n', lines);
+	}
+
+	private static string CreateCompilerManifestWithSkippedGlobalIndex(string manifest)
+	{
+		string[] lines = SplitCanonicalCompilerInputAuthorityManifest(manifest);
+		string[] fields = ParseCanonicalAuthorityManifestRow(lines[1], "COMPILER_INPUT_V2", 8);
+		fields[0] = "1";
+		lines[1] = BuildCanonicalAuthorityManifestRow("COMPILER_INPUT_V2", fields);
+		return string.Join('\n', lines);
+	}
+
+	private static string CreateCompilerManifestWithSkippedSectionIndex(string manifest)
+	{
+		string[] lines = SplitCanonicalCompilerInputAuthorityManifest(manifest);
+		string[] fields = ParseCanonicalAuthorityManifestRow(lines[1], "COMPILER_INPUT_V2", 8);
+		fields[2] = "1";
+		lines[1] = BuildCanonicalAuthorityManifestRow("COMPILER_INPUT_V2", fields);
+		return string.Join('\n', lines);
+	}
+
+	private static string CreateCompilerManifestWithUnknownFirstSection(string manifest)
+	{
+		string[] lines = SplitCanonicalCompilerInputAuthorityManifest(manifest);
+		string[] fields = ParseCanonicalAuthorityManifestRow(lines[1], "COMPILER_INPUT_V2", 8);
+		fields[1] = "UNKNOWN";
+		lines[1] = BuildCanonicalAuthorityManifestRow("COMPILER_INPUT_V2", fields);
+		return string.Join('\n', lines);
+	}
+
+	private static string CreateCompilerManifestWithExtraFirstField(string manifest)
+	{
+		string[] lines = SplitCanonicalCompilerInputAuthorityManifest(manifest);
+		string[] fields = ParseCanonicalAuthorityManifestRow(lines[1], "COMPILER_INPUT_V2", 8);
+		lines[1] = BuildCanonicalAuthorityManifestRow(
+			"COMPILER_INPUT_V2",
+			fields.Append("EXTRA").ToArray());
+		return string.Join('\n', lines);
+	}
+
+	private static string CreateCompilerManifestWithNumericFirstIndex(string manifest)
+	{
+		string[] lines = SplitCanonicalCompilerInputAuthorityManifest(manifest);
+		string[] fields = ParseCanonicalAuthorityManifestRow(lines[1], "COMPILER_INPUT_V2", 8);
+		object[] typedFields = fields.Cast<object>().ToArray();
+		typedFields[0] = 0;
+		lines[1] = "COMPILER_INPUT_V2|" + JsonSerializer.Serialize(typedFields);
+		return string.Join('\n', lines);
+	}
+
+	private static string CreateCompilerManifestWithInvalidAuxiliaryPrefix(string manifest)
+	{
+		string[] lines = SplitCanonicalCompilerInputAuthorityManifest(manifest);
+		int auxiliaryLine = Array.FindIndex(lines, line =>
+			line.StartsWith("COMPILER_INPUT_V2|", StringComparison.Ordinal) &&
+			ParseCanonicalAuthorityManifestRow(line, "COMPILER_INPUT_V2", 8)[1] == "AUX");
+		Assert.True(auxiliaryLine > 0);
+		string[] fields = ParseCanonicalAuthorityManifestRow(lines[auxiliaryLine], "COMPILER_INPUT_V2", 8);
+		fields[3] = "/unapproved:";
+		lines[auxiliaryLine] = BuildCanonicalAuthorityManifestRow("COMPILER_INPUT_V2", fields);
+		return string.Join('\n', lines);
+	}
+
+	private static List<string[]> ReadCanonicalCompilerAuthorityFields(string manifest) =>
+		AssertCanonicalCompilerInputAuthorityManifest(manifest)
+			.Select(row => ParseCanonicalAuthorityManifestRow(row, "COMPILER_INPUT_V2", 8))
+			.ToList();
+
+	private static string RebuildCanonicalCompilerInputAuthorityManifest(IReadOnlyList<string[]> fields)
+	{
+		var sectionIndexes = new Dictionary<string, int>(StringComparer.Ordinal);
+		string[] rows = fields.Select((sourceFields, globalIndex) =>
+		{
+			Assert.Equal(8, sourceFields.Length);
+			string[] rebuiltFields = sourceFields.ToArray();
+			rebuiltFields[0] = globalIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+			int sectionIndex = sectionIndexes.GetValueOrDefault(rebuiltFields[1]);
+			rebuiltFields[2] = sectionIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+			sectionIndexes[rebuiltFields[1]] = sectionIndex + 1;
+			return BuildCanonicalAuthorityManifestRow("COMPILER_INPUT_V2", rebuiltFields);
+		}).ToArray();
+		string rebuilt = "COMPILER_INPUT_AUTHORITY_V2\n" + string.Join('\n', rows) + "\n";
+		_ = AssertCanonicalCompilerInputAuthorityManifest(rebuilt);
+		return rebuilt;
+	}
+
+	private static string[] CreateCompilerAuthorityFields(
+		string section,
+		string identity,
+		string detail = "",
+		string qualifier = "",
+		string values = "",
+		string sha256 = "") =>
+		["0", section, "0", identity, detail, qualifier, values, sha256];
+
+	private static string[] SplitCanonicalCompilerInputAuthorityManifest(string manifest)
+	{
+		_ = AssertCanonicalCompilerInputAuthorityManifest(manifest);
+		return manifest.Split('\n', StringSplitOptions.None);
 	}
 
 	private static string CreateImportManifestWithDuplicatedLastImport(string manifest)
@@ -10556,6 +11360,50 @@ public class LiquidOrdinaryWalletPlanWireTests
 		Array.Sort(sortedRows, StringComparer.Ordinal);
 		diagnostics.Append("\nIMPORT_ROWS_SHA256|").Append(Sha256Text(importRows.ToString()));
 		diagnostics.Append("\nPIN_ROWS_SHA256|").Append(Sha256Text(pinRows.ToString()));
+		diagnostics.Append("\nSORTED_ROWS_SHA256|").Append(Sha256Text(string.Join('\n', sortedRows) + "\n"));
+		throw new Xunit.Sdk.XunitException(diagnostics.ToString());
+	}
+
+	private static void AssertExactCompilerInputAuthoritySha256(string expectedSha256, string manifest)
+	{
+		string[] rows = AssertCanonicalCompilerInputAuthorityManifest(manifest);
+		string actualSha256 = Sha256Text(manifest);
+		if (StringComparer.Ordinal.Equals(expectedSha256, actualSha256))
+		{
+			return;
+		}
+
+		var diagnostics = new StringBuilder(actualSha256);
+		var sectionRows = new Dictionary<string, StringBuilder>(StringComparer.Ordinal);
+		var sectionCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+		for (int index = 0; index < rows.Length; index++)
+		{
+			string row = rows[index];
+			string[] fields = ParseCanonicalAuthorityManifestRow(row, "COMPILER_INPUT_V2", 8);
+			diagnostics.Append("\nROW|").Append(fields[0]);
+			diagnostics.Append("|SECTION|").Append(fields[1]);
+			diagnostics.Append("|SECTION_INDEX|").Append(fields[2]);
+			diagnostics.Append("|ROW_SHA256|").Append(Sha256Text(row));
+			if (!sectionRows.TryGetValue(fields[1], out StringBuilder? sectionManifest))
+			{
+				sectionManifest = new StringBuilder();
+				sectionRows.Add(fields[1], sectionManifest);
+			}
+			sectionManifest.Append(row).Append('\n');
+			sectionCounts[fields[1]] = sectionCounts.GetValueOrDefault(fields[1]) + 1;
+		}
+		foreach (string section in CompilerAuthoritySectionOrder)
+		{
+			if (!sectionRows.TryGetValue(section, out StringBuilder? sectionManifest))
+			{
+				continue;
+			}
+			diagnostics.Append("\nSECTION|").Append(section);
+			diagnostics.Append("|COUNT|").Append(sectionCounts[section]);
+			diagnostics.Append("|SHA256|").Append(Sha256Text(sectionManifest.ToString()));
+		}
+		string[] sortedRows = rows.ToArray();
+		Array.Sort(sortedRows, StringComparer.Ordinal);
 		diagnostics.Append("\nSORTED_ROWS_SHA256|").Append(Sha256Text(string.Join('\n', sortedRows) + "\n"));
 		throw new Xunit.Sdk.XunitException(diagnostics.ToString());
 	}
