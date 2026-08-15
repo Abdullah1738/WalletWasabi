@@ -31,6 +31,7 @@ using WalletWasabi.Liquid.Amounts;
 using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Network;
+using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Liquid.Transactions;
 using WalletWasabi.Liquid.Wallet;
 using WalletWasabi.Liquid.Wallet.Wire;
@@ -12852,5 +12853,417 @@ public class LiquidOrdinaryWalletPlanWireTests
 		}
 		Assert.NotNull(rejection);
 		return rejection;
+	}
+
+	[Fact]
+	public void GenerationFencedRawTransactionsCreateCanonicalClosedFundingRows()
+	{
+		PlanFixture fixture = CreateTwoAssetPlan(ElementsPublicNetworkManifest.LiquidTestnet);
+		string firstCandidateId = fixture.FirstSelected.OutPoint.TransactionId.CanonicalRpcHex;
+		string secondCandidateId = fixture.SecondSelected.OutPoint.TransactionId.CanonicalRpcHex;
+		string firstPreviousId = Tx(3).CanonicalRpcHex;
+		string secondPreviousId = Tx(4).CanonicalRpcHex;
+		string thirdPreviousId = Tx(5).CanonicalRpcHex;
+		byte[] firstCandidate = [0xa1];
+		byte[] secondCandidate = [0xa2];
+		byte[] firstPrevious = [0x30];
+		byte[] secondPrevious = [0x10];
+		byte[] thirdPrevious = [0x20];
+		ElementsExpectationBoundRawTransactionBatch rawTransactions = CreateRawTransactionBatch(
+			(secondCandidateId, secondCandidate),
+			(secondPreviousId, secondPrevious),
+			(firstCandidateId, firstCandidate),
+			(thirdPreviousId, thirdPrevious),
+			(firstPreviousId, firstPrevious));
+		IReadOnlyList<string>?[] previousIdsBySelectedInput =
+		[
+			new[] { firstPreviousId, secondPreviousId },
+			new[] { secondPreviousId, thirdPreviousId },
+		];
+
+		bool succeeded = rawTransactions.TryCreateOrdinaryWalletPlanFundingBatch(
+			fixture.Plan,
+			previousIdsBySelectedInput,
+			out LiquidOrdinaryWalletPlanFundingBatch? fundingBatch,
+			out LiquidOrdinaryWalletPlanWireErrorCode errorCode);
+		Assert.True(succeeded, FailureMessage(errorCode));
+		Assert.NotNull(fundingBatch);
+		Assert.False(rawTransactions.HasTransactionIdValidation);
+		Assert.False(rawTransactions.HasBlockMembershipAuthority);
+		Assert.False(rawTransactions.HasCurrentnessAuthority);
+		using (fundingBatch)
+		using (LiquidOrdinaryWalletPlanEncodedFrame frame = Encode(
+			fixture.Plan,
+			fundingBatch,
+			SourceEpoch))
+		{
+			byte[] encoded = Copy(frame);
+			try
+			{
+				int cursor = 152;
+				AssertSelectedRow(
+					encoded,
+					ref cursor,
+					fixture.FirstSelected,
+					firstCandidate,
+					[secondPrevious, firstPrevious]);
+				AssertSelectedRow(
+					encoded,
+					ref cursor,
+					fixture.SecondSelected,
+					secondCandidate,
+					[secondPrevious, thirdPrevious]);
+				AssertDestination(encoded, ref cursor, fixture.FirstDestination);
+				AssertDestination(encoded, ref cursor, fixture.SecondDestination);
+				Assert.Equal(encoded.Length, cursor);
+			}
+			finally
+			{
+				CryptographicOperations.ZeroMemory(encoded);
+			}
+		}
+
+		LiquidOrdinaryWalletExactSpendPlan confirmedPlan = CreateConfirmedSingleTransactionPlan();
+		LiquidWalletCoinControlEntry confirmedEntry = confirmedPlan.GetSelectedEntries()[0];
+		ElementsExpectationBoundRawTransactionBatch confirmedRawTransactions =
+			CreateRawTransactionBatchFromRequests(
+				ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
+				(new ElementsRawTransactionRequest(
+					confirmedEntry.OutPoint.TransactionId.CanonicalRpcHex,
+					confirmedEntry.Confirmation!.CanonicalBlockHash),
+				[0xee]));
+		bool confirmedSucceeded = confirmedRawTransactions.TryCreateOrdinaryWalletPlanFundingBatch(
+			confirmedPlan,
+			[Array.Empty<string>()],
+			out LiquidOrdinaryWalletPlanFundingBatch? confirmedFundingBatch,
+			out LiquidOrdinaryWalletPlanWireErrorCode confirmedErrorCode);
+		try
+		{
+			Assert.True(confirmedSucceeded, FailureMessage(confirmedErrorCode));
+			Assert.NotNull(confirmedFundingBatch);
+		}
+		finally
+		{
+			confirmedFundingBatch?.Dispose();
+		}
+	}
+
+	[Fact]
+	public void GenerationFencedFundingCompositionRejectsEveryOpenOrAmbiguousMapping()
+	{
+		LiquidOrdinaryWalletExactSpendPlan plan = CreateSingleAssetPlan(
+			ElementsPublicNetworkManifest.LiquidTestnet,
+			71);
+		string candidateId = Tx(71).CanonicalRpcHex;
+		string firstPreviousId = Tx(0xab).CanonicalRpcHex;
+		string secondPreviousId = Tx(0xac).CanonicalRpcHex;
+		string missingPreviousId = Tx(0xad).CanonicalRpcHex;
+		ElementsExpectationBoundRawTransactionBatch exact = CreateRawTransactionBatch(
+			(candidateId, [0xaa]),
+			(firstPreviousId, [0xbb]));
+
+		AssertFundingCompositionRejected(
+			exact,
+			null,
+			[new[] { firstPreviousId }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			exact,
+			plan,
+			null,
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			exact,
+			plan,
+			[],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			exact,
+			plan,
+			new IReadOnlyList<string>?[] { null },
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			CreateRawTransactionBatch((firstPreviousId, [0xbb])),
+			plan,
+			[new[] { firstPreviousId }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			CreateRawTransactionBatch(
+				(candidateId, [0xaa]),
+				(firstPreviousId, [0xbb]),
+				(secondPreviousId, [0xcc])),
+			plan,
+			[new[] { firstPreviousId }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			exact,
+			plan,
+			[new[] { firstPreviousId.ToUpperInvariant() }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			exact,
+			plan,
+			[new[] { new string('0', 64) }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			CreateRawTransactionBatch(
+				(candidateId, [0xaa]),
+				(firstPreviousId, [0xbb]),
+				(secondPreviousId, [0xcc])),
+			plan,
+			[new[] { secondPreviousId, firstPreviousId }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			exact,
+			plan,
+			[new[] { firstPreviousId, firstPreviousId }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			CreateRawTransactionBatch((candidateId, [0xaa])),
+			plan,
+			[new[] { candidateId }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			CreateRawTransactionBatch((candidateId, [0xaa])),
+			plan,
+			[new[] { missingPreviousId }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			CreateRawTransactionBatch(
+				(candidateId, [0xaa]),
+				(firstPreviousId, [0xbb]),
+				(secondPreviousId, [0xbb])),
+			plan,
+			[new[] { firstPreviousId, secondPreviousId }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidEncoding);
+
+		LiquidOrdinaryWalletExactSpendPlan sharedCandidatePlan = CreateSameTransactionPlan();
+		string sharedCandidateId = sharedCandidatePlan.GetSelectedEntries()[0]
+			.OutPoint.TransactionId.CanonicalRpcHex;
+		AssertFundingCompositionRejected(
+			CreateRawTransactionBatch(
+				(sharedCandidateId, [0xdd]),
+				(firstPreviousId, [0xbb]),
+				(secondPreviousId, [0xcc])),
+			sharedCandidatePlan,
+			[new[] { firstPreviousId }, new[] { secondPreviousId }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+
+		LiquidOrdinaryWalletExactSpendPlan confirmedPlan = CreateConfirmedSingleTransactionPlan();
+		string confirmedCandidateId = confirmedPlan.GetSelectedEntries()[0]
+			.OutPoint.TransactionId.CanonicalRpcHex;
+		AssertFundingCompositionRejected(
+			CreateRawTransactionBatch((confirmedCandidateId, [0xee])),
+			confirmedPlan,
+			[Array.Empty<string>()],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+
+		LiquidOrdinaryWalletExactSpendPlan futureConfirmationPlan =
+			CreateConfirmedSingleTransactionPlan(new string('d', 64), 2);
+		string futureCandidateId = futureConfirmationPlan.GetSelectedEntries()[0]
+			.OutPoint.TransactionId.CanonicalRpcHex;
+		AssertFundingCompositionRejected(
+			CreateRawTransactionBatchFromRequests(
+				ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
+				(new ElementsRawTransactionRequest(futureCandidateId, new string('d', 64)), [0xef])),
+			futureConfirmationPlan,
+			[Array.Empty<string>()],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		LiquidOrdinaryWalletExactSpendPlan wrongTipPlan =
+			CreateConfirmedSingleTransactionPlan(new string('d', 64), 1);
+		string wrongTipCandidateId = wrongTipPlan.GetSelectedEntries()[0]
+			.OutPoint.TransactionId.CanonicalRpcHex;
+		AssertFundingCompositionRejected(
+			CreateRawTransactionBatchFromRequests(
+				ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
+				(new ElementsRawTransactionRequest(wrongTipCandidateId, new string('d', 64)), [0xf0])),
+			wrongTipPlan,
+			[Array.Empty<string>()],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+		AssertFundingCompositionRejected(
+			CreateRawTransactionBatchWithEffectiveFeeAsset(
+				IssuedAssetHex,
+				(candidateId, [0xaa]),
+				(firstPreviousId, [0xbb])),
+			plan,
+			[new[] { firstPreviousId }],
+			LiquidOrdinaryWalletPlanWireErrorCode.InvalidArgument);
+
+		byte[] maximumPayload = new byte[LiquidOrdinaryWalletPlanWireLimits.MaximumTransactionLength];
+		try
+		{
+			var expandedTransactions =
+				new (string TransactionId, byte[] Bytes)[10];
+			expandedTransactions[0] = (sharedCandidateId, [0xdd]);
+			var expandedPreviousIds = new string[9];
+			for (int index = 0; index < expandedPreviousIds.Length; index++)
+			{
+				string previousId = Tx(checked((uint)(200 + index))).CanonicalRpcHex;
+				expandedPreviousIds[index] = previousId;
+				expandedTransactions[index + 1] = (previousId, maximumPayload);
+			}
+			AssertFundingCompositionRejected(
+				CreateRawTransactionBatch(expandedTransactions),
+				sharedCandidatePlan,
+				[expandedPreviousIds, expandedPreviousIds.ToArray()],
+				LiquidOrdinaryWalletPlanWireErrorCode.LimitExceeded);
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(maximumPayload);
+		}
+	}
+
+	private static LiquidOrdinaryWalletExactSpendPlan CreateSameTransactionPlan()
+	{
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidTestnet;
+		LiquidAssetId peggedAsset = LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId);
+		LiquidTransactionId transactionId = Tx(91);
+		LiquidOwnedOutput first = Output(transactionId, 0, peggedAsset, peggedAsset, 4);
+		LiquidOwnedOutput second = Output(transactionId, 1, peggedAsset, peggedAsset, 6);
+		LiquidWalletState state = LiquidWalletState.Empty(peggedAsset).Apply(
+			0,
+			LiquidWalletTransactionDelta.Create(transactionId, [], [first, second]));
+		LiquidSuppliedConfidentialDestination destination = Destination(
+			manifest,
+			FirstScriptHex,
+			peggedAsset,
+			9);
+		return state.CreateExactOrdinaryWalletSpendPlan(
+			state.Revision,
+			[first.OutPoint, second.OutPoint],
+			LiquidSuppliedConfidentialDestinationBatch.Create([destination]),
+			LiquidAssetAmount.Create(peggedAsset, peggedAsset, 1));
+	}
+
+	private static LiquidOrdinaryWalletExactSpendPlan CreateConfirmedSingleTransactionPlan(
+		string? blockHash = null,
+		uint height = 1)
+	{
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidTestnet;
+		LiquidAssetId peggedAsset = LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId);
+		LiquidTransactionId transactionId = Tx(92);
+		LiquidOwnedOutput output = Output(transactionId, 0, peggedAsset, peggedAsset, 10);
+		LiquidWalletState state = LiquidWalletState.Empty(peggedAsset).Apply(
+			0,
+			LiquidWalletTransactionDelta.Create(transactionId, [], [output]));
+		state = state.Confirm(
+			state.Revision,
+			transactionId,
+			LiquidConfirmation.Create(blockHash ?? new string('b', 64), height));
+		LiquidSuppliedConfidentialDestination destination = Destination(
+			manifest,
+			FirstScriptHex,
+			peggedAsset,
+			9);
+		return state.CreateExactOrdinaryWalletSpendPlan(
+			state.Revision,
+			[output.OutPoint],
+			LiquidSuppliedConfidentialDestinationBatch.Create([destination]),
+			LiquidAssetAmount.Create(peggedAsset, peggedAsset, 1));
+	}
+
+	private static ElementsExpectationBoundRawTransactionBatch CreateRawTransactionBatch(
+		params (string TransactionId, byte[] Bytes)[] transactions) =>
+		CreateRawTransactionBatchWithEffectiveFeeAsset(
+			ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
+			transactions);
+
+	private static ElementsExpectationBoundRawTransactionBatch CreateRawTransactionBatchWithEffectiveFeeAsset(
+		string effectiveFeeAsset,
+		params (string TransactionId, byte[] Bytes)[] transactions)
+	{
+		var requests = new (ElementsRawTransactionRequest Request, byte[] Bytes)[transactions.Length];
+		for (int index = 0; index < transactions.Length; index++)
+		{
+			(string transactionId, byte[] bytes) = transactions[index];
+			requests[index] = (new ElementsRawTransactionRequest(transactionId, null), bytes);
+		}
+		return CreateRawTransactionBatchFromRequests(effectiveFeeAsset, requests);
+	}
+
+	private static ElementsExpectationBoundRawTransactionBatch CreateRawTransactionBatchFromRequests(
+		string effectiveFeeAsset,
+		params (ElementsRawTransactionRequest Request, byte[] Bytes)[] transactions)
+	{
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidTestnet;
+		string genesisBlockHash = new('a', 64);
+		string bestBlockHash = new('b', 64);
+		string startupId = new('c', 64);
+		var expectation = new ElementsNodeExpectation(
+			manifest.ChainRpcName,
+			genesisBlockHash,
+			"51",
+			manifest.PeggedAssetId,
+			new string('0', 64),
+			2,
+			false,
+			1,
+			1,
+			"/wire-test:1/");
+		var status = new ElementsNodeStatus(
+			expectation.Chain,
+			1,
+			1,
+			bestBlockHash,
+			expectation.GenesisBlockHash,
+			false,
+			false,
+			false,
+			false,
+			true,
+			true,
+			false,
+			expectation.FedpegScript,
+			expectation.PeggedAsset,
+			expectation.ParentGenesisBlockHash,
+			expectation.PeginConfirmationDepth,
+			expectation.EnforcePak,
+			expectation.Version,
+			expectation.ProtocolVersion,
+			expectation.Subversion);
+		var generation = new ElementsNodeGenerationObservation(
+			startupId,
+			1,
+			status.Blocks,
+			status.BestBlockHash);
+		var nodeObservation = new ElementsExpectationBoundNodeObservation(
+			expectation,
+			effectiveFeeAsset,
+			status,
+			generation);
+		var observations = new ElementsRawTransactionObservation[transactions.Length];
+		for (int index = 0; index < transactions.Length; index++)
+		{
+			(ElementsRawTransactionRequest request, byte[] bytes) = transactions[index];
+			observations[index] = new ElementsRawTransactionObservation(
+				request,
+				bytes);
+		}
+
+		return new ElementsExpectationBoundRawTransactionBatch(nodeObservation, observations);
+	}
+
+	private static void AssertFundingCompositionRejected(
+		ElementsExpectationBoundRawTransactionBatch rawTransactions,
+		LiquidOrdinaryWalletExactSpendPlan? plan,
+		IReadOnlyList<IReadOnlyList<string>?>? previousTransactionIdsBySelectedInput,
+		LiquidOrdinaryWalletPlanWireErrorCode expectedErrorCode)
+	{
+		bool succeeded = rawTransactions.TryCreateOrdinaryWalletPlanFundingBatch(
+			plan,
+			previousTransactionIdsBySelectedInput,
+			out LiquidOrdinaryWalletPlanFundingBatch? fundingBatch,
+			out LiquidOrdinaryWalletPlanWireErrorCode errorCode);
+		try
+		{
+			Assert.False(succeeded);
+			Assert.Null(fundingBatch);
+			Assert.Equal(expectedErrorCode, errorCode);
+		}
+		finally
+		{
+			fundingBatch?.Dispose();
+		}
 	}
 }
