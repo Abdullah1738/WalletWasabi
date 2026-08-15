@@ -1490,6 +1490,50 @@ public class ElementsRpcClientTests
 		Assert.DoesNotContain(ExpectationStartupId, generationException.Message, StringComparison.Ordinal);
 		Assert.Equal(10, generationHarness.Handler.Methods.Count);
 
+		using var beforeFeeHarness = new ElementsRpcHarness(ExpectationBoundBeforeFeeGenerationDriftResult);
+		ElementsRpcException? beforeFeeException = null;
+		try
+		{
+			await beforeFeeHarness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation() with { Chain = "liquidv1" },
+				ExpectationOtherAsset,
+				CancellationToken.None);
+		}
+		catch (ElementsRpcException exception)
+		{
+			beforeFeeException = exception;
+		}
+
+		Assert.NotNull(beforeFeeException);
+		Assert.Equal(ElementsRpcFailureKind.Protocol, beforeFeeException.FailureKind);
+		Assert.Equal(
+			"Elements RPC 'expectation-bound node observation' returned an invalid result: node generation changed during the observation.",
+			beforeFeeException.Message);
+		Assert.DoesNotContain(ExpectationStartupId, beforeFeeException.Message, StringComparison.Ordinal);
+		Assert.Equal(10, beforeFeeHarness.Handler.Methods.Count);
+
+		using var afterFeeHarness = new ElementsRpcHarness(ExpectationBoundAfterFeeGenerationDriftResult);
+		ElementsRpcException? afterFeeException = null;
+		try
+		{
+			await afterFeeHarness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation() with { Chain = "liquidv1" },
+				ExpectationOtherAsset,
+				CancellationToken.None);
+		}
+		catch (ElementsRpcException exception)
+		{
+			afterFeeException = exception;
+		}
+
+		Assert.NotNull(afterFeeException);
+		Assert.Equal(ElementsRpcFailureKind.Protocol, afterFeeException.FailureKind);
+		Assert.Equal(
+			"Elements RPC 'expectation-bound node observation' returned an invalid result: node generation changed during the observation.",
+			afterFeeException.Message);
+		Assert.DoesNotContain(ExpectationStartupId, afterFeeException.Message, StringComparison.Ordinal);
+		Assert.Equal(10, afterFeeHarness.Handler.Methods.Count);
+
 		using var statusHarness = new ElementsRpcHarness(ExpectationBoundStatusDriftResult);
 		ElementsRpcException? statusException = null;
 		try
@@ -1505,11 +1549,35 @@ public class ElementsRpcClientTests
 		}
 
 		Assert.NotNull(statusException);
+		Assert.Equal(ElementsRpcFailureKind.Protocol, statusException.FailureKind);
 		Assert.Equal(
 			"Elements RPC 'expectation-bound node observation' returned an invalid result: node status did not match the generation fence.",
 			statusException.Message);
 		Assert.DoesNotContain(BestBlockHash, statusException.Message, StringComparison.Ordinal);
 		Assert.Equal(10, statusHarness.Handler.Methods.Count);
+
+		using var statusTipHarness = new ElementsRpcHarness(ExpectationBoundStatusTipDriftResult);
+		ElementsRpcException? statusTipException = null;
+		try
+		{
+			await statusTipHarness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation() with { Chain = "liquidv1" },
+				ExpectationOtherAsset,
+				CancellationToken.None);
+		}
+		catch (ElementsRpcException exception)
+		{
+			statusTipException = exception;
+		}
+
+		Assert.NotNull(statusTipException);
+		Assert.Equal(ElementsRpcFailureKind.Protocol, statusTipException.FailureKind);
+		Assert.Equal(
+			"Elements RPC 'expectation-bound node observation' returned an invalid result: node status did not match the generation fence.",
+			statusTipException.Message);
+		Assert.DoesNotContain(BestBlockHash, statusTipException.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain(ExpectationOtherBestBlockHash, statusTipException.Message, StringComparison.Ordinal);
+		Assert.Equal(10, statusTipHarness.Handler.Methods.Count);
 	}
 
 	[Fact]
@@ -1638,9 +1706,32 @@ public class ElementsRpcClientTests
 		_ => ExpectationBoundValidResult(invocation),
 	};
 
+	private static string ExpectationBoundBeforeFeeGenerationDriftResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getnodegeneration" when invocation.Id == "8" =>
+			Envelope(invocation.Id, GenerationResult(ExpectationStartupId, 8, 42, BestBlockHash)),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private static string ExpectationBoundAfterFeeGenerationDriftResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getnodegeneration" when invocation.Id == "10" =>
+			Envelope(invocation.Id, GenerationResult(ExpectationStartupId, 10, 42, BestBlockHash)),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
 	private static string ExpectationBoundStatusDriftResult(RpcInvocation invocation) => invocation.Method switch
 	{
 		"getblockchaininfo" => Envelope(invocation.Id, BlockchainResult(blocks: 41, headers: 41)),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private static string ExpectationBoundStatusTipDriftResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getblockchaininfo" =>
+			Envelope(invocation.Id, BlockchainResult(bestBlockHash: ExpectationOtherBestBlockHash)),
+		"getblockhash" when invocation.Parameters == "[42]" =>
+			Envelope(invocation.Id, JsonSerializer.Serialize(ExpectationOtherBestBlockHash)),
 		_ => ExpectationBoundValidResult(invocation),
 	};
 
@@ -1653,4 +1744,5 @@ public class ElementsRpcClientTests
 
 	private const string ExpectationStartupId = "abababababababababababababababababababababababababababababababab";
 	private const string ExpectationOtherAsset = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+	private const string ExpectationOtherBestBlockHash = "0202020202020202020202020202020202020202020202020202020202020202";
 }
