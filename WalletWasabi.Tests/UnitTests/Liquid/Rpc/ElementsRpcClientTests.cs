@@ -136,6 +136,7 @@ public class ElementsRpcClientTests
 		const string StartupId = "abababababababababababababababababababababababababababababababab";
 		var middleCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 		var releaseMiddleCall = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		int phase = 0;
 		int sidechainCalls = 0;
 		using var harness = new ElementsRpcHarness(async (invocation, cancellationToken) =>
 		{
@@ -143,11 +144,22 @@ public class ElementsRpcClientTests
 			{
 				return Envelope(invocation.Id, GenerationResult(StartupId, 9, 42, BestBlockHash));
 			}
-			if (invocation.Method == "getsidechaininfo" && sidechainCalls++ == 0)
+			if (invocation.Method == "getsidechaininfo")
 			{
-				middleCallEntered.TrySetResult();
-				await releaseMiddleCall.Task.WaitAsync(cancellationToken);
-				return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
+				int sidechainCall = sidechainCalls++;
+				if (sidechainCall == 0)
+				{
+					middleCallEntered.TrySetResult();
+					await releaseMiddleCall.Task.WaitAsync(cancellationToken);
+					if (phase == 0)
+					{
+						return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
+					}
+				}
+				if (phase == 1 && sidechainCall == 1)
+				{
+					return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
+				}
 			}
 
 			return ValidResult(invocation);
@@ -185,6 +197,64 @@ public class ElementsRpcClientTests
 				"getsidechaininfo",
 			],
 			harness.Handler.Methods);
+
+		phase = 1;
+		sidechainCalls = 0;
+		middleCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		releaseMiddleCall = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		int methodCountBeforeComposite = harness.Handler.Methods.Count;
+		Task<ElementsExpectationBoundNodeObservation> compositeTask =
+			harness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				CancellationToken.None);
+		await middleCallEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+		Task<ElementsNodeStatus> competingStatusTask = harness.Client.GetNodeStatusAsync(CancellationToken.None);
+		try
+		{
+			Assert.Equal(
+				[
+					"getnodegeneration",
+					"getnetworkinfo",
+					"getblockchaininfo",
+					"getblockhash",
+					"getblockhash",
+					"getsidechaininfo",
+				],
+				harness.Handler.Methods.Skip(methodCountBeforeComposite));
+			Assert.False(competingStatusTask.IsCompleted);
+		}
+		finally
+		{
+			releaseMiddleCall.TrySetResult();
+		}
+
+		ElementsExpectationBoundNodeObservation compositeObservation =
+			await compositeTask.WaitAsync(TimeSpan.FromSeconds(5));
+		ElementsNodeStatus competingStatus =
+			await competingStatusTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+		Assert.True(compositeObservation.HasExactGenerationFenceObservation);
+		Assert.Equal("elementsregtest", competingStatus.Chain);
+		Assert.Equal(
+			[
+				"getnodegeneration",
+				"getnetworkinfo",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockhash",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getnodegeneration",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getnetworkinfo",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockhash",
+				"getsidechaininfo",
+			],
+			harness.Handler.Methods.Skip(methodCountBeforeComposite));
 	}
 
 	[Theory]
@@ -195,6 +265,7 @@ public class ElementsRpcClientTests
 		const string StartupId = "abababababababababababababababababababababababababababababababab";
 		var blockedCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 		var neverCompletes = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		int phase = 0;
 		int generationCalls = 0;
 		int sidechainCalls = 0;
 		using var harness = new ElementsRpcHarness(async (invocation, cancellationToken) =>
@@ -202,7 +273,9 @@ public class ElementsRpcClientTests
 			if (invocation.Method == "getnodegeneration")
 			{
 				generationCalls++;
-				if (cancelClosingGeneration && generationCalls == 2)
+				if (cancelClosingGeneration
+					&& ((phase == 0 && generationCalls == 2)
+						|| (phase == 1 && generationCalls == 4)))
 				{
 					blockedCallEntered.TrySetResult();
 					await neverCompletes.Task.WaitAsync(cancellationToken);
@@ -210,15 +283,18 @@ public class ElementsRpcClientTests
 
 				return Envelope(invocation.Id, GenerationResult(StartupId, 9, 42, BestBlockHash));
 			}
-			if (invocation.Method == "getsidechaininfo" && sidechainCalls++ == 0)
+			if (invocation.Method == "getsidechaininfo")
 			{
-				if (!cancelClosingGeneration)
+				int sidechainCall = sidechainCalls++;
+				if (!cancelClosingGeneration && sidechainCall == 0 && phase != 2)
 				{
 					blockedCallEntered.TrySetResult();
 					await neverCompletes.Task.WaitAsync(cancellationToken);
 				}
-
-				return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
+				if ((phase == 0 && sidechainCall == 0) || (phase == 1 && sidechainCall == 1))
+				{
+					return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
+				}
 			}
 
 			return ValidResult(invocation);
@@ -237,6 +313,34 @@ public class ElementsRpcClientTests
 		Assert.Equal("elementsregtest", status.Chain);
 		Assert.Equal(cancelClosingGeneration ? 8 : 7, harness.Handler.Methods.Count);
 		Assert.Equal("getnetworkinfo", harness.Handler.Methods[cancelClosingGeneration ? 3 : 2]);
+
+		phase = 1;
+		generationCalls = 0;
+		sidechainCalls = 0;
+		blockedCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		neverCompletes = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		int methodCountBeforeComposite = harness.Handler.Methods.Count;
+		using var compositeCancellation = new CancellationTokenSource();
+		Task<ElementsExpectationBoundNodeObservation> compositeTask =
+			harness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				compositeCancellation.Token);
+		await blockedCallEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+		compositeCancellation.Cancel();
+
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => compositeTask);
+		phase = 2;
+		ElementsNodeStatus statusAfterCompositeCancellation =
+			await harness.Client.GetNodeStatusAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+		Assert.Equal("elementsregtest", statusAfterCompositeCancellation.Chain);
+		Assert.Equal(
+			cancelClosingGeneration ? 15 : 11,
+			harness.Handler.Methods.Count - methodCountBeforeComposite);
+		Assert.Equal(
+			"getnetworkinfo",
+			harness.Handler.Methods[methodCountBeforeComposite + (cancelClosingGeneration ? 10 : 6)]);
 	}
 
 	[Theory]
