@@ -306,7 +306,8 @@ public class ElementsRpcClientTests
 		await blockedCallEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 		cancellation.Cancel();
 
-		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => observationTask);
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(
+			() => observationTask.WaitAsync(TimeSpan.FromSeconds(5)));
 		ElementsNodeStatus status = await harness.Client.GetNodeStatusAsync(CancellationToken.None)
 			.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -329,7 +330,8 @@ public class ElementsRpcClientTests
 		await blockedCallEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 		compositeCancellation.Cancel();
 
-		await Assert.ThrowsAnyAsync<OperationCanceledException>(() => compositeTask);
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(
+			() => compositeTask.WaitAsync(TimeSpan.FromSeconds(5)));
 		phase = 2;
 		ElementsNodeStatus statusAfterCompositeCancellation =
 			await harness.Client.GetNodeStatusAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
