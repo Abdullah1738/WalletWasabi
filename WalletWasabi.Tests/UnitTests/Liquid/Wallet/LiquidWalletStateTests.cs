@@ -2203,6 +2203,10 @@ public class LiquidWalletStateTests
 		];
 		string[] addedTestTypes =
 		[
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<BindsExactExpectationAndFeeInsideUnchangedGenerationAsync>d__86",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<RejectsGenerationOrStatusDriftBeforeExpectationAndFeeMismatchAsync>d__87",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<RejectsIdentityOrFeeMismatchOnlyAfterStableFenceAsync>d__88",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<ValidatesExpectationBoundInputsBeforeTransportAsync>d__89",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlanTests+<>c__DisplayClass17_0",
@@ -2315,6 +2319,10 @@ public class LiquidWalletStateTests
 		];
 		string[] addedProductionTypes =
 		[
+			"WalletWasabi.Liquid.Rpc.ElementsExpectationBoundNodeObservation",
+			"WalletWasabi.Liquid.Rpc.ElementsNodeExpectationBindingLevel",
+			"WalletWasabi.Liquid.Rpc.ElementsRpcClient+<GetExpectationBoundNodeObservationAsync>d__65",
+			"WalletWasabi.Liquid.Rpc.ElementsRpcClient+<GetExpectationBoundNodeObservationCoreAsync>d__66",
 			"WalletWasabi.Liquid.Wallet.LiquidOrdinaryWalletExactSpendPlan",
 			"WalletWasabi.Liquid.Wallet.LiquidWalletAssetBalanceQueryResult",
 			"WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder",

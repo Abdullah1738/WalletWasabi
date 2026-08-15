@@ -1418,4 +1418,239 @@ public class ElementsRpcClientTests
 
 	private sealed record CapturedRequest(HttpMethod Method, string? ContentType, string Body);
 	private sealed record RpcInvocation(string Method, string Id, string Parameters);
+
+	[Fact]
+	public async Task BindsExactExpectationAndFeeInsideUnchangedGenerationAsync()
+	{
+		using var harness = new ElementsRpcHarness(ExpectationBoundValidResult);
+
+		ElementsExpectationBoundNodeObservation observation =
+			await harness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				CancellationToken.None);
+
+		Assert.Equal(ValidExpectation(), observation.Expectation);
+		Assert.Equal(PeggedAsset, observation.EffectiveFeeAsset);
+		Assert.Equal("elementsregtest", observation.NodeStatus.Chain);
+		Assert.Equal(ExpectationStartupId, observation.Generation.StartupId);
+		Assert.Equal(9UL, observation.Generation.ChainstateRevision);
+		Assert.Equal(42, observation.Generation.Blocks);
+		Assert.Equal(BestBlockHash, observation.Generation.BestBlockHash);
+		Assert.Equal(
+			ElementsNodeExpectationBindingLevel.SelfReportedExactTupleAndFeeObservationOnly,
+			observation.BindingLevel);
+		Assert.True(observation.HasExactGenerationFenceObservation);
+		Assert.True(observation.HasEffectiveFeeAssetObservation);
+		Assert.False(observation.HasArtifactSourceAttestation);
+		Assert.False(observation.HasRuntimeQualification);
+		Assert.False(observation.HasCurrentnessAuthority);
+		Assert.False(observation.HasReservationAuthority);
+		Assert.False(observation.HasBroadcastAuthority);
+		Assert.Equal(
+			[
+				"getnodegeneration",
+				"getnetworkinfo",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockhash",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getnodegeneration",
+				"getsidechaininfo",
+				"getnodegeneration",
+			],
+			harness.Handler.Methods);
+		Assert.All(harness.Handler.Parameters, parameters =>
+			Assert.True(parameters == "[]" || parameters == "[42]" || parameters == "[0]"));
+	}
+
+	[Fact]
+	public async Task RejectsGenerationOrStatusDriftBeforeExpectationAndFeeMismatchAsync()
+	{
+		using var generationHarness = new ElementsRpcHarness(ExpectationBoundGenerationDriftResult);
+		ElementsRpcException? generationException = null;
+		try
+		{
+			await generationHarness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation() with { Chain = "liquidv1" },
+				ExpectationOtherAsset,
+				CancellationToken.None);
+		}
+		catch (ElementsRpcException exception)
+		{
+			generationException = exception;
+		}
+
+		Assert.NotNull(generationException);
+		Assert.Equal(ElementsRpcFailureKind.Protocol, generationException.FailureKind);
+		Assert.Equal(
+			"Elements RPC 'expectation-bound node observation' returned an invalid result: node generation changed during the observation.",
+			generationException.Message);
+		Assert.DoesNotContain(ExpectationStartupId, generationException.Message, StringComparison.Ordinal);
+		Assert.Equal(10, generationHarness.Handler.Methods.Count);
+
+		using var statusHarness = new ElementsRpcHarness(ExpectationBoundStatusDriftResult);
+		ElementsRpcException? statusException = null;
+		try
+		{
+			await statusHarness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation() with { Chain = "liquidv1" },
+				ExpectationOtherAsset,
+				CancellationToken.None);
+		}
+		catch (ElementsRpcException exception)
+		{
+			statusException = exception;
+		}
+
+		Assert.NotNull(statusException);
+		Assert.Equal(
+			"Elements RPC 'expectation-bound node observation' returned an invalid result: node status did not match the generation fence.",
+			statusException.Message);
+		Assert.DoesNotContain(BestBlockHash, statusException.Message, StringComparison.Ordinal);
+		Assert.Equal(10, statusHarness.Handler.Methods.Count);
+	}
+
+	[Fact]
+	public async Task RejectsIdentityOrFeeMismatchOnlyAfterStableFenceAsync()
+	{
+		using var identityHarness = new ElementsRpcHarness(ExpectationBoundValidResult);
+		ElementsNodeMismatchException? identityException = null;
+		try
+		{
+			await identityHarness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation() with { Chain = "liquidv1" },
+				ExpectationOtherAsset,
+				CancellationToken.None);
+		}
+		catch (ElementsNodeMismatchException exception)
+		{
+			identityException = exception;
+		}
+
+		Assert.NotNull(identityException);
+		Assert.Equal(["chain"], identityException.MismatchedFields);
+		Assert.DoesNotContain(PeggedAsset, identityException.Message, StringComparison.Ordinal);
+		Assert.Equal(10, identityHarness.Handler.Methods.Count);
+
+		using var feeHarness = new ElementsRpcHarness(ExpectationBoundValidResult);
+		ElementsNodeMismatchException? feeException = null;
+		try
+		{
+			await feeHarness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation(),
+				ExpectationOtherAsset,
+				CancellationToken.None);
+		}
+		catch (ElementsNodeMismatchException exception)
+		{
+			feeException = exception;
+		}
+
+		Assert.NotNull(feeException);
+		Assert.Equal(["fee_asset"], feeException.MismatchedFields);
+		Assert.DoesNotContain(ExpectationOtherAsset, feeException.Message, StringComparison.Ordinal);
+		Assert.Equal(10, feeHarness.Handler.Methods.Count);
+
+		using var peggedHarness = new ElementsRpcHarness(ExpectationBoundPeggedAssetDriftResult);
+		ElementsNodeMismatchException? peggedException = null;
+		try
+		{
+			await peggedHarness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				CancellationToken.None);
+		}
+		catch (ElementsNodeMismatchException exception)
+		{
+			peggedException = exception;
+		}
+
+		Assert.NotNull(peggedException);
+		Assert.Equal(["pegged_asset"], peggedException.MismatchedFields);
+		Assert.DoesNotContain(ExpectationOtherAsset, peggedException.Message, StringComparison.Ordinal);
+		Assert.Equal(10, peggedHarness.Handler.Methods.Count);
+	}
+
+	[Fact]
+	public async Task ValidatesExpectationBoundInputsBeforeTransportAsync()
+	{
+		using var harness = new ElementsRpcHarness(ExpectationBoundValidResult);
+		ArgumentException? expectationException = null;
+		try
+		{
+			await harness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation() with { Chain = "INVALID" },
+				PeggedAsset,
+				CancellationToken.None);
+		}
+		catch (ArgumentException exception)
+		{
+			expectationException = exception;
+		}
+
+		Assert.NotNull(expectationException);
+		Assert.Empty(harness.Handler.Methods);
+
+		ArgumentException? feeException = null;
+		try
+		{
+			await harness.Client.GetExpectationBoundNodeObservationAsync(
+				ValidExpectation(),
+				ExpectationOtherAsset.ToUpperInvariant(),
+				CancellationToken.None);
+		}
+		catch (ArgumentException exception)
+		{
+			feeException = exception;
+		}
+
+		Assert.NotNull(feeException);
+		Assert.Empty(harness.Handler.Methods);
+	}
+
+	private static ElementsNodeExpectation ValidExpectation() =>
+		new(
+			Chain: "elementsregtest",
+			GenesisBlockHash,
+			FedpegScript: "51",
+			PeggedAsset,
+			ParentGenesisBlockHash: ParentGenesis,
+			PeginConfirmationDepth: 8,
+			EnforcePak: false,
+			Version: 230303,
+			ProtocolVersion: 70016,
+			Subversion: "/Elements Core:23.3.3/");
+
+	private static string ExpectationBoundValidResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getnodegeneration" => Envelope(invocation.Id, GenerationResult(ExpectationStartupId, 9, 42, BestBlockHash)),
+		"getsidechaininfo" when invocation.Id == "9" =>
+			Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset)),
+		_ => ValidResult(invocation),
+	};
+
+	private static string ExpectationBoundGenerationDriftResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getnodegeneration" when invocation.Id == "7" =>
+			Envelope(invocation.Id, GenerationResult(ExpectationStartupId, 10, 42, BestBlockHash)),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private static string ExpectationBoundStatusDriftResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getblockchaininfo" => Envelope(invocation.Id, BlockchainResult(blocks: 41, headers: 41)),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private static string ExpectationBoundPeggedAssetDriftResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getsidechaininfo" when invocation.Id == "9" =>
+			Envelope(invocation.Id, FeeAssetResult(ExpectationOtherAsset, PeggedAsset)),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private const string ExpectationStartupId = "abababababababababababababababababababababababababababababababab";
+	private const string ExpectationOtherAsset = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 }

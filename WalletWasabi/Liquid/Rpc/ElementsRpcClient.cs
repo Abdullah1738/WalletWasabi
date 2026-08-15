@@ -991,6 +991,100 @@ public sealed class ElementsRpcClient : IDisposable
 			$"Elements RPC '{method}' returned HTTP {(int)statusCode}.",
 			httpStatusCode: statusCode);
 
+	public async Task<ElementsExpectationBoundNodeObservation> GetExpectationBoundNodeObservationAsync(
+		ElementsNodeExpectation expectation,
+		string expectedEffectiveFeeAsset,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(expectation);
+		ElementsNodeExpectation normalizedExpectation = expectation.Normalize();
+		LiquidAssetId normalizedEffectiveFeeAsset =
+			LiquidAssetId.ParseRpcHex(expectedEffectiveFeeAsset, nameof(expectedEffectiveFeeAsset));
+
+		await _probeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			return await GetExpectationBoundNodeObservationCoreAsync(
+				normalizedExpectation,
+				normalizedEffectiveFeeAsset,
+				cancellationToken).ConfigureAwait(false);
+		}
+		finally
+		{
+			_probeLock.Release();
+		}
+	}
+
+	private async Task<ElementsExpectationBoundNodeObservation> GetExpectationBoundNodeObservationCoreAsync(
+		ElementsNodeExpectation expectation,
+		LiquidAssetId expectedEffectiveFeeAsset,
+		CancellationToken cancellationToken)
+	{
+		ElementsNodeGenerationObservation generationBeforeStatus =
+			await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+		ElementsNodeStatus nodeStatus = await GetNodeStatusCoreAsync(cancellationToken).ConfigureAwait(false);
+		ElementsNodeGenerationObservation generationAfterStatus =
+			await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+		ElementsFeeAssetGenerationObservation feeObservation =
+			await GetFeeAssetGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+
+		EnsureExactExpectationBoundGenerationFence(
+			generationBeforeStatus,
+			generationAfterStatus,
+			feeObservation.GenerationBefore,
+			feeObservation.GenerationAfter,
+			nodeStatus);
+		nodeStatus.EnsureMatches(expectation);
+
+		var mismatches = new List<string>();
+		if (!StringComparer.Ordinal.Equals(nodeStatus.PeggedAsset, feeObservation.PeggedAsset))
+		{
+			mismatches.Add("pegged_asset");
+		}
+		if (!StringComparer.Ordinal.Equals(
+			feeObservation.EffectiveFeeAsset,
+			expectedEffectiveFeeAsset.CanonicalRpcHex))
+		{
+			mismatches.Add("fee_asset");
+		}
+		if (mismatches.Count > 0)
+		{
+			throw new ElementsNodeMismatchException(mismatches);
+		}
+
+		return new ElementsExpectationBoundNodeObservation(
+			expectation,
+			expectedEffectiveFeeAsset.CanonicalRpcHex,
+			nodeStatus,
+			generationBeforeStatus);
+	}
+
+	private static void EnsureExactExpectationBoundGenerationFence(
+		ElementsNodeGenerationObservation generationBeforeStatus,
+		ElementsNodeGenerationObservation generationAfterStatus,
+		ElementsNodeGenerationObservation generationBeforeFee,
+		ElementsNodeGenerationObservation generationAfterFee,
+		ElementsNodeStatus nodeStatus)
+	{
+		if (generationBeforeStatus != generationAfterStatus
+			|| generationBeforeStatus != generationBeforeFee
+			|| generationBeforeStatus != generationAfterFee)
+		{
+			throw InvalidResult(
+				"expectation-bound node observation",
+				"node generation changed during the observation");
+		}
+		if (nodeStatus.Blocks != generationBeforeStatus.Blocks
+			|| !StringComparer.Ordinal.Equals(
+				nodeStatus.BestBlockHash,
+				generationBeforeStatus.BestBlockHash))
+		{
+			throw InvalidResult(
+				"expectation-bound node observation",
+				"node status did not match the generation fence");
+		}
+	}
+
 	public void Dispose()
 	{
 		_probeLock.Dispose();

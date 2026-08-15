@@ -4755,8 +4755,12 @@ public class LiquidWalletCoinControlTests
 
 	private static void AssertExactAssemblyTypeManifestsMatchBase()
 	{
-		string[] corpusTestTypes =
+		string[] permittedAddedTestTypes =
 		[
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<BindsExactExpectationAndFeeInsideUnchangedGenerationAsync>d__86",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<RejectsGenerationOrStatusDriftBeforeExpectationAndFeeMismatchAsync>d__87",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<RejectsIdentityOrFeeMismatchOnlyAfterStableFenceAsync>d__88",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<ValidatesExpectationBoundInputsBeforeTransportAsync>d__89",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireV1CorpusTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireV1CorpusTests+<>c__DisplayClass3_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus",
@@ -4767,26 +4771,26 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_716,
-			"294cef0781d25c417d381a3d453b61ed146f359ba81402cabd520f5d5b036882");
+			1_720,
+			"84f3075e09dc3c244c4d4d29e4522fc07eec94806bdd707a8f0facf6a9c8a4ed");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
 			1_838,
 			"0aa945588554736d9c1c679cdabcb9a7056fb9ee0941ace565fcb221954efa0e",
-			corpusTestTypes);
+			permittedAddedTestTypes);
 #else
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_713,
-			"8d7dba535d1e0618cb768a802d61b5bcf7375f4292fd312514c4025f33c515a4");
+			1_717,
+			"936ef0bd319c47f9d1f953e806e9fc0846476fd70e1e71de090f304c8a31fe1a");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
 			1_833,
 			"ade8113e7f1081371aa0fda520ce27e49671759436191df22afcba687440b0ce",
-			corpusTestTypes);
+			permittedAddedTestTypes);
 #endif
 	}
 
