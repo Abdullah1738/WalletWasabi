@@ -4,12 +4,18 @@ using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Network;
+using WalletWasabi.Liquid.Transactions;
+using WalletWasabi.Liquid.Wallet;
+using WalletWasabi.Liquid.Wallet.Wire;
+using LiquidOrdinaryWalletPlanEncodedFrame = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanEncodedFrame;
+using LiquidOrdinaryWalletPlanFundingBatch = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanFundingBatch;
 
 namespace WalletWasabi.Liquid.Rpc;
 
@@ -1273,6 +1279,289 @@ public sealed class ElementsRpcClient : IDisposable
 		{
 			_httpClient.Dispose();
 		}
+	}
+
+	/// <summary>
+	/// Acquires the exact candidate and caller-declared previous transaction bytes under the existing
+	/// expectation, effective-fee-asset, and generation fence, then copies them into one canonical
+	/// ordinary-wallet plan frame. This operation does not validate transaction identities or block
+	/// membership and grants no artifact, runtime, currentness, reservation, signing, or broadcast
+	/// authority. No retry is performed.
+	/// </summary>
+	internal async Task<(
+		ElementsExpectationBoundNodeObservation NodeObservation,
+		LiquidOrdinaryWalletPlanEncodedFrame Frame)> EncodeExpectationBoundOrdinaryWalletPlanAsync(
+		ElementsNodeExpectation expectation,
+		string expectedEffectiveFeeAsset,
+		ReadOnlyMemory<byte> sourceEpoch,
+		LiquidOrdinaryWalletExactSpendPlan plan,
+		IReadOnlyList<IReadOnlyList<string>?> previousTransactionIdsBySelectedInput,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(expectation);
+		ArgumentNullException.ThrowIfNull(plan);
+		ArgumentNullException.ThrowIfNull(previousTransactionIdsBySelectedInput);
+		cancellationToken.ThrowIfCancellationRequested();
+		ElementsNodeExpectation normalizedExpectation = expectation.Normalize();
+		LiquidAssetId normalizedEffectiveFeeAsset =
+			LiquidAssetId.ParseRpcHex(expectedEffectiveFeeAsset, nameof(expectedEffectiveFeeAsset));
+		ElementsPublicNetworkManifest planManifest = GetReviewedPlanManifest(plan);
+		if (!StringComparer.Ordinal.Equals(normalizedExpectation.Chain, planManifest.ChainRpcName)
+			|| !StringComparer.Ordinal.Equals(normalizedExpectation.PeggedAsset, planManifest.PeggedAssetId)
+			|| !StringComparer.Ordinal.Equals(
+				normalizedEffectiveFeeAsset.CanonicalRpcHex,
+				planManifest.RequiredFeeAssetId)
+			|| normalizedEffectiveFeeAsset != plan.GetPeggedAssetId())
+		{
+			throw new ArgumentException(
+				"The node expectation and effective fee asset must match the ordinary-wallet plan context.");
+		}
+
+		byte[] ownedSourceEpoch = CopyAndValidateSourceEpoch(sourceEpoch.Span);
+		bool lockHeld = false;
+		try
+		{
+			(
+				ElementsRawTransactionRequest[] requests,
+				IReadOnlyList<string>?[] normalizedPreviousTransactionIds) =
+				CreateOrdinaryWalletPlanRawTransactionRequests(
+					plan,
+					previousTransactionIdsBySelectedInput);
+
+			await _probeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+			lockHeld = true;
+			ElementsExpectationBoundRawTransactionBatch rawTransactions =
+				await GetExpectationBoundRawTransactionsCoreAsync(
+					normalizedExpectation,
+					normalizedEffectiveFeeAsset,
+					requests,
+					cancellationToken).ConfigureAwait(false);
+			cancellationToken.ThrowIfCancellationRequested();
+			_ = planManifest.BindNodeObservation(rawTransactions.NodeObservation.NodeStatus);
+			if (!rawTransactions.TryCreateOrdinaryWalletPlanFundingBatch(
+				plan,
+				normalizedPreviousTransactionIds,
+				out LiquidOrdinaryWalletPlanFundingBatch? fundingBatch,
+				out LiquidOrdinaryWalletPlanWireErrorCode fundingErrorCode))
+			{
+				fundingBatch?.Dispose();
+				throw InvalidResult(
+					"expectation-bound ordinary-wallet plan frame",
+					fundingErrorCode.GetMessage());
+			}
+
+			using (fundingBatch)
+			{
+				LiquidOrdinaryWalletPlanEncodedFrame? frame = null;
+				if (!LiquidOrdinaryWalletPlanEncoder.TryEncode(
+					ownedSourceEpoch,
+					plan,
+					fundingBatch,
+					out frame,
+					out LiquidOrdinaryWalletPlanWireErrorCode encodingErrorCode))
+				{
+					frame?.Dispose();
+					throw InvalidResult(
+						"expectation-bound ordinary-wallet plan frame",
+						encodingErrorCode.GetMessage());
+				}
+
+				return (
+					rawTransactions.NodeObservation,
+					frame ?? throw new InvalidOperationException(
+						"Ordinary-wallet plan encoding returned no frame owner."));
+			}
+		}
+		finally
+		{
+			if (lockHeld)
+			{
+				_probeLock.Release();
+			}
+			CryptographicOperations.ZeroMemory(ownedSourceEpoch);
+		}
+	}
+
+	private static ElementsPublicNetworkManifest GetReviewedPlanManifest(
+		LiquidOrdinaryWalletExactSpendPlan plan)
+	{
+		string manifestId = plan.GetDestinationNetworkManifestId();
+		if (StringComparer.Ordinal.Equals(
+			manifestId,
+			ElementsPublicNetworkManifest.LiquidMainnet.ManifestId))
+		{
+			return ElementsPublicNetworkManifest.LiquidMainnet;
+		}
+		if (StringComparer.Ordinal.Equals(
+			manifestId,
+			ElementsPublicNetworkManifest.LiquidTestnet.ManifestId))
+		{
+			return ElementsPublicNetworkManifest.LiquidTestnet;
+		}
+
+		throw new ArgumentException(
+			"The ordinary-wallet plan must use a reviewed public-network manifest.",
+			nameof(plan));
+	}
+
+	private static byte[] CopyAndValidateSourceEpoch(ReadOnlySpan<byte> sourceEpoch)
+	{
+		if (sourceEpoch.Length != LiquidOrdinaryWalletPlanWireLimits.SourceEpochLength)
+		{
+			throw new ArgumentException(
+				"An exact nonzero ordinary-wallet plan source epoch is required.",
+				nameof(sourceEpoch));
+		}
+
+		byte[] ownedSourceEpoch = sourceEpoch.ToArray();
+		byte aggregate = 0;
+		for (int index = 0; index < ownedSourceEpoch.Length; index++)
+		{
+			aggregate |= ownedSourceEpoch[index];
+		}
+		if (aggregate == 0)
+		{
+			CryptographicOperations.ZeroMemory(ownedSourceEpoch);
+			throw new ArgumentException(
+				"An exact nonzero ordinary-wallet plan source epoch is required.",
+				nameof(sourceEpoch));
+		}
+
+		return ownedSourceEpoch;
+	}
+
+	private static (
+		ElementsRawTransactionRequest[] Requests,
+		IReadOnlyList<string>?[] PreviousTransactionIdsBySelectedInput)
+		CreateOrdinaryWalletPlanRawTransactionRequests(
+			LiquidOrdinaryWalletExactSpendPlan plan,
+			IReadOnlyList<IReadOnlyList<string>?> previousTransactionIdsBySelectedInput)
+	{
+		ReadOnlySpan<LiquidWalletCoinControlEntry> selectedEntries =
+			plan.GetSelectedEntriesForWireEncoding();
+		if (previousTransactionIdsBySelectedInput.Count != selectedEntries.Length)
+		{
+			throw new ArgumentException(
+				"The previous-transaction mapping must contain one row per selected input.",
+				nameof(previousTransactionIdsBySelectedInput));
+		}
+
+		var blockHashesByTransactionId = new Dictionary<string, string?>(StringComparer.Ordinal);
+		for (int selectedIndex = 0; selectedIndex < selectedEntries.Length; selectedIndex++)
+		{
+			LiquidWalletCoinControlEntry selectedEntry = selectedEntries[selectedIndex];
+			string transactionId = selectedEntry.OutPoint.TransactionId.CanonicalRpcHex;
+			string? blockHash = selectedEntry.Confirmation?.CanonicalBlockHash;
+			if (blockHashesByTransactionId.TryGetValue(transactionId, out string? priorBlockHash))
+			{
+				if (!StringComparer.Ordinal.Equals(priorBlockHash, blockHash))
+				{
+					throw new ArgumentException(
+						"Selected inputs from one transaction must have one confirmation binding.",
+						nameof(plan));
+				}
+			}
+			else
+			{
+				blockHashesByTransactionId.Add(transactionId, blockHash);
+			}
+		}
+
+		var normalizedPreviousTransactionIds =
+			new IReadOnlyList<string>?[selectedEntries.Length];
+		var previousIdsByCandidateId = new Dictionary<string, string[]>(StringComparer.Ordinal);
+		int aggregatePreviousCount = 0;
+		for (int selectedIndex = 0; selectedIndex < selectedEntries.Length; selectedIndex++)
+		{
+			IReadOnlyList<string>? sourcePreviousIds =
+				previousTransactionIdsBySelectedInput[selectedIndex];
+			if (sourcePreviousIds is null)
+			{
+				throw new ArgumentException(
+					"Every selected input requires a previous-transaction row.",
+					nameof(previousTransactionIdsBySelectedInput));
+			}
+
+			int previousCount = sourcePreviousIds.Count;
+			if (previousCount < 0
+				|| aggregatePreviousCount >
+					LiquidOrdinaryWalletPlanWireLimits.MaximumPreviousTransactionCount - previousCount)
+			{
+				throw new ArgumentOutOfRangeException(
+					nameof(previousTransactionIdsBySelectedInput),
+					"The ordinary-wallet plan previous-transaction limit was exceeded.");
+			}
+			aggregatePreviousCount += previousCount;
+
+			string candidateId = selectedEntries[selectedIndex].OutPoint.TransactionId.CanonicalRpcHex;
+			var rowPreviousIds = new string[previousCount];
+			string? priorId = null;
+			for (int previousIndex = 0; previousIndex < previousCount; previousIndex++)
+			{
+				LiquidTransactionId previousId;
+				try
+				{
+					previousId = LiquidTransactionId.ParseRpcHex(
+						sourcePreviousIds[previousIndex]!,
+						nameof(previousTransactionIdsBySelectedInput));
+				}
+				catch (ArgumentException exception)
+				{
+					throw new ArgumentException(
+						"Every previous transaction requires a canonical nonzero identifier.",
+						nameof(previousTransactionIdsBySelectedInput),
+						exception);
+				}
+
+				string normalizedId = previousId.CanonicalRpcHex;
+				if (previousId.IsZero
+					|| StringComparer.Ordinal.Equals(normalizedId, candidateId)
+					|| priorId is not null && StringComparer.Ordinal.Compare(priorId, normalizedId) >= 0)
+				{
+					throw new ArgumentException(
+						"Previous transaction identifiers must be canonical, unique, and strictly ordered.",
+						nameof(previousTransactionIdsBySelectedInput));
+				}
+
+				rowPreviousIds[previousIndex] = normalizedId;
+				blockHashesByTransactionId.TryAdd(normalizedId, null);
+				priorId = normalizedId;
+			}
+			normalizedPreviousTransactionIds[selectedIndex] = rowPreviousIds;
+			if (previousIdsByCandidateId.TryGetValue(candidateId, out string[]? priorPreviousIds))
+			{
+				if (!priorPreviousIds.AsSpan().SequenceEqual(rowPreviousIds))
+				{
+					throw new ArgumentException(
+						"Selected inputs from one transaction must have one previous-transaction row.",
+						nameof(previousTransactionIdsBySelectedInput));
+				}
+			}
+			else
+			{
+				previousIdsByCandidateId.Add(candidateId, rowPreviousIds);
+			}
+		}
+
+		if (blockHashesByTransactionId.Count is < 1 or > MaxRawTransactionCount)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(previousTransactionIdsBySelectedInput),
+				"The ordinary-wallet plan raw-transaction request limit was exceeded.");
+		}
+
+		string[] transactionIds = [.. blockHashesByTransactionId.Keys];
+		Array.Sort(transactionIds, StringComparer.Ordinal);
+		var requests = new ElementsRawTransactionRequest[transactionIds.Length];
+		for (int index = 0; index < transactionIds.Length; index++)
+		{
+			string transactionId = transactionIds[index];
+			requests[index] = new ElementsRawTransactionRequest(
+				transactionId,
+				blockHashesByTransactionId[transactionId]);
+		}
+
+		return (requests, normalizedPreviousTransactionIds);
 	}
 
 	private const int MaxRawTransactionBytes = 4_194_304;

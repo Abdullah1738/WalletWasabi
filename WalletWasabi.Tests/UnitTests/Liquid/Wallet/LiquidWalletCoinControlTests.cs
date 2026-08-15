@@ -4763,6 +4763,9 @@ public class LiquidWalletCoinControlTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<ValidatesExpectationBoundInputsBeforeTransportAsync>d__89",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<FetchesExpectationBoundRawTransactionsInsideExactFenceAsync>d__90",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<RejectsMalformedOrDriftingRawTransactionsWithoutPartialAuthorityAsync>d__91",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<EncodesOneExpectationBoundPlanFromCanonicalAcquiredTransactionsAsync>d__117",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<RejectsInvalidPlanCompositionBeforeRpcAndInvalidFundingWithoutPartialFrameAsync>d__118",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<AssertPlanEncodingArgumentRejectedAsync>d__119",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<>c__DisplayClass89_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<>c__DisplayClass91_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<>c__DisplayClass91_1",
@@ -4778,8 +4781,8 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_728,
-			"fa79d697230624c879bf8a8e835ca95d48bf452e518cd656c0a68663aa20dee0");
+			1_729,
+			"4c610e08438673d546165d34380b483caf365de61ed588f8d9e1714094f414ea");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
@@ -4790,8 +4793,8 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_725,
-			"a885a5579e4413a04e5f99569c9e1013569f438a31671481eec67abd599f6eef");
+			1_726,
+			"5cb77829575afe28a78467df8e8895d7af125affc19b3fd5fe2217238a38edc7");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",

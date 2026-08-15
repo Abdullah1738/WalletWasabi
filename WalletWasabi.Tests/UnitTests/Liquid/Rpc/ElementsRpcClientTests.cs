@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Security.Cryptography;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -7,9 +8,18 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using WalletWasabi.Liquid.Addresses;
+using WalletWasabi.Liquid.Amounts;
+using WalletWasabi.Liquid.Assets;
+using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
+using WalletWasabi.Liquid.Transactions;
+using WalletWasabi.Liquid.Wallet;
+using WalletWasabi.Liquid.Wallet.Wire;
 using Xunit;
+using LiquidOrdinaryWalletPlanEncodedFrame = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanEncodedFrame;
+using LiquidOrdinaryWalletPlanFundingBatch = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanFundingBatch;
 
 namespace WalletWasabi.Tests.UnitTests.Liquid.Rpc;
 
@@ -160,12 +170,25 @@ public class ElementsRpcClientTests
 				{
 					return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
 				}
+				if (phase == 3 && sidechainCall == 1)
+				{
+					string planPeggedAsset = ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId;
+					return Envelope(invocation.Id, FeeAssetResult(planPeggedAsset, planPeggedAsset));
+				}
 			}
 			if (phase == 2 && invocation.Method == "getrawtransaction")
 			{
 				middleCallEntered.TrySetResult();
 				await releaseMiddleCall.Task.WaitAsync(cancellationToken);
 				return Envelope(invocation.Id, JsonSerializer.Serialize("0102"));
+			}
+			if (phase == 3)
+			{
+				if (invocation.Method == "getrawtransaction")
+				{
+					return Envelope(invocation.Id, JsonSerializer.Serialize("0102"));
+				}
+				return LiquidTestnetResult(invocation);
 			}
 
 			return ValidResult(invocation);
@@ -328,6 +351,91 @@ public class ElementsRpcClientTests
 				"getsidechaininfo",
 			],
 			harness.Handler.Methods.Skip(methodCountBeforeRawTransactions));
+
+		phase = 3;
+		sidechainCalls = 0;
+		middleCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		releaseMiddleCall = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		int methodCountBeforePlanEncoding = harness.Handler.Methods.Count;
+		LiquidOrdinaryWalletExactSpendPlan plan = CreateExpectationBoundPlan();
+		byte[] planSourceEpoch = PlanSourceEpoch();
+		IReadOnlyList<string>?[] planPreviousTransactionIds = [Array.Empty<string>()];
+		Task<(
+			ElementsExpectationBoundNodeObservation NodeObservation,
+			LiquidOrdinaryWalletPlanEncodedFrame Frame)> planEncodingTask =
+			harness.Client.EncodeExpectationBoundOrdinaryWalletPlanAsync(
+				LiquidTestnetExpectation(),
+				ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
+				planSourceEpoch,
+				plan,
+				planPreviousTransactionIds,
+				CancellationToken.None);
+		await middleCallEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+		CryptographicOperations.ZeroMemory(planSourceEpoch);
+		planPreviousTransactionIds[0] = [RawTransactionIdTwo];
+		Task<ElementsNodeStatus> statusDuringPlanEncodingTask =
+			harness.Client.GetNodeStatusAsync(CancellationToken.None);
+		try
+		{
+			Assert.Equal(
+				[
+					"getnodegeneration",
+					"getnetworkinfo",
+					"getblockchaininfo",
+					"getblockhash",
+					"getblockhash",
+					"getsidechaininfo",
+				],
+				harness.Handler.Methods.Skip(methodCountBeforePlanEncoding));
+			Assert.False(statusDuringPlanEncodingTask.IsCompleted);
+		}
+		finally
+		{
+			releaseMiddleCall.TrySetResult();
+		}
+
+		(
+			ElementsExpectationBoundNodeObservation planObservation,
+			LiquidOrdinaryWalletPlanEncodedFrame planFrame) =
+			await planEncodingTask.WaitAsync(TimeSpan.FromSeconds(5));
+		using (planFrame)
+		{
+			Assert.True(planObservation.HasExactGenerationFenceObservation);
+			byte[] frameBytes = new byte[planFrame.Length];
+			try
+			{
+				planFrame.CopyFrameTo(frameBytes);
+				Assert.Equal(PlanSourceEpoch(), frameBytes[24..56]);
+			}
+			finally
+			{
+				CryptographicOperations.ZeroMemory(frameBytes);
+			}
+		}
+		ElementsNodeStatus statusAfterPlanEncoding =
+			await statusDuringPlanEncodingTask.WaitAsync(TimeSpan.FromSeconds(5));
+		Assert.Equal("liquidtestnet", statusAfterPlanEncoding.Chain);
+		Assert.Equal(
+			[
+				"getnodegeneration",
+				"getnetworkinfo",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockhash",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getnodegeneration",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getrawtransaction",
+				"getnodegeneration",
+				"getnetworkinfo",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockhash",
+				"getsidechaininfo",
+			],
+			harness.Handler.Methods.Skip(methodCountBeforePlanEncoding));
 	}
 
 	[Theory]
@@ -369,11 +477,20 @@ public class ElementsRpcClientTests
 				{
 					return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
 				}
+				if (phase == 5 && sidechainCall == 1)
+				{
+					string planPeggedAsset = ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId;
+					return Envelope(invocation.Id, FeeAssetResult(planPeggedAsset, planPeggedAsset));
+				}
 			}
-			if (phase == 3 && invocation.Method == "getrawtransaction")
+			if (phase is 3 or 5 && invocation.Method == "getrawtransaction")
 			{
 				blockedCallEntered.TrySetResult();
 				await neverCompletes.Task.WaitAsync(cancellationToken);
+			}
+			if (phase == 5)
+			{
+				return LiquidTestnetResult(invocation);
 			}
 
 			return ValidResult(invocation);
@@ -449,6 +566,37 @@ public class ElementsRpcClientTests
 		Assert.Equal(16, harness.Handler.Methods.Count - methodCountBeforeRawTransactions);
 		Assert.Equal("getrawtransaction", harness.Handler.Methods[methodCountBeforeRawTransactions + 10]);
 		Assert.Equal("getnetworkinfo", harness.Handler.Methods[methodCountBeforeRawTransactions + 11]);
+
+		phase = 5;
+		generationCalls = 0;
+		sidechainCalls = 0;
+		blockedCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		neverCompletes = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		int methodCountBeforePlanEncoding = harness.Handler.Methods.Count;
+		using var planEncodingCancellation = new CancellationTokenSource();
+		Task<(
+			ElementsExpectationBoundNodeObservation NodeObservation,
+			LiquidOrdinaryWalletPlanEncodedFrame Frame)> planEncodingTask =
+			harness.Client.EncodeExpectationBoundOrdinaryWalletPlanAsync(
+				LiquidTestnetExpectation(),
+				ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
+				PlanSourceEpoch(),
+				CreateExpectationBoundPlan(),
+				[Array.Empty<string>()],
+				planEncodingCancellation.Token);
+		await blockedCallEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+		planEncodingCancellation.Cancel();
+
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(
+			() => planEncodingTask.WaitAsync(TimeSpan.FromSeconds(5)));
+		phase = 6;
+		ElementsNodeStatus statusAfterPlanEncodingCancellation =
+			await harness.Client.GetNodeStatusAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+		Assert.Equal("elementsregtest", statusAfterPlanEncodingCancellation.Chain);
+		Assert.Equal(16, harness.Handler.Methods.Count - methodCountBeforePlanEncoding);
+		Assert.Equal("getrawtransaction", harness.Handler.Methods[methodCountBeforePlanEncoding + 10]);
+		Assert.Equal("getnetworkinfo", harness.Handler.Methods[methodCountBeforePlanEncoding + 11]);
 	}
 
 	[Theory]
@@ -2258,4 +2406,298 @@ public class ElementsRpcClientTests
 	private const string ExpectationOtherBestBlockHash = "0202020202020202020202020202020202020202020202020202020202020202";
 	private const string RawTransactionIdOne = "1111111111111111111111111111111111111111111111111111111111111111";
 	private const string RawTransactionIdTwo = "2222222222222222222222222222222222222222222222222222222222222222";
+	private const string RawTransactionIdThree = "3333333333333333333333333333333333333333333333333333333333333333";
+	private const string PlanPublicKeyHex =
+		"0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+	private const string PlanScriptHex = "00140102030405060708090a0b0c0d0e0f1011121314";
+
+	[Fact]
+	public async Task EncodesOneExpectationBoundPlanFromCanonicalAcquiredTransactionsAsync()
+	{
+		using var harness = new ElementsRpcHarness(ExpectationBoundPlanCompositionResult);
+		LiquidOrdinaryWalletExactSpendPlan plan = CreateExpectationBoundPlan();
+		byte[] sourceEpoch = PlanSourceEpoch();
+		(
+			ElementsExpectationBoundNodeObservation nodeObservation,
+			LiquidOrdinaryWalletPlanEncodedFrame frame) =
+			await harness.Client.EncodeExpectationBoundOrdinaryWalletPlanAsync(
+				LiquidTestnetExpectation(),
+				ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
+				sourceEpoch,
+				plan,
+				[[RawTransactionIdTwo]],
+				CancellationToken.None);
+		using (frame)
+		{
+			Assert.Equal("liquidtestnet", nodeObservation.Expectation.Chain);
+			Assert.Equal(ExpectationStartupId, nodeObservation.Generation.StartupId);
+			Assert.Equal(9UL, nodeObservation.Generation.ChainstateRevision);
+			Assert.True(nodeObservation.HasExactGenerationFenceObservation);
+			Assert.True(nodeObservation.HasEffectiveFeeAssetObservation);
+			Assert.False(nodeObservation.HasArtifactSourceAttestation);
+			Assert.False(nodeObservation.HasRuntimeQualification);
+			Assert.False(nodeObservation.HasCurrentnessAuthority);
+			Assert.False(nodeObservation.HasReservationAuthority);
+			Assert.False(nodeObservation.HasBroadcastAuthority);
+
+			var expectedRawTransactions = new ElementsExpectationBoundRawTransactionBatch(
+				nodeObservation,
+				[
+					new ElementsRawTransactionObservation(
+						new ElementsRawTransactionRequest(RawTransactionIdOne, BestBlockHash),
+						[0x01, 0x02, 0x03]),
+					new ElementsRawTransactionObservation(
+						new ElementsRawTransactionRequest(RawTransactionIdTwo, null),
+						[0x04, 0x05]),
+				]);
+			bool fundingAccepted = expectedRawTransactions.TryCreateOrdinaryWalletPlanFundingBatch(
+				plan,
+				[[RawTransactionIdTwo]],
+				out LiquidOrdinaryWalletPlanFundingBatch? expectedFundingBatch,
+				out LiquidOrdinaryWalletPlanWireErrorCode fundingErrorCode);
+			Assert.True(fundingAccepted, fundingErrorCode.ToString());
+			Assert.NotNull(expectedFundingBatch);
+			using (expectedFundingBatch)
+			{
+				bool encodingAccepted = LiquidOrdinaryWalletPlanEncoder.TryEncode(
+					sourceEpoch,
+					plan,
+					expectedFundingBatch,
+					out LiquidOrdinaryWalletPlanEncodedFrame? expectedFrame,
+					out LiquidOrdinaryWalletPlanWireErrorCode encodingErrorCode);
+				Assert.True(encodingAccepted, encodingErrorCode.ToString());
+				Assert.NotNull(expectedFrame);
+				using (expectedFrame)
+				{
+					byte[] actualBytes = new byte[frame.Length];
+					byte[] expectedBytes = new byte[expectedFrame.Length];
+					try
+					{
+						frame.CopyFrameTo(actualBytes);
+						expectedFrame.CopyFrameTo(expectedBytes);
+						Assert.Equal(expectedBytes, actualBytes);
+						Assert.Equal(sourceEpoch, actualBytes[24..56]);
+					}
+					finally
+					{
+						CryptographicOperations.ZeroMemory(actualBytes);
+						CryptographicOperations.ZeroMemory(expectedBytes);
+					}
+				}
+			}
+		}
+		CryptographicOperations.ZeroMemory(sourceEpoch);
+
+		Assert.Equal(
+			[
+				"getnodegeneration",
+				"getnetworkinfo",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockhash",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getnodegeneration",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getrawtransaction",
+				"getrawtransaction",
+				"getnodegeneration",
+			],
+			harness.Handler.Methods);
+		Assert.Equal(
+			$"[\"{RawTransactionIdOne}\",false,\"{BestBlockHash}\"]",
+			harness.Handler.Parameters[10]);
+		Assert.Equal(
+			$"[\"{RawTransactionIdTwo}\",false]",
+			harness.Handler.Parameters[11]);
+	}
+
+	[Fact]
+	public async Task RejectsInvalidPlanCompositionBeforeRpcAndInvalidFundingWithoutPartialFrameAsync()
+	{
+		LiquidOrdinaryWalletExactSpendPlan plan = CreateExpectationBoundPlan();
+		using (var contextHarness = new ElementsRpcHarness(ExpectationBoundPlanCompositionResult))
+		{
+			await AssertPlanEncodingArgumentRejectedAsync(
+				contextHarness,
+				LiquidTestnetExpectation() with { Chain = "elementsregtest" },
+				PlanSourceEpoch(),
+				plan,
+				[[RawTransactionIdTwo]]);
+		}
+		using (var epochHarness = new ElementsRpcHarness(ExpectationBoundPlanCompositionResult))
+		{
+			await AssertPlanEncodingArgumentRejectedAsync(
+				epochHarness,
+				LiquidTestnetExpectation(),
+				new byte[32],
+				plan,
+				[[RawTransactionIdTwo]]);
+		}
+		using (var mappingHarness = new ElementsRpcHarness(ExpectationBoundPlanCompositionResult))
+		{
+			await AssertPlanEncodingArgumentRejectedAsync(
+				mappingHarness,
+				LiquidTestnetExpectation(),
+				PlanSourceEpoch(),
+				plan,
+				[[new string('b', 64), new string('a', 64)]]);
+		}
+
+		using var invalidFundingHarness =
+			new ElementsRpcHarness(ExpectationBoundDuplicatePlanFundingResult);
+		ElementsRpcException? rejection = null;
+		try
+		{
+			(
+				ElementsExpectationBoundNodeObservation _,
+				LiquidOrdinaryWalletPlanEncodedFrame rejectedFrame) =
+				await invalidFundingHarness.Client.EncodeExpectationBoundOrdinaryWalletPlanAsync(
+					LiquidTestnetExpectation(),
+					ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
+					PlanSourceEpoch(),
+					plan,
+					[[RawTransactionIdTwo, RawTransactionIdThree]],
+					CancellationToken.None);
+			rejectedFrame.Dispose();
+		}
+		catch (ElementsRpcException exception)
+		{
+			rejection = exception;
+		}
+
+		Assert.NotNull(rejection);
+		Assert.Equal(ElementsRpcFailureKind.Protocol, rejection.FailureKind);
+		Assert.Equal(
+			"Elements RPC 'expectation-bound ordinary-wallet plan frame' returned an invalid result: ordinary wallet plan wire encoding is invalid.",
+			rejection.Message);
+		Assert.DoesNotContain(RawTransactionIdOne, rejection.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain(RawTransactionIdTwo, rejection.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain(RawTransactionIdThree, rejection.Message, StringComparison.Ordinal);
+		Assert.Equal(14, invalidFundingHarness.Handler.Methods.Count);
+	}
+
+	private static async Task AssertPlanEncodingArgumentRejectedAsync(
+		ElementsRpcHarness harness,
+		ElementsNodeExpectation expectation,
+		byte[] sourceEpoch,
+		LiquidOrdinaryWalletExactSpendPlan plan,
+		IReadOnlyList<IReadOnlyList<string>?> previousTransactionIdsBySelectedInput)
+	{
+		ArgumentException? rejection = null;
+		try
+		{
+			(
+				ElementsExpectationBoundNodeObservation _,
+				LiquidOrdinaryWalletPlanEncodedFrame rejectedFrame) =
+				await harness.Client.EncodeExpectationBoundOrdinaryWalletPlanAsync(
+					expectation,
+					ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
+					sourceEpoch,
+					plan,
+					previousTransactionIdsBySelectedInput,
+					CancellationToken.None);
+			rejectedFrame.Dispose();
+		}
+		catch (ArgumentException exception)
+		{
+			rejection = exception;
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(sourceEpoch);
+		}
+
+		Assert.NotNull(rejection);
+		Assert.Empty(harness.Handler.Methods);
+	}
+
+	private static LiquidOrdinaryWalletExactSpendPlan CreateExpectationBoundPlan()
+	{
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidTestnet;
+		LiquidAssetId peggedAsset = LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId);
+		LiquidTransactionId transactionId = LiquidTransactionId.ParseRpcHex(RawTransactionIdOne);
+		LiquidSpendKeyReference spendKey = LiquidSpendKeyReference.Create(
+			Convert.FromHexString(PlanPublicKeyHex),
+			LiquidKeyBranch.External,
+			0);
+		LiquidOwnedOutput output = LiquidOwnedOutput.Create(
+			LiquidOutPoint.CreateSpendable(transactionId, 0),
+			spendKey.GetScriptPubKey(),
+			LiquidAssetAmount.Create(peggedAsset, peggedAsset, 10),
+			spendKey);
+		LiquidWalletState state = LiquidWalletState.Empty(peggedAsset).Apply(
+			0,
+			LiquidWalletTransactionDelta.Create(transactionId, [], [output]));
+		state = state.Confirm(
+			state.Revision,
+			transactionId,
+			LiquidConfirmation.Create(BestBlockHash, 42));
+		LiquidAddress address = LiquidAddress.FromScriptPubKey(
+			manifest,
+			Convert.FromHexString(PlanScriptHex),
+			LiquidBlindingPublicKey.Create(Convert.FromHexString(PlanPublicKeyHex)));
+		LiquidSuppliedConfidentialDestination destination =
+			LiquidSuppliedConfidentialDestination.Create(
+				manifest,
+				address,
+				peggedAsset,
+				LiquidAssetAmount.Create(peggedAsset, peggedAsset, 9),
+				LiquidWalletLabelSet.Create(["rpc-plan"]));
+		return state.CreateExactOrdinaryWalletSpendPlan(
+			state.Revision,
+			[output.OutPoint],
+			LiquidSuppliedConfidentialDestinationBatch.Create([destination]),
+			LiquidAssetAmount.Create(peggedAsset, peggedAsset, 1));
+	}
+
+	private static ElementsNodeExpectation LiquidTestnetExpectation()
+	{
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidTestnet;
+		return new ElementsNodeExpectation(
+			manifest.ChainRpcName,
+			manifest.GenesisBlockHash,
+			"51",
+			manifest.PeggedAssetId,
+			manifest.ParentGenesisHash,
+			0,
+			false,
+			manifest.ElementsNumericVersion,
+			manifest.ElementsProtocolVersion,
+			manifest.ExpectedSubversion);
+	}
+
+	private static byte[] PlanSourceEpoch() =>
+	[
+		1, 2, 3, 4, 5, 6, 7, 8,
+		9, 10, 11, 12, 13, 14, 15, 16,
+		17, 18, 19, 20, 21, 22, 23, 24,
+		25, 26, 27, 28, 29, 30, 31, 32,
+	];
+
+	private static string ExpectationBoundPlanCompositionResult(RpcInvocation invocation) =>
+		invocation.Method switch
+		{
+			"getnodegeneration" => Envelope(
+				invocation.Id,
+				GenerationResult(ExpectationStartupId, 9, 42, BestBlockHash)),
+			"getsidechaininfo" when invocation.Id == "9" => Envelope(
+				invocation.Id,
+				FeeAssetResult(
+					ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
+					ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId)),
+			"getrawtransaction" when invocation.Parameters.Contains(
+				RawTransactionIdOne,
+				StringComparison.Ordinal) => Envelope(invocation.Id, JsonSerializer.Serialize("010203")),
+			"getrawtransaction" when invocation.Parameters.Contains(
+				RawTransactionIdTwo,
+				StringComparison.Ordinal) => Envelope(invocation.Id, JsonSerializer.Serialize("0405")),
+			_ => LiquidTestnetResult(invocation),
+		};
+
+	private static string ExpectationBoundDuplicatePlanFundingResult(RpcInvocation invocation) =>
+		invocation.Method == "getrawtransaction"
+			? Envelope(invocation.Id, JsonSerializer.Serialize("0102"))
+			: ExpectationBoundPlanCompositionResult(invocation);
 }
