@@ -861,12 +861,35 @@ public sealed class ElementsRpcClient : IDisposable
 	private static bool RequiredWarningsPresent(JsonElement value, string propertyName)
 	{
 		JsonElement property = RequiredProperty(value, propertyName, "node status");
-		if (property.ValueKind != JsonValueKind.String || property.GetString() is not { } warnings || warnings.Length > 4096)
+		if (property.ValueKind == JsonValueKind.String
+			&& property.GetString() is { } legacyWarnings
+			&& legacyWarnings.Length <= 4096)
 		{
-			throw InvalidResult("node status", $"field '{propertyName}' must be a bounded string");
+			return legacyWarnings.Length > 0;
 		}
 
-		return warnings.Length > 0;
+		if (property.ValueKind == JsonValueKind.Array)
+		{
+			int entryCount = 0;
+			int totalCharacters = 0;
+			foreach (JsonElement entry in property.EnumerateArray())
+			{
+				entryCount++;
+				if (entryCount > 64
+					|| entry.ValueKind != JsonValueKind.String
+					|| entry.GetString() is not { Length: > 0 } warning
+					|| warning.Length > 4096 - totalCharacters)
+				{
+					throw InvalidResult("node status", $"field '{propertyName}' must be a bounded string or string array");
+				}
+
+				totalCharacters += warning.Length;
+			}
+
+			return entryCount > 0;
+		}
+
+		throw InvalidResult("node status", $"field '{propertyName}' must be a bounded string or string array");
 	}
 
 	private static void RequireObject(JsonElement value, string method)

@@ -809,32 +809,89 @@ public class ElementsRpcClientTests
 	[Fact]
 	public async Task ReportsWarningsAsNonAuthoritativeObservationsAsync()
 	{
-		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		using (var legacyHarness = new ElementsRpcHarness(invocation => invocation.Method switch
 		{
 			"getnetworkinfo" => Envelope(invocation.Id, NetworkResult(warnings: "network warning")),
 			"getblockchaininfo" => Envelope(invocation.Id, BlockchainResult(warnings: "chain warning")),
 			_ => ValidResult(invocation),
+		}))
+		{
+			ElementsNodeStatus legacyStatus = await legacyHarness.Client.GetNodeStatusAsync(CancellationToken.None);
+
+			Assert.True(legacyStatus.NetworkWarningsPresent);
+			Assert.True(legacyStatus.BlockchainWarningsPresent);
+			Assert.False(legacyStatus.HasClearWarningObservation);
+			Assert.True(legacyStatus.HasCompleteArchiveObservation);
+		}
+
+		using (var arrayHarness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getnetworkinfo" => Envelope(invocation.Id, NetworkResult(warningsJson: "[\"network warning\"]")),
+			"getblockchaininfo" => Envelope(invocation.Id, BlockchainResult(warningsJson: "[\"chain warning\",\"second warning\"]")),
+			_ => ValidResult(invocation),
+		}))
+		{
+			ElementsNodeStatus arrayStatus = await arrayHarness.Client.GetNodeStatusAsync(CancellationToken.None);
+
+			Assert.True(arrayStatus.NetworkWarningsPresent);
+			Assert.True(arrayStatus.BlockchainWarningsPresent);
+			Assert.False(arrayStatus.HasClearWarningObservation);
+		}
+
+		using var emptyArrayHarness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getnetworkinfo" => Envelope(invocation.Id, NetworkResult(warningsJson: "[]")),
+			"getblockchaininfo" => Envelope(invocation.Id, BlockchainResult(warningsJson: "[]")),
+			_ => ValidResult(invocation),
 		});
+		ElementsNodeStatus emptyArrayStatus = await emptyArrayHarness.Client.GetNodeStatusAsync(CancellationToken.None);
 
-		ElementsNodeStatus status = await harness.Client.GetNodeStatusAsync(CancellationToken.None);
+		Assert.False(emptyArrayStatus.NetworkWarningsPresent);
+		Assert.False(emptyArrayStatus.BlockchainWarningsPresent);
+		Assert.True(emptyArrayStatus.HasClearWarningObservation);
 
-		Assert.True(status.NetworkWarningsPresent);
-		Assert.True(status.BlockchainWarningsPresent);
-		Assert.False(status.HasClearWarningObservation);
-		Assert.True(status.HasCompleteArchiveObservation);
+		using var boundaryHarness = new ElementsRpcHarness(BoundaryWarningsResult);
+		ElementsNodeStatus boundaryStatus = await boundaryHarness.Client.GetNodeStatusAsync(CancellationToken.None);
+		Assert.True(boundaryStatus.NetworkWarningsPresent);
+		Assert.True(boundaryStatus.BlockchainWarningsPresent);
 	}
 
 	[Fact]
 	public async Task RejectsMissingWarningsBeforeFollowingCallsAsync()
 	{
-		string missingWarnings = "{\"version\":230303,\"protocolversion\":70016,\"subversion\":\"/Elements Core:23.3.3/\",\"localrelay\":true,\"networkactive\":true}";
-		using var harness = new ElementsRpcHarness(invocation => Envelope(invocation.Id, missingWarnings));
+		using var missingHarness = new ElementsRpcHarness(MissingWarningsResult);
+		var missingException = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => missingHarness.Client.GetNodeStatusAsync(CancellationToken.None));
+		Assert.Contains("warnings", missingException.Message, StringComparison.Ordinal);
+		Assert.Single(missingHarness.Handler.Methods);
 
-		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
-			() => harness.Client.GetNodeStatusAsync(CancellationToken.None));
+		Func<RpcInvocation, string>[] invalidResults = new Func<RpcInvocation, string>[]
+		{
+			NullWarningsResult,
+			ObjectWarningsResult,
+			NumberWarningsResult,
+			BooleanWarningsResult,
+			MixedArrayWarningsResult,
+			EmptyEntryWarningsResult,
+			TooManyWarningsResult,
+			TooLongWarningsResult,
+			TooLongLegacyWarningsResult,
+		};
+		foreach (Func<RpcInvocation, string> invalidResult in invalidResults)
+		{
+			using var harness = new ElementsRpcHarness(invalidResult);
+			ElementsRpcException? exception = null;
+			try
+			{
+				await harness.Client.GetNodeStatusAsync(CancellationToken.None);
+			}
+			catch (ElementsRpcException candidate)
+			{
+				exception = candidate;
+			}
 
-		Assert.Contains("warnings", exception.Message, StringComparison.Ordinal);
-		Assert.Single(harness.Handler.Methods);
+			AssertInvalidWarningsFailure(Assert.IsType<ElementsRpcException>(exception), harness);
+		}
 	}
 
 	[Fact]
@@ -1041,8 +1098,9 @@ public class ElementsRpcClientTests
 		bool initialBlockDownload = false,
 		string bestBlockHash = BestBlockHash,
 		string warnings = "",
-		string chain = "elementsregtest") =>
-		$$"""{"chain":"{{chain}}","blocks":{{blocks}},"headers":{{headers}},"bestblockhash":"{{bestBlockHash}}","initialblockdownload":{{initialBlockDownload.ToString().ToLowerInvariant()}},"pruned":false,"trim_headers":false,"warnings":{{JsonSerializer.Serialize(warnings)}}}""";
+		string chain = "elementsregtest",
+		string? warningsJson = null) =>
+		$$"""{"chain":"{{chain}}","blocks":{{blocks}},"headers":{{headers}},"bestblockhash":"{{bestBlockHash}}","initialblockdownload":{{initialBlockDownload.ToString().ToLowerInvariant()}},"pruned":false,"trim_headers":false,"warnings":{{warningsJson ?? JsonSerializer.Serialize(warnings)}}}""";
 
 	private static string SidechainResult(
 		string parentGenesis = ParentGenesis,
@@ -1050,8 +1108,63 @@ public class ElementsRpcClientTests
 		int peginConfirmationDepth = 8) =>
 		$$"""{"fedpegscript":"51","pegged_asset":"{{peggedAsset}}","parent_blockhash":"{{parentGenesis}}","pegin_confirmation_depth":{{peginConfirmationDepth}},"enforce_pak":false}""";
 
-	private static string NetworkResult(string warnings = "") =>
-		$$"""{"version":230303,"protocolversion":70016,"subversion":"/Elements Core:23.3.3/","localrelay":true,"networkactive":true,"warnings":{{JsonSerializer.Serialize(warnings)}}}""";
+	private static string NetworkResult(string warnings = "", string? warningsJson = null) =>
+		$$"""{"version":230303,"protocolversion":70016,"subversion":"/Elements Core:23.3.3/","localrelay":true,"networkactive":true,"warnings":{{warningsJson ?? JsonSerializer.Serialize(warnings)}}}""";
+
+	private static string MissingWarningsResult(RpcInvocation invocation) => Envelope(
+		invocation.Id,
+		"{\"version\":230303,\"protocolversion\":70016,\"subversion\":\"/Elements Core:23.3.3/\",\"localrelay\":true,\"networkactive\":true}");
+
+	private static string NullWarningsResult(RpcInvocation invocation) =>
+		Envelope(invocation.Id, NetworkResult(warningsJson: "null"));
+
+	private static string ObjectWarningsResult(RpcInvocation invocation) =>
+		Envelope(invocation.Id, NetworkResult(warningsJson: "{}"));
+
+	private static string NumberWarningsResult(RpcInvocation invocation) =>
+		Envelope(invocation.Id, NetworkResult(warningsJson: "42"));
+
+	private static string BooleanWarningsResult(RpcInvocation invocation) =>
+		Envelope(invocation.Id, NetworkResult(warningsJson: "true"));
+
+	private static string MixedArrayWarningsResult(RpcInvocation invocation) =>
+		Envelope(invocation.Id, NetworkResult(warningsJson: "[\"do-not-leak\",1]"));
+
+	private static string EmptyEntryWarningsResult(RpcInvocation invocation) =>
+		Envelope(invocation.Id, NetworkResult(warningsJson: "[\"\"]"));
+
+	private static string TooManyWarningsResult(RpcInvocation invocation) => Envelope(
+		invocation.Id,
+		NetworkResult(warningsJson: $"[{string.Join(',', Enumerable.Repeat("\"warning\"", 65))}]"));
+
+	private static string TooLongWarningsResult(RpcInvocation invocation) => Envelope(
+		invocation.Id,
+		NetworkResult(warningsJson: JsonSerializer.Serialize(new[] { new string('w', 4097) })));
+
+	private static string TooLongLegacyWarningsResult(RpcInvocation invocation) =>
+		Envelope(invocation.Id, NetworkResult(warnings: new string('w', 4097)));
+
+	private static string BoundaryWarningsResult(RpcInvocation invocation)
+	{
+		string warningsJson = JsonSerializer.Serialize(Enumerable.Repeat(new string('w', 64), 64));
+		return invocation.Method switch
+		{
+			"getnetworkinfo" => Envelope(invocation.Id, NetworkResult(warningsJson: warningsJson)),
+			"getblockchaininfo" => Envelope(invocation.Id, BlockchainResult(warningsJson: warningsJson)),
+			_ => ValidResult(invocation),
+		};
+	}
+
+	private static void AssertInvalidWarningsFailure(
+		ElementsRpcException exception,
+		ElementsRpcHarness harness)
+	{
+		Assert.Equal(
+			"Elements RPC 'node status' returned an invalid result: field 'warnings' must be a bounded string or string array.",
+			exception.Message);
+		Assert.DoesNotContain("do-not-leak", exception.Message, StringComparison.Ordinal);
+		Assert.Single(harness.Handler.Methods);
+	}
 
 	private static string AddProperty(string jsonObject, string property) =>
 		$"{jsonObject[..^1]},{property}}}";
