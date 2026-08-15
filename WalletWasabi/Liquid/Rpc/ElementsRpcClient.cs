@@ -306,7 +306,13 @@ public sealed class ElementsRpcClient : IDisposable
 		totalTimeout.CancelAfter(_timeouts.TotalRequestTimeout);
 		try
 		{
-			return await CallCoreAsync(method, parameters, totalTimeout.Token).ConfigureAwait(false);
+			return await CallCoreAsync(
+				method,
+				parameters,
+				MaxRpcResponseBytes,
+				MaxJsonStringBytes,
+				"the one-megabyte limit",
+				totalTimeout.Token).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
 		{
@@ -319,6 +325,9 @@ public sealed class ElementsRpcClient : IDisposable
 	private async Task<JsonElement> CallCoreAsync(
 		string method,
 		object[] parameters,
+		int maximumResponseBytes,
+		int maximumJsonStringBytes,
+		string responseLimitDescription,
 		CancellationToken cancellationToken)
 	{
 		string requestId = Interlocked.Increment(ref _requestSequence).ToString(CultureInfo.InvariantCulture);
@@ -355,11 +364,13 @@ public sealed class ElementsRpcClient : IDisposable
 		byte[] responseBytes = await ReadBoundedAsync(
 			method,
 			response.Content,
+			maximumResponseBytes,
+			responseLimitDescription,
 			_timeouts.ResponseIdleTimeout,
 			cancellationToken).ConfigureAwait(false);
 		try
 		{
-			ValidateJsonResourceLimits(responseBytes, method);
+			ValidateJsonResourceLimits(responseBytes, method, maximumJsonStringBytes);
 			using JsonDocument document = JsonDocument.Parse(responseBytes, new JsonDocumentOptions
 			{
 				AllowTrailingCommas = false,
@@ -426,12 +437,15 @@ public sealed class ElementsRpcClient : IDisposable
 	private static async Task<byte[]> ReadBoundedAsync(
 		string method,
 		HttpContent content,
+		int maximumResponseBytes,
+		string responseLimitDescription,
 		TimeSpan responseIdleTimeout,
 		CancellationToken cancellationToken)
 	{
-		if (content.Headers.ContentLength is > MaxRpcResponseBytes)
+		if (content.Headers.ContentLength is > 0 and var contentLength
+			&& contentLength > maximumResponseBytes)
 		{
-			throw ProtocolFailure(method, "the response exceeded the one-megabyte limit");
+			throw ProtocolFailure(method, $"the response exceeded {responseLimitDescription}");
 		}
 
 		using Stream input = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -459,9 +473,9 @@ public sealed class ElementsRpcClient : IDisposable
 				{
 					return output.ToArray();
 				}
-				if (output.Length + read > MaxRpcResponseBytes)
+				if (output.Length + read > maximumResponseBytes)
 				{
-					throw ProtocolFailure(method, "the response exceeded the one-megabyte limit");
+					throw ProtocolFailure(method, $"the response exceeded {responseLimitDescription}");
 				}
 
 				output.Write(buffer, 0, read);
@@ -473,7 +487,10 @@ public sealed class ElementsRpcClient : IDisposable
 		}
 	}
 
-	private static void ValidateJsonResourceLimits(ReadOnlySpan<byte> responseBytes, string method)
+	private static void ValidateJsonResourceLimits(
+		ReadOnlySpan<byte> responseBytes,
+		string method,
+		int maximumJsonStringBytes)
 	{
 		var reader = new Utf8JsonReader(responseBytes, new JsonReaderOptions
 		{
@@ -525,7 +542,7 @@ public sealed class ElementsRpcClient : IDisposable
 					containerCount--;
 					break;
 				case JsonTokenType.String:
-					RequireValueLength(reader, MaxJsonStringBytes, method, "JSON string");
+					RequireValueLength(reader, maximumJsonStringBytes, method, "JSON string");
 					CountArrayValue(containers, containerCount, method);
 					break;
 				case JsonTokenType.Number:
@@ -1085,6 +1102,170 @@ public sealed class ElementsRpcClient : IDisposable
 		}
 	}
 
+	/// <summary>
+	/// Fetches bounded raw transaction bytes while holding the node-probe lock across the exact
+	/// expectation, effective-fee-asset, and generation fence. No retry is performed.
+	/// </summary>
+	public async Task<ElementsExpectationBoundRawTransactionBatch> GetExpectationBoundRawTransactionsAsync(
+		ElementsNodeExpectation expectation,
+		string expectedEffectiveFeeAsset,
+		IReadOnlyList<ElementsRawTransactionRequest> requests,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(expectation);
+		ArgumentNullException.ThrowIfNull(requests);
+		ElementsNodeExpectation normalizedExpectation = expectation.Normalize();
+		LiquidAssetId normalizedEffectiveFeeAsset =
+			LiquidAssetId.ParseRpcHex(expectedEffectiveFeeAsset, nameof(expectedEffectiveFeeAsset));
+		int requestCount = requests.Count;
+		if (requestCount is < 1 or > MaxRawTransactionCount)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(requests),
+				"Between one and one hundred raw transaction requests are required.");
+		}
+
+		var normalizedRequests = new ElementsRawTransactionRequest[requestCount];
+		var transactionIds = new HashSet<string>(StringComparer.Ordinal);
+		for (int index = 0; index < normalizedRequests.Length; index++)
+		{
+			ElementsRawTransactionRequest request = requests[index]
+				?? throw new ArgumentException("Every raw transaction request is required.", nameof(requests));
+			ElementsRawTransactionRequest normalizedRequest = request.Normalize(nameof(requests));
+			if (!transactionIds.Add(normalizedRequest.TransactionId))
+			{
+				throw new ArgumentException("Raw transaction request identifiers must be unique.", nameof(requests));
+			}
+
+			normalizedRequests[index] = normalizedRequest;
+		}
+
+		await _probeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			return await GetExpectationBoundRawTransactionsCoreAsync(
+				normalizedExpectation,
+				normalizedEffectiveFeeAsset,
+				normalizedRequests,
+				cancellationToken).ConfigureAwait(false);
+		}
+		finally
+		{
+			_probeLock.Release();
+		}
+	}
+
+	private async Task<ElementsExpectationBoundRawTransactionBatch> GetExpectationBoundRawTransactionsCoreAsync(
+		ElementsNodeExpectation expectation,
+		LiquidAssetId expectedEffectiveFeeAsset,
+		ElementsRawTransactionRequest[] requests,
+		CancellationToken cancellationToken)
+	{
+		ElementsExpectationBoundNodeObservation nodeObservation =
+			await GetExpectationBoundNodeObservationCoreAsync(
+				expectation,
+				expectedEffectiveFeeAsset,
+				cancellationToken).ConfigureAwait(false);
+		var transactions = new ElementsRawTransactionObservation[requests.Length];
+		long aggregateBytes = 0;
+		for (int index = 0; index < requests.Length; index++)
+		{
+			byte[] transactionBytes = await GetRawTransactionBytesCoreAsync(
+				requests[index],
+				cancellationToken).ConfigureAwait(false);
+			aggregateBytes = checked(aggregateBytes + transactionBytes.Length);
+			if (aggregateBytes > MaxRawTransactionBatchBytes)
+			{
+				throw InvalidResult(
+					"expectation-bound raw transaction batch",
+					"the aggregate raw transaction byte limit was exceeded");
+			}
+
+			transactions[index] = new ElementsRawTransactionObservation(
+				requests[index],
+				transactionBytes);
+		}
+
+		ElementsNodeGenerationObservation generationAfterTransactions =
+			await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+		if (generationAfterTransactions != nodeObservation.Generation)
+		{
+			throw InvalidResult(
+				"expectation-bound raw transaction batch",
+				"node generation changed during raw transaction acquisition");
+		}
+
+		return new ElementsExpectationBoundRawTransactionBatch(nodeObservation, transactions);
+	}
+
+	private async Task<byte[]> GetRawTransactionBytesCoreAsync(
+		ElementsRawTransactionRequest request,
+		CancellationToken cancellationToken)
+	{
+		object[] parameters = request.BlockHash is null
+			? [request.TransactionId, false]
+			: [request.TransactionId, false, request.BlockHash];
+		JsonElement result = await CallWithResponseLimitsAsync(
+			"getrawtransaction",
+			parameters,
+			MaxRawTransactionRpcResponseBytes,
+			MaxRawTransactionHexBytes,
+			"the raw-transaction response limit",
+			cancellationToken).ConfigureAwait(false);
+		if (result.ValueKind != JsonValueKind.String || result.GetString() is not { } text)
+		{
+			throw InvalidResult("getrawtransaction", "a canonical raw transaction is required");
+		}
+
+		string rawJson = result.GetRawText();
+		if (text.Length is 0 or > MaxRawTransactionHexBytes
+			|| text.Length % 2 != 0
+			|| rawJson.Length != text.Length + 2
+			|| rawJson[0] != '"'
+			|| rawJson[^1] != '"'
+			|| !rawJson.AsSpan(1, text.Length).SequenceEqual(text.AsSpan()))
+		{
+			throw InvalidResult("getrawtransaction", "a canonical raw transaction is required");
+		}
+		foreach (char character in text)
+		{
+			if (!char.IsAsciiDigit(character) && character is not (>= 'a' and <= 'f'))
+			{
+				throw InvalidResult("getrawtransaction", "a canonical raw transaction is required");
+			}
+		}
+
+		return Convert.FromHexString(text);
+	}
+
+	private async Task<JsonElement> CallWithResponseLimitsAsync(
+		string method,
+		object[] parameters,
+		int maximumResponseBytes,
+		int maximumJsonStringBytes,
+		string responseLimitDescription,
+		CancellationToken cancellationToken)
+	{
+		using var totalTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		totalTimeout.CancelAfter(_timeouts.TotalRequestTimeout);
+		try
+		{
+			return await CallCoreAsync(
+				method,
+				parameters,
+				maximumResponseBytes,
+				maximumJsonStringBytes,
+				responseLimitDescription,
+				totalTimeout.Token).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+		{
+			throw new ElementsRpcException(
+				ElementsRpcFailureKind.Timeout,
+				$"Elements RPC '{method}' exceeded the total request timeout.");
+		}
+	}
+
 	public void Dispose()
 	{
 		_probeLock.Dispose();
@@ -1093,6 +1274,12 @@ public sealed class ElementsRpcClient : IDisposable
 			_httpClient.Dispose();
 		}
 	}
+
+	private const int MaxRawTransactionBytes = 4_194_304;
+	private const int MaxRawTransactionBatchBytes = 67_108_864;
+	private const int MaxRawTransactionCount = 100;
+	private const int MaxRawTransactionHexBytes = MaxRawTransactionBytes * 2;
+	private const int MaxRawTransactionRpcResponseBytes = MaxRawTransactionHexBytes + 1024;
 
 	private sealed record RpcRequest(string Jsonrpc, string Id, string Method, object[] Params);
 

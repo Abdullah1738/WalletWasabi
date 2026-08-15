@@ -147,7 +147,7 @@ public class ElementsRpcClientTests
 			if (invocation.Method == "getsidechaininfo")
 			{
 				int sidechainCall = sidechainCalls++;
-				if (sidechainCall == 0)
+				if (sidechainCall == 0 && phase != 2)
 				{
 					middleCallEntered.TrySetResult();
 					await releaseMiddleCall.Task.WaitAsync(cancellationToken);
@@ -156,10 +156,16 @@ public class ElementsRpcClientTests
 						return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
 					}
 				}
-				if (phase == 1 && sidechainCall == 1)
+				if (phase is 1 or 2 && sidechainCall == 1)
 				{
 					return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
 				}
+			}
+			if (phase == 2 && invocation.Method == "getrawtransaction")
+			{
+				middleCallEntered.TrySetResult();
+				await releaseMiddleCall.Task.WaitAsync(cancellationToken);
+				return Envelope(invocation.Id, JsonSerializer.Serialize("0102"));
 			}
 
 			return ValidResult(invocation);
@@ -255,6 +261,73 @@ public class ElementsRpcClientTests
 				"getsidechaininfo",
 			],
 			harness.Handler.Methods.Skip(methodCountBeforeComposite));
+
+		phase = 2;
+		sidechainCalls = 0;
+		middleCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		releaseMiddleCall = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		int methodCountBeforeRawTransactions = harness.Handler.Methods.Count;
+		Task<ElementsExpectationBoundRawTransactionBatch> rawTransactionsTask =
+			harness.Client.GetExpectationBoundRawTransactionsAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				[new ElementsRawTransactionRequest(RawTransactionIdOne, null)],
+				CancellationToken.None);
+		await middleCallEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+		Task<ElementsNodeStatus> statusDuringRawTransactionsTask =
+			harness.Client.GetNodeStatusAsync(CancellationToken.None);
+		try
+		{
+			Assert.Equal(
+				[
+					"getnodegeneration",
+					"getnetworkinfo",
+					"getblockchaininfo",
+					"getblockhash",
+					"getblockhash",
+					"getsidechaininfo",
+					"getnodegeneration",
+					"getnodegeneration",
+					"getsidechaininfo",
+					"getnodegeneration",
+					"getrawtransaction",
+				],
+				harness.Handler.Methods.Skip(methodCountBeforeRawTransactions));
+			Assert.False(statusDuringRawTransactionsTask.IsCompleted);
+		}
+		finally
+		{
+			releaseMiddleCall.TrySetResult();
+		}
+
+		ElementsExpectationBoundRawTransactionBatch rawTransactions =
+			await rawTransactionsTask.WaitAsync(TimeSpan.FromSeconds(5));
+		ElementsNodeStatus statusAfterRawTransactions =
+			await statusDuringRawTransactionsTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+		Assert.Single(rawTransactions.GetTransactions());
+		Assert.Equal("elementsregtest", statusAfterRawTransactions.Chain);
+		Assert.Equal(
+			[
+				"getnodegeneration",
+				"getnetworkinfo",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockhash",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getnodegeneration",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getrawtransaction",
+				"getnodegeneration",
+				"getnetworkinfo",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockhash",
+				"getsidechaininfo",
+			],
+			harness.Handler.Methods.Skip(methodCountBeforeRawTransactions));
 	}
 
 	[Theory]
@@ -286,15 +359,21 @@ public class ElementsRpcClientTests
 			if (invocation.Method == "getsidechaininfo")
 			{
 				int sidechainCall = sidechainCalls++;
-				if (!cancelClosingGeneration && sidechainCall == 0 && phase != 2)
+				if (!cancelClosingGeneration && sidechainCall == 0 && phase is 0 or 1)
 				{
 					blockedCallEntered.TrySetResult();
 					await neverCompletes.Task.WaitAsync(cancellationToken);
 				}
-				if ((phase == 0 && sidechainCall == 0) || (phase == 1 && sidechainCall == 1))
+				if ((phase == 0 && sidechainCall == 0)
+					|| (phase is 1 or 3 && sidechainCall == 1))
 				{
 					return Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset));
 				}
+			}
+			if (phase == 3 && invocation.Method == "getrawtransaction")
+			{
+				blockedCallEntered.TrySetResult();
+				await neverCompletes.Task.WaitAsync(cancellationToken);
 			}
 
 			return ValidResult(invocation);
@@ -343,6 +422,33 @@ public class ElementsRpcClientTests
 		Assert.Equal(
 			"getnetworkinfo",
 			harness.Handler.Methods[methodCountBeforeComposite + (cancelClosingGeneration ? 10 : 6)]);
+
+		phase = 3;
+		generationCalls = 0;
+		sidechainCalls = 0;
+		blockedCallEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		neverCompletes = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		int methodCountBeforeRawTransactions = harness.Handler.Methods.Count;
+		using var rawTransactionsCancellation = new CancellationTokenSource();
+		Task<ElementsExpectationBoundRawTransactionBatch> rawTransactionsTask =
+			harness.Client.GetExpectationBoundRawTransactionsAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				[new ElementsRawTransactionRequest(RawTransactionIdOne, null)],
+				rawTransactionsCancellation.Token);
+		await blockedCallEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+		rawTransactionsCancellation.Cancel();
+
+		await Assert.ThrowsAnyAsync<OperationCanceledException>(
+			() => rawTransactionsTask.WaitAsync(TimeSpan.FromSeconds(5)));
+		phase = 4;
+		ElementsNodeStatus statusAfterRawTransactionCancellation =
+			await harness.Client.GetNodeStatusAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+		Assert.Equal("elementsregtest", statusAfterRawTransactionCancellation.Chain);
+		Assert.Equal(16, harness.Handler.Methods.Count - methodCountBeforeRawTransactions);
+		Assert.Equal("getrawtransaction", harness.Handler.Methods[methodCountBeforeRawTransactions + 10]);
+		Assert.Equal("getnetworkinfo", harness.Handler.Methods[methodCountBeforeRawTransactions + 11]);
 	}
 
 	[Theory]
@@ -1782,6 +1888,247 @@ public class ElementsRpcClientTests
 
 		Assert.NotNull(feeException);
 		Assert.Empty(harness.Handler.Methods);
+
+		await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+			() => harness.Client.GetExpectationBoundRawTransactionsAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				[],
+				CancellationToken.None));
+		await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+			() => harness.Client.GetExpectationBoundRawTransactionsAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				Enumerable.Range(0, 101)
+					.Select(index => new ElementsRawTransactionRequest(index.ToString("x64"), null))
+					.ToArray(),
+				CancellationToken.None));
+		await Assert.ThrowsAsync<ArgumentException>(
+			() => harness.Client.GetExpectationBoundRawTransactionsAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				[new ElementsRawTransactionRequest(new string('0', 64), null)],
+				CancellationToken.None));
+		await Assert.ThrowsAsync<ArgumentException>(
+			() => harness.Client.GetExpectationBoundRawTransactionsAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				[new ElementsRawTransactionRequest(RawTransactionIdOne, new string('0', 64))],
+				CancellationToken.None));
+		await Assert.ThrowsAsync<ArgumentException>(
+			() => harness.Client.GetExpectationBoundRawTransactionsAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				[
+					new ElementsRawTransactionRequest(RawTransactionIdOne, null),
+					new ElementsRawTransactionRequest(RawTransactionIdOne, BestBlockHash),
+				],
+				CancellationToken.None));
+		Assert.Empty(harness.Handler.Methods);
+	}
+
+	[Fact]
+	public async Task FetchesExpectationBoundRawTransactionsInsideExactFenceAsync()
+	{
+		using var harness = new ElementsRpcHarness(ExpectationBoundRawTransactionResult);
+		ElementsRawTransactionRequest[] requests =
+		[
+			new(RawTransactionIdOne, BestBlockHash),
+			new(RawTransactionIdTwo, null),
+		];
+
+		ElementsExpectationBoundRawTransactionBatch batch =
+			await harness.Client.GetExpectationBoundRawTransactionsAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				requests,
+				CancellationToken.None);
+
+		Assert.Equal(2, batch.TransactionCount);
+		Assert.Equal(
+			ElementsRawTransactionBindingLevel.SelfReportedExactTupleFeeAndGenerationFencedRawBytesOnly,
+			batch.BindingLevel);
+		Assert.Equal(9UL, batch.NodeObservation.Generation.ChainstateRevision);
+		Assert.True(batch.HasExactGenerationFenceObservation);
+		Assert.True(batch.HasEffectiveFeeAssetObservation);
+		Assert.False(batch.HasTransactionIdValidation);
+		Assert.False(batch.HasBlockMembershipAuthority);
+		Assert.False(batch.HasArtifactSourceAttestation);
+		Assert.False(batch.HasRuntimeQualification);
+		Assert.False(batch.HasCurrentnessAuthority);
+		Assert.False(batch.HasReservationAuthority);
+		Assert.False(batch.HasBroadcastAuthority);
+
+		IReadOnlyList<ElementsRawTransactionObservation> transactions = batch.GetTransactions();
+		Assert.Equal(requests, transactions.Select(transaction => transaction.Request));
+		Assert.Equal(nameof(ElementsRawTransactionRequest), requests[0].ToString());
+		Assert.Equal(nameof(ElementsRawTransactionObservation), transactions[0].ToString());
+		Assert.Equal(nameof(ElementsExpectationBoundRawTransactionBatch), batch.ToString());
+		Assert.DoesNotContain(RawTransactionIdOne, requests[0].ToString(), StringComparison.Ordinal);
+		Assert.DoesNotContain(BestBlockHash, requests[0].ToString(), StringComparison.Ordinal);
+		Assert.Equal([0x01, 0x02, 0x03], transactions[0].GetTransactionBytes());
+		Assert.Equal(65_537, transactions[1].TransactionByteLength);
+		byte[] largeTransaction = transactions[1].GetTransactionBytes();
+		Assert.All(largeTransaction, value => Assert.Equal(0xaa, value));
+		largeTransaction[0] = 0;
+		Assert.Equal(0xaa, transactions[1].GetTransactionBytes()[0]);
+		Assert.NotSame(transactions, batch.GetTransactions());
+
+		Assert.Equal(
+			[
+				"getnodegeneration",
+				"getnetworkinfo",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockhash",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getnodegeneration",
+				"getsidechaininfo",
+				"getnodegeneration",
+				"getrawtransaction",
+				"getrawtransaction",
+				"getnodegeneration",
+			],
+			harness.Handler.Methods);
+		Assert.Equal(
+			$"[\"{RawTransactionIdOne}\",false,\"{BestBlockHash}\"]",
+			harness.Handler.Parameters[10]);
+		Assert.Equal(
+			$"[\"{RawTransactionIdTwo}\",false]",
+			harness.Handler.Parameters[11]);
+	}
+
+	[Fact]
+	public async Task RejectsMalformedOrDriftingRawTransactionsWithoutPartialAuthorityAsync()
+	{
+		using (var driftHarness = new ElementsRpcHarness(ExpectationBoundRawTransactionDriftResult))
+		{
+			ElementsRpcException exception = await Assert.ThrowsAsync<ElementsRpcException>(
+				() => driftHarness.Client.GetExpectationBoundRawTransactionsAsync(
+					ValidExpectation(),
+					PeggedAsset,
+					[new ElementsRawTransactionRequest(RawTransactionIdOne, BestBlockHash)],
+					CancellationToken.None));
+
+			Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+			Assert.Equal(
+				"Elements RPC 'expectation-bound raw transaction batch' returned an invalid result: node generation changed during raw transaction acquisition.",
+				exception.Message);
+			Assert.DoesNotContain(RawTransactionIdOne, exception.Message, StringComparison.Ordinal);
+			Assert.DoesNotContain(BestBlockHash, exception.Message, StringComparison.Ordinal);
+			Assert.Equal(12, driftHarness.Handler.Methods.Count);
+		}
+
+		using (var startupHarness = new ElementsRpcHarness(ExpectationBoundRawTransactionStartupDriftResult))
+		{
+			ElementsRpcException? exception = null;
+			try
+			{
+				await startupHarness.Client.GetExpectationBoundRawTransactionsAsync(
+					ValidExpectation(),
+					PeggedAsset,
+					[new ElementsRawTransactionRequest(RawTransactionIdOne, null)],
+					CancellationToken.None);
+			}
+			catch (ElementsRpcException candidate)
+			{
+				exception = candidate;
+			}
+
+			Assert.NotNull(exception);
+			Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+			Assert.Contains("node generation changed", exception.Message, StringComparison.Ordinal);
+			Assert.DoesNotContain(ExpectationOtherStartupId, exception.Message, StringComparison.Ordinal);
+			Assert.Equal(12, startupHarness.Handler.Methods.Count);
+		}
+
+		using (var tipHarness = new ElementsRpcHarness(ExpectationBoundRawTransactionTipDriftResult))
+		{
+			ElementsRpcException? exception = null;
+			try
+			{
+				await tipHarness.Client.GetExpectationBoundRawTransactionsAsync(
+					ValidExpectation(),
+					PeggedAsset,
+					[new ElementsRawTransactionRequest(RawTransactionIdOne, null)],
+					CancellationToken.None);
+			}
+			catch (ElementsRpcException candidate)
+			{
+				exception = candidate;
+			}
+
+			Assert.NotNull(exception);
+			Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+			Assert.Contains("node generation changed", exception.Message, StringComparison.Ordinal);
+			Assert.DoesNotContain(ExpectationOtherBestBlockHash, exception.Message, StringComparison.Ordinal);
+			Assert.Equal(12, tipHarness.Handler.Methods.Count);
+		}
+
+		using (var escapedHarness = new ElementsRpcHarness(ExpectationBoundEscapedRawTransactionResult))
+		{
+			ElementsRpcException exception = await Assert.ThrowsAsync<ElementsRpcException>(
+				() => escapedHarness.Client.GetExpectationBoundRawTransactionsAsync(
+					ValidExpectation(),
+					PeggedAsset,
+					[new ElementsRawTransactionRequest(RawTransactionIdOne, null)],
+					CancellationToken.None));
+
+			Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+			Assert.Contains("canonical raw transaction", exception.Message, StringComparison.Ordinal);
+			Assert.Equal(11, escapedHarness.Handler.Methods.Count);
+		}
+
+		using (var upperHarness = new ElementsRpcHarness(ExpectationBoundUpperRawTransactionResult))
+		{
+			ElementsRpcException exception = await Assert.ThrowsAsync<ElementsRpcException>(
+				() => upperHarness.Client.GetExpectationBoundRawTransactionsAsync(
+					ValidExpectation(),
+					PeggedAsset,
+					[new ElementsRawTransactionRequest(RawTransactionIdOne, null)],
+					CancellationToken.None));
+
+			Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+			Assert.Contains("canonical raw transaction", exception.Message, StringComparison.Ordinal);
+			Assert.Equal(11, upperHarness.Handler.Methods.Count);
+		}
+
+		using (var oddHarness = new ElementsRpcHarness(ExpectationBoundOddRawTransactionResult))
+		{
+			ElementsRpcException? exception = null;
+			try
+			{
+				await oddHarness.Client.GetExpectationBoundRawTransactionsAsync(
+					ValidExpectation(),
+					PeggedAsset,
+					[new ElementsRawTransactionRequest(RawTransactionIdOne, null)],
+					CancellationToken.None);
+			}
+			catch (ElementsRpcException candidate)
+			{
+				exception = candidate;
+			}
+
+			Assert.NotNull(exception);
+			Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+			Assert.Contains("canonical raw transaction", exception.Message, StringComparison.Ordinal);
+			Assert.DoesNotContain("010", exception.Message, StringComparison.Ordinal);
+			Assert.Equal(11, oddHarness.Handler.Methods.Count);
+		}
+
+		using var oversizedHarness = new ElementsRpcHarness(ExpectationBoundOversizedRawTransactionResult);
+		ElementsRpcException oversizedException = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => oversizedHarness.Client.GetExpectationBoundRawTransactionsAsync(
+				ValidExpectation(),
+				PeggedAsset,
+				[new ElementsRawTransactionRequest(RawTransactionIdOne, null)],
+				CancellationToken.None));
+
+		Assert.Equal(ElementsRpcFailureKind.Protocol, oversizedException.FailureKind);
+		Assert.Contains("JSON string limit", oversizedException.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain(RawTransactionIdOne, oversizedException.Message, StringComparison.Ordinal);
+		Assert.Equal(11, oversizedHarness.Handler.Methods.Count);
 	}
 
 	private static ElementsNodeExpectation ValidExpectation() =>
@@ -1848,7 +2195,67 @@ public class ElementsRpcClientTests
 		_ => ExpectationBoundValidResult(invocation),
 	};
 
+	private static string ExpectationBoundRawTransactionResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getrawtransaction" when invocation.Parameters.Contains(RawTransactionIdOne, StringComparison.Ordinal) =>
+			Envelope(invocation.Id, JsonSerializer.Serialize("010203")),
+		"getrawtransaction" when invocation.Parameters.Contains(RawTransactionIdTwo, StringComparison.Ordinal) =>
+			Envelope(invocation.Id, JsonSerializer.Serialize(new string('a', 65_537 * 2))),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private static string ExpectationBoundRawTransactionDriftResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize("010203")),
+		"getnodegeneration" when invocation.Id == "12" =>
+			Envelope(invocation.Id, GenerationResult(ExpectationStartupId, 10, 42, BestBlockHash)),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private static string ExpectationBoundRawTransactionStartupDriftResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize("010203")),
+		"getnodegeneration" when invocation.Id == "12" =>
+			Envelope(invocation.Id, GenerationResult(ExpectationOtherStartupId, 9, 42, BestBlockHash)),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private static string ExpectationBoundRawTransactionTipDriftResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize("010203")),
+		"getnodegeneration" when invocation.Id == "12" =>
+			Envelope(invocation.Id, GenerationResult(ExpectationStartupId, 9, 43, ExpectationOtherBestBlockHash)),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private static string ExpectationBoundEscapedRawTransactionResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getrawtransaction" => Envelope(invocation.Id, "\"\\u0030\\u0031\""),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private static string ExpectationBoundUpperRawTransactionResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize("AA")),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private static string ExpectationBoundOddRawTransactionResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize("010")),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
+	private static string ExpectationBoundOversizedRawTransactionResult(RpcInvocation invocation) => invocation.Method switch
+	{
+		"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize(new string('a', 4_194_305 * 2))),
+		_ => ExpectationBoundValidResult(invocation),
+	};
+
 	private const string ExpectationStartupId = "abababababababababababababababababababababababababababababababab";
+	private const string ExpectationOtherStartupId = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
 	private const string ExpectationOtherAsset = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 	private const string ExpectationOtherBestBlockHash = "0202020202020202020202020202020202020202020202020202020202020202";
+	private const string RawTransactionIdOne = "1111111111111111111111111111111111111111111111111111111111111111";
+	private const string RawTransactionIdTwo = "2222222222222222222222222222222222222222222222222222222222222222";
 }
