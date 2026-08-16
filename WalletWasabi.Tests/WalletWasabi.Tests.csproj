@@ -100,6 +100,11 @@
 			<Link>libwasabi_liquid_wlpq_v1.dylib</Link>
 			<Visible>false</Visible>
 		</None>
+		<None Update="TestData\Liquid\OrdinaryWalletPlanWireV1\native\libwasabi_liquid_wlpq_v1.so">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>libwasabi_liquid_wlpq_v1.so</Link>
+			<Visible>false</Visible>
+		</None>
 	</ItemGroup>
 
 	<ItemGroup>

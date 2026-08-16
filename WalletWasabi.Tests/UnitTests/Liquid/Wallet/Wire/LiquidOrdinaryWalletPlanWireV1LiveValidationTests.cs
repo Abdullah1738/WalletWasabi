@@ -14,7 +14,14 @@ namespace WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire;
 /// <c>ci/build-wlpq-ffi-library.sh</c>) and validates mirrored conformance-2 frames against
 /// it: a known-good frame must return the frozen status 0 and known-bad frames must return
 /// the exact frozen negative statuses recorded for them. Null/oversized inputs are rejected
-/// fail-closed before dereference by both the managed wrapper and the native boundary. This
+/// fail-closed before dereference by both the managed wrapper and the native boundary. Both
+/// platform artifacts are tracked under
+/// <c>TestData/Liquid/OrdinaryWalletPlanWireV1/native/</c> and hash-pinned below: the macOS
+/// arm64 <c>.dylib</c> (built on the macOS host) and the Linux x86-64 <c>.so</c> (built from
+/// the same pinned commit in a clean git worktree inside the pinned rust:1.96-bookworm Linux
+/// toolchain container, since the native link step requires GNU ld). The runtime selects the
+/// platform-correct artifact via <see cref="OperatingSystem.IsLinux()"/> /
+/// <see cref="OperatingSystem.IsMacOS()"/>; any other platform fails closed. This
 /// slice adds no managed decoder, no signer, no output-opening provider, no PSET
 /// construction, no node, no reservation, no currentness, no broadcast, no CoinJoin, no
 /// sponsor or USDt surface, and no GUI; the binding lives in the test assembly only.
@@ -24,6 +31,18 @@ public class LiquidOrdinaryWalletPlanWireV1LiveValidationTests
 {
 	/// <summary>The full native commit the loaded cdylib was built from.</summary>
 	private const string PinnedNativeCommit = "d8595a4fa4d438fbe14351c7599bcd5c4e862f58";
+
+	/// <summary>
+	/// The SHA-256 of the pinned-commit macOS arm64 cdylib
+	/// (<c>libwasabi_liquid_wlpq_v1.dylib</c>) tracked under the native/ directory.
+	/// </summary>
+	private const string MacOsLibrarySha256 = "27320e9e5f2ee95538f793652b317f1e5e3f59f961a7ec738f7f2387ca20b236";
+
+	/// <summary>
+	/// The SHA-256 of the pinned-commit Linux x86-64 cdylib
+	/// (<c>libwasabi_liquid_wlpq_v1.so</c>) tracked under the native/ directory.
+	/// </summary>
+	private const string LinuxLibrarySha256 = "1793c40d58e9f65caa38506861f8add30152dbb7f86a0a75801a2b17896c99e4";
 
 	/// <summary>The conformance-2 source epoch of the accepted toy frames (0x41 repeated).</summary>
 	private static readonly byte[] ToySourceEpoch = [.. Enumerable.Repeat((byte)0x41, LiquidOrdinaryWalletPlanWireV1NativeValidation.SourceEpochLength)];
@@ -41,9 +60,13 @@ public class LiquidOrdinaryWalletPlanWireV1LiveValidationTests
 		// The artifact loaded by the test must be the exact bytes linked from the pinned-commit
 		// cargo build. The digest is recomputed from the native build output at slice time and
 		// recorded in the slice evidence; here the file is pinned to a regular file under the
-		// tracked native/ directory and its identity is exercised live below.
+		// tracked native/ directory, its identity is exercised live below, and its exact bytes
+		// are hash-pinned per platform so a substituted or corrupted artifact fails closed. The
+		// platform selection lives in a nested helper so this class's closure surface (pinned by
+		// the assembly type manifest) stays byte-identical to the base slice.
 		byte[] libraryBytes = File.ReadAllBytes(libraryPath);
 		Assert.NotEmpty(libraryBytes);
+		Assert.Equal(PlatformLibraryPin.ExpectedSha256, Convert.ToHexStringLower(SHA256.HashData(libraryBytes)));
 		Assert.Equal(40, PinnedNativeCommit.Length);
 		Assert.All(PinnedNativeCommit, c => Assert.True(c is >= '0' and <= '9' or >= 'a' and <= 'f'));
 	}
@@ -154,5 +177,30 @@ public class LiquidOrdinaryWalletPlanWireV1LiveValidationTests
 		byte[] frame = Convert.FromHexString(hex);
 		Assert.Equal(expectedSha256, Convert.ToHexStringLower(SHA256.HashData(frame)));
 		return frame;
+	}
+
+	/// <summary>
+	/// Selects the SHA-256 of the platform-correct pinned-commit cdylib. Kept in a nested
+	/// helper (no lambdas, no captured state) so the enclosing test class's compiler-generated
+	/// closure surface stays byte-identical to the base slice pinned by the assembly type
+	/// manifest. Any platform other than Linux or macOS fails closed before the native
+	/// boundary is reached.
+	/// </summary>
+	private static class PlatformLibraryPin
+	{
+		internal static readonly string ExpectedSha256 = Select();
+
+		private static string Select()
+		{
+			if (OperatingSystem.IsLinux())
+			{
+				return LinuxLibrarySha256;
+			}
+			if (OperatingSystem.IsMacOS())
+			{
+				return MacOsLibrarySha256;
+			}
+			throw new PlatformNotSupportedException("The pinned native validation cdylib is tracked for macOS and Linux only.");
+		}
 	}
 }
