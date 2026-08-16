@@ -8428,13 +8428,15 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string project,
 		(string PrimaryRoot, string[] OrderedRoots) packageAuthority)
 	{
-		const string NuGetPackageRootPrefix = "$(NuGetPackageRoot)/";
+		const string NuGetPackageRootToken = "$(NuGetPackageRoot)";
 		string relativePath;
 		string? selectedPath = null;
 		string normalizedProject = project.Replace('\\', '/');
-		if (normalizedProject.StartsWith(NuGetPackageRootPrefix, StringComparison.Ordinal))
+		if (normalizedProject.StartsWith(NuGetPackageRootToken, StringComparison.Ordinal))
 		{
-			relativePath = normalizedProject[NuGetPackageRootPrefix.Length..];
+			// NuGet emits the token with or without a trailing slash depending on whether the
+			// configured packages path itself ends with a directory separator; accept both.
+			relativePath = normalizedProject[NuGetPackageRootToken.Length..].TrimStart('/');
 		}
 		else
 		{
@@ -8462,6 +8464,39 @@ public class LiquidOrdinaryWalletPlanWireTests
 		Assert.NotNull(selectedPath);
 		AssertPackageShadowConsistency(selectedPath, relativePath, packageAuthority);
 		return ($"NUGET|{relativePath}", Sha256File(selectedPath));
+	}
+
+	[Fact]
+	public void GeneratedNuGetImportAuthorityAcceptsPackageRootTokenWithAndWithoutTrailingSlash()
+	{
+		string fixtureRoot = Path.Combine(
+			Path.GetTempPath(),
+			$"walletwasabi-wlpq-nuget-import-authority-{Guid.NewGuid():N}");
+		try
+		{
+			string packageRoot = Path.Combine(fixtureRoot, "packages");
+			string packageDirectory = Path.Combine(packageRoot, "avalonia", "11.3.14", "buildTransitive");
+			Directory.CreateDirectory(packageDirectory);
+			string propsFile = Path.Combine(packageDirectory, "Avalonia.props");
+			File.WriteAllBytes(propsFile, [1, 2, 3, 4]);
+			var packageAuthority = (PrimaryRoot: packageRoot, OrderedRoots: new[] { packageRoot });
+
+			const string RelativePath = "avalonia/11.3.14/buildTransitive/Avalonia.props";
+			(string slashIdentity, string slashSha256) = GetGeneratedNuGetImportAuthority(
+				$"$(NuGetPackageRoot)/{RelativePath}",
+				packageAuthority);
+			(string noSlashIdentity, string noSlashSha256) = GetGeneratedNuGetImportAuthority(
+				$"$(NuGetPackageRoot){RelativePath}",
+				packageAuthority);
+
+			Assert.Equal($"NUGET|{RelativePath}", slashIdentity);
+			Assert.Equal(slashIdentity, noSlashIdentity);
+			Assert.Equal(slashSha256, noSlashSha256);
+		}
+		finally
+		{
+			Directory.Delete(fixtureRoot, recursive: true);
+		}
 	}
 
 	private static string NormalizePackageDirectoryIdentity(
