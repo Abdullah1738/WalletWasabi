@@ -19,6 +19,44 @@
           src = ./.;
         };
 
+        verifyNuGetPackageRoots = ''
+          verifyWasabiNuGetPackageRoots() {
+            verificationMode="$1"
+            shift
+            case "$verificationMode" in
+              root-only|symlink-free) ;;
+              *)
+                echo "Unknown NuGet package-root verification mode: $verificationMode" >&2
+                return 1
+                ;;
+            esac
+
+            for packageRoot in "$@"; do
+              packageRoot="''${packageRoot%/}"
+              case "$packageRoot" in
+                /*) ;;
+                *)
+                  echo "NuGet package root is not absolute: $packageRoot" >&2
+                  return 1
+                  ;;
+              esac
+
+              if [ ! -d "$packageRoot" ] || [ -L "$packageRoot" ]; then
+                echo "NuGet package root is not a regular directory: $packageRoot" >&2
+                return 1
+              fi
+
+              if [ "$verificationMode" = symlink-free ]; then
+                linkedPath="$(find "$packageRoot" -type l -print -quit)"
+                if [ -n "$linkedPath" ]; then
+                  echo "NuGet package root contains a symbolic link: $linkedPath" >&2
+                  return 1
+                fi
+              fi
+            done
+          }
+        '';
+
         # Common build settings for all configurations
         commonBuildAttrs = rec {
           pname = "WalletWasabi";
@@ -48,6 +86,28 @@
           binaries = "BundledApps/Binaries/linux-x64";
           bundledApps = "./WalletWasabi/${binaries}";
           bundledAppsIntegrationTest = "./WalletWasabi.IntegrationTests/${binaries}";
+          preConfigure = ''
+            ${verifyNuGetPackageRoots}
+
+            if [ -z "''${NUGET_PACKAGES:-}" ] || [ -z "''${NUGET_FALLBACK_PACKAGES:-}" ]; then
+              echo "NuGet package roots were not configured before restore" >&2
+              exit 1
+            fi
+
+            primaryPackages="''${NUGET_PACKAGES%/}"
+            linkedFallbackPackages="''${NUGET_FALLBACK_PACKAGES%/}"
+            verifyWasabiNuGetPackageRoots root-only "$primaryPackages" "$linkedFallbackPackages"
+
+            materializedFallbackPackages="$(mktemp -d "''${TMPDIR:?}/wasabi-nuget-fallback.XXXXXX")"
+            cp --recursive --dereference --no-preserve=ownership \
+              "$linkedFallbackPackages"/. "$materializedFallbackPackages"/
+            export NUGET_FALLBACK_PACKAGES="$materializedFallbackPackages/"
+            verifyWasabiNuGetPackageRoots symlink-free "$primaryPackages" "$materializedFallbackPackages"
+          '';
+          postConfigure = ''
+            ${verifyNuGetPackageRoots}
+            verifyWasabiNuGetPackageRoots symlink-free "$NUGET_PACKAGES" "$NUGET_FALLBACK_PACKAGES"
+          '';
           preBuild = ''
             cp -r ${pkgs.tor}/bin/tor ${bundledApps}/Tor/tor
             cp ${pkgs.hwi}/bin/hwi ${bundledApps}/hwi

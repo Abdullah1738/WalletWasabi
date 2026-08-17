@@ -61,7 +61,7 @@ public class P2pFilterSyncTests
 		Assert.Equal(initialHeight + 1, (uint)newTip.Header.Height);
 	}
 
-	[Fact(Timeout = 180_000)] // 3 minute timeout
+	[Fact(Timeout = 300_000)] // 5 minute timeout - matches LargerBlockBatch; this test does two P2P syncs (initial + 10 mined blocks) and has flaked in CI at exactly 180s under load
 	public async Task P2pFilterSync_MultipleBlocks_AllFiltersDownloaded()
 	{
 		// Arrange

@@ -2,6 +2,7 @@
 
 	<PropertyGroup>
 		<DisableImplicitNamespaceImports>true</DisableImplicitNamespaceImports>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<IsPackable>false</IsPackable>
 		<NoWarn>1701;1702;1705;1591;CA1031;CA1822</NoWarn>
 		<ApplicationIcon />
@@ -15,6 +16,18 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<Reference Include="Microsoft.Build">
+			<HintPath>$(MSBuildToolsPath)\Microsoft.Build.dll</HintPath>
+			<Private>true</Private>
+		</Reference>
+		<Reference Include="Microsoft.Build.Framework">
+			<HintPath>$(MSBuildToolsPath)\Microsoft.Build.Framework.dll</HintPath>
+			<Private>true</Private>
+		</Reference>
+		<Reference Include="NuGet.Versioning">
+			<HintPath>$(MSBuildToolsPath)\NuGet.Versioning.dll</HintPath>
+			<Private>true</Private>
+		</Reference>
 		<PackageReference Include="coverlet.collector">
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 			<PrivateAssets>all</PrivateAssets>
@@ -62,6 +75,27 @@
 		</None>
 		<None Update="UnitTests\Data\SilentPaymentTestVectors.json">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+		<None Update="TestData\Liquid\WalletFactsWireV1\nonlinkable-reference\**\*">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="TestData\Liquid\OrdinaryWalletPlanWireV1\nonlinkable-reference\**\*">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+		<!-- MANAGED-WLPQ-LIVE-CALL-001: the pinned-commit native validation cdylib, copied next
+		     to the test assembly so the binding's AssemblyDirectory search path finds it. -->
+		<None Update="TestData\Liquid\OrdinaryWalletPlanWireV1\native\**\*">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="TestData\Liquid\OrdinaryWalletPlanWireV1\native\libwasabi_liquid_wlpq_v1.dylib">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>libwasabi_liquid_wlpq_v1.dylib</Link>
+			<Visible>false</Visible>
+		</None>
+		<None Update="TestData\Liquid\OrdinaryWalletPlanWireV1\native\libwasabi_liquid_wlpq_v1.so">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>libwasabi_liquid_wlpq_v1.so</Link>
+			<Visible>false</Visible>
 		</None>
 	</ItemGroup>
 
