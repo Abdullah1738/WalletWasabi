@@ -227,10 +227,22 @@ public sealed class RegTestEnvironment : IAsyncDisposable
 		// Connect and handshake
 		node.VersionHandshake(cancellationToken);
 
-		await Task.Delay(3000, cancellationToken);
-
 		// Get the target height from Bitcoin Core
 		var targetHeight = await RpcClient.GetBlockCountAsync(cancellationToken).ConfigureAwait(false);
+
+		// Belt-and-braces against a lost handshake StateChanged -> TrySync race:
+		// force one getheaders so the fresh block-header chain starts advancing even if
+		// the initial TrySync trigger was missed (no inv is ever sent for blocks mined
+		// while no node was connected).
+		node.Behaviors.Find<BlockHeadersChainBehavior>()?.TrySync();
+
+		// Actively wait for the fresh block-header chain to reach the RPC tip before
+		// entering the filter loop, instead of a blind fixed delay. Without this, the
+		// header chain can stay at genesis forever and the filter loop deadlocks.
+		await WaitForConditionAsync(
+			() => blockHeaderChain.Tip?.Height >= (int)targetHeight,
+			timeout: TimeSpan.FromSeconds(30),
+			pollInterval: TimeSpan.FromMilliseconds(200)).ConfigureAwait(false);
 
 		// Create the P2P filter provider
 		var filterProvider = FilterProviders.CreateBitcoinP2pFilterProvider(
