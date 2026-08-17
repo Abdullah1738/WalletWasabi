@@ -4786,6 +4786,20 @@ public class LiquidWalletCoinControlTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletReorgPlannerTests+<>c__DisplayClass20_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletReorgPlannerTests+<>c__DisplayClass24_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletReorgPlannerTests+<>c__DisplayClass25_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass12_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass13_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass14_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass15_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass17_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass17_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass17_2",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass18_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass18_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass19_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass19_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatTests+<>c__DisplayClass20_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceHandoffTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceHandoffTests+<>c",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletPersistenceHandoffTests+<>c__DisplayClass14_0",
@@ -4917,8 +4931,8 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_743,
-			"eebc076fdbf9e73a1fc67284a34b2a4c39743d3a69cdea8636dd6fe3f7412faf");
+			1_747,
+			"7798ec96fcd1bacfe1b0b7db04c05643b8bf345bb0e888d627181e82b2169487");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
