@@ -47,11 +47,11 @@ public class LiquidOrdinaryWalletPlanWireTests
 {
 	private const string LinuxX64TargetFramework = "net10.0/linux-x64";
 	private const string ExpectedDebugWireSurfaceSha256 = "fc58193325d4e920020d9b24e8f3caf9ca8a6da2275b7680a56d463e4e7e9de6";
-	private const string ExpectedReleaseWireSurfaceSha256 = "e91329739aedf775c650549558e233ac21341b4a73044a415869b61135cedfdb";
+	private const string ExpectedReleaseWireSurfaceSha256 = "5dc263172fbf8cc27882ddd05badd6a8193a882caa93f731f6d0e14c8e6c190e";
 	private const string ExpectedDebugWireClosureSha256 = "014cf01f4bda42f8c36a7dd41cae78e5d464ad716f598256d0ff5642493a2c54";
-	private const string ExpectedReleaseWireClosureSha256 = "3466d3a7304255ed5c9617c1df00c979af1a51edd1aa0ee71ca63580e50ca19c";
+	private const string ExpectedReleaseWireClosureSha256 = "457dad4d24fa3b159ff82f93c2bd80ec6583b73734bb63734729fd237d2c7680";
 	private const string ExpectedDebugRuntimeDispatchAuthoritySha256 = "486ddbf38f33d2eb2b6f12c09d6acc3244c486c7f3278e930a08a90b56392e38";
-	private const string ExpectedReleaseRuntimeDispatchAuthoritySha256 = "d0ddc427f474ddbdc8555f04093ec8f327968383154761c4d0971b5b287f4374";
+	private const string ExpectedReleaseRuntimeDispatchAuthoritySha256 = "0a69d03ef729c7a103c2fee0a92deeea24e9b743f46e956b9526e82c7da51789";
 	private const string ExpectedDebugAmbientRuntimeDispatchAuthoritySha256 = "b30f09d21d2b3a2f38e3fdc52925906f64d5c325fdd66de80113858ce18edb7e";
 	private const string ExpectedReleaseAmbientRuntimeDispatchAuthoritySha256 = "9114556617725c4f2d52936d0b2e58d245408577439cb6a8a1d566959e90d9da";
 	private const string ExpectedDebugModuleInitializerBodySha256 = "23d1ae5ddc95da66864101267cfbd2d82a7942762a4cee19ebb85013b7dcd3c3";
@@ -71,7 +71,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedDebugCompilerInputAuthoritySha256 =
 		("PENDING-MACOS-ARM64-DEBUG-COMPILER-INPUT-AUTHORITY-V2", "PENDING-LINUX-X64-DEBUG-COMPILER-INPUT-AUTHORITY-V2");
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseCompilerInputAuthoritySha256 =
-		("PENDING-MACOS-ARM64-RELEASE-COMPILER-INPUT-AUTHORITY-V2", "3f43b9b366098d0094b34661908d9baae390a2d47f237d5112f2bd82b41437db");
+		("PENDING-MACOS-ARM64-RELEASE-COMPILER-INPUT-AUTHORITY-V2", "4185fc93b25257ac67719ddf1221b21fac38f874116680c25fa5e1cf608824b9");
 	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 =
 		"PENDING-MACOS-ARM64-TOOLCHAIN-AUTHORITY-V2";
 	private const string ExpectedLinuxX64ToolchainDependencyAuthoritySha256 =
