@@ -4771,6 +4771,15 @@ public class LiquidWalletCoinControlTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<>c__DisplayClass91_1",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<>c__DisplayClass91_2",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<>c__DisplayClass91_3",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletRecoverySyncTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletRecoverySyncTests+<>c__DisplayClass23_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletRecoverySyncTests+<>c__DisplayClass25_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletRecoverySyncTests+<>c__DisplayClass26_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletRecoverySyncTests+<>c__DisplayClass27_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletRecoverySyncTests+<>c__DisplayClass28_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletRecoverySyncTests+<>c__DisplayClass29_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletRecoverySyncTests+<>c__DisplayClass30_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletRecoverySyncTests+<>c__DisplayClass31_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletSyncBatchPlannerTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletSyncBatchPlannerTests+<>c",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletSyncBatchPlannerTests+<>c__DisplayClass12_0",
@@ -4889,8 +4898,8 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_735,
-			"162242df82259f48a4f6ca1305f141a9c4e50a565384d55b0a51d44d3da45948");
+			1_737,
+			"10acbf50fa430fff2b6e546379eb70748be70f852a618b53d6b6003cd7e96d18");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
@@ -4901,8 +4910,8 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_732,
-			"cfe4bb195df6c458de41f8aa8a2349afe495362bd430103fe8eb1a085258e89e");
+			1_734,
+			"d57a6bf9a8136e97ff4cff1ed8a3cbf20ccd86ed65b3d1f4f4c6cfbc0f62a55c");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
