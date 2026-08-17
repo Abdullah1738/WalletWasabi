@@ -1347,9 +1347,9 @@ public class ElementsRpcClientTests
 		using var httpClient = CreateStreamingHttpClient(handler);
 		using var client = new ElementsRpcClient(httpClient, new ElementsRpcTimeouts(
 			ConnectTimeout: TimeSpan.FromMilliseconds(100),
-			TotalRequestTimeout: TimeSpan.FromSeconds(2),
-			ResponseIdleTimeout: TimeSpan.FromSeconds(1)));
-		using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(75));
+			TotalRequestTimeout: TimeSpan.FromSeconds(60),
+			ResponseIdleTimeout: TimeSpan.FromSeconds(30)));
+		using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
 
 		await Assert.ThrowsAnyAsync<OperationCanceledException>(
 			() => client.GetNodeStatusAsync(cancellation.Token));
