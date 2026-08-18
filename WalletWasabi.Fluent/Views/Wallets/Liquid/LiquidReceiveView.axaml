@@ -1,0 +1,53 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:liquid="clr-namespace:WalletWasabi.Fluent.ViewModels.Wallets.Liquid"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:DataType="liquid:LiquidReceiveViewModel"
+             x:CompileBindings="True"
+             x:Class="WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidReceiveView">
+  <ContentArea Title="Confidential Address Awaiting Payment"
+               EnableCancel="{Binding EnableCancel}"
+               EnableBack="{Binding EnableBack}"
+               EnableNext="True" NextContent="OK"
+               ScrollViewer.VerticalScrollBarVisibility="Disabled">
+    <DockPanel LastChildFill="True">
+
+      <StackPanel DockPanel.Dock="Bottom" HorizontalAlignment="Stretch" Spacing="20">
+        <!-- The canonical confidential form is the primary address. -->
+        <DockPanel HorizontalAlignment="Center">
+          <PrivacyContentControl FontSize="{StaticResource FontSizeH5}">
+            <TextBlock ToolTip.Tip="{Binding ConfidentialAddressText}"
+                       Classes="monoSpaced"
+                       TextWrapping="Wrap"
+                       Text="{Binding ConfidentialAddressText}" />
+          </PrivacyContentControl>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2" Margin="10 0 0 0">
+            <AnimatedButton ToolTip.Tip="Copy"
+                            Command="{Binding CopyAddressCommand}"
+                            NormalIcon="{StaticResource copy_regular}"
+                            ClickIcon="{StaticResource copy_confirmed}" />
+          </StackPanel>
+        </DockPanel>
+
+        <!-- The unconfidential form is shown alongside it. -->
+        <StackPanel HorizontalAlignment="Center" Spacing="4">
+          <TextBlock Text="Unconfidential address" HorizontalAlignment="Center" />
+          <TextBlock Classes="monoSpaced"
+                     TextWrapping="Wrap"
+                     Text="{Binding UnconfidentialAddressText}" />
+        </StackPanel>
+      </StackPanel>
+
+      <!-- QR binding of the confidential form. -->
+      <AdorningContentControl HorizontalAlignment="Center" VerticalAlignment="Center" ClipToBounds="False">
+        <Viewbox Margin="20" MaxHeight="270" MinHeight="100">
+          <PrivacyContentControl Height="264" PrivacyReplacementMode="Icon">
+            <QrCode Matrix="{Binding QrCode^}" />
+          </PrivacyContentControl>
+        </Viewbox>
+      </AdorningContentControl>
+    </DockPanel>
+  </ContentArea>
+</UserControl>

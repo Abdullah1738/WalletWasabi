@@ -1,0 +1,43 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:liquid="clr-namespace:WalletWasabi.Fluent.ViewModels.Wallets.Liquid"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:DataType="liquid:LiquidWalletViewModel"
+             x:CompileBindings="True"
+             x:Class="WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidWalletView">
+  <ContentArea Title="{Binding Title}"
+               EnableCancel="{Binding EnableCancel}"
+               EnableBack="{Binding EnableBack}">
+    <DockPanel LastChildFill="True">
+
+      <Button DockPanel.Dock="Bottom" Focusable="False" Content="Receive"
+              Classes="h8 plain activeHyperLink" Command="{Binding ReceiveCommand}" Cursor="Hand"
+              HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0 0 0 0" />
+
+      <!-- The multiasset balance set is the primary content: one row per
+           asset, pegged asset (L-BTC) first, then issued assets in the
+           landed canonical ascending asset-id-hex order. Each row renders
+           the asset id's canonical hex and the exact atomic-unit amount;
+           every value is confidential on chain. -->
+      <ItemsControl ItemsSource="{Binding BalanceRows}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="liquid:LiquidAssetBalanceItemViewModel">
+            <DockPanel Margin="0 4 0 4">
+              <TextBlock DockPanel.Dock="Left" Classes="monoSpaced"
+                         Text="{Binding AssetIdHex}" />
+              <TextBlock DockPanel.Dock="Right" Classes="monoSpaced"
+                         Text="{Binding AtomicUnits}" />
+              <TextBlock DockPanel.Dock="Right" Margin="8 0 8 0"
+                         Text="L-BTC" IsVisible="{Binding IsPeggedAsset}" />
+              <TextBlock DockPanel.Dock="Right" Margin="8 0 0 0"
+                         Text="confidential" IsVisible="{Binding IsConfidential}" />
+            </DockPanel>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+    </DockPanel>
+  </ContentArea>
+</UserControl>
