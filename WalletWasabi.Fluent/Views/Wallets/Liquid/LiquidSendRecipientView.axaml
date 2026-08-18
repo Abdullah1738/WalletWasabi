@@ -1,0 +1,21 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:liquid="clr-namespace:WalletWasabi.Fluent.ViewModels.Wallets.Liquid"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="120"
+             x:DataType="liquid:LiquidSendRecipientViewModel"
+             x:CompileBindings="True"
+             x:Class="WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidSendRecipientView">
+  <!-- One recipient row: confidential address, asset id, raw atomic-units amount. -->
+  <StackPanel Spacing="8">
+    <TextBox Watermark="Confidential address"
+             Classes="monoSpaced"
+             Text="{Binding ConfidentialAddressText}" />
+    <TextBox Watermark="Asset id (64-char hex)"
+             Classes="monoSpaced"
+             Text="{Binding AssetIdHex}" />
+    <TextBox Watermark="Amount (atomic units)"
+             Text="{Binding AtomicUnits}" />
+  </StackPanel>
+</UserControl>

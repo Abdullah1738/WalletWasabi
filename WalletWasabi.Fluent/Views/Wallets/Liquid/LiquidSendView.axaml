@@ -1,0 +1,69 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:liquid="clr-namespace:WalletWasabi.Fluent.ViewModels.Wallets.Liquid"
+             xmlns:ui="clr-namespace:WalletWasabi.Liquid.Wallet.Ui;assembly=WalletWasabi"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:DataType="liquid:LiquidSendViewModel"
+             x:CompileBindings="True"
+             x:Class="WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidSendView">
+  <ContentArea Title="{Binding Title}"
+               EnableCancel="{Binding EnableCancel}"
+               EnableBack="{Binding EnableBack}"
+               ScrollViewer.VerticalScrollBarVisibility="Auto">
+    <StackPanel Spacing="12">
+
+      <!-- The recipient row: confidential address, asset id, raw atomic-units amount. -->
+      <TextBlock Text="Confidential destination" Classes="h5" />
+      <TextBox Watermark="Confidential address"
+               Classes="monoSpaced"
+               Text="{Binding Recipient.ConfidentialAddressText}" />
+      <TextBox Watermark="Asset id (64-char hex)"
+               Classes="monoSpaced"
+               Text="{Binding Recipient.AssetIdHex}" />
+      <TextBox Watermark="Amount (atomic units)"
+               Text="{Binding Recipient.AtomicUnits}" />
+
+      <!-- The caller-supplied selected outpoints and the explicit fee. -->
+      <TextBlock Text="Selected outpoints (one 72-char hex per line)" Classes="h5" />
+      <TextBox Classes="monoSpaced"
+               AcceptsReturn="True"
+               MinHeight="80"
+               Text="{Binding SelectedOutPointHexesText}" />
+      <TextBox Watermark="Explicit fee (atomic units, pegged asset)"
+               Text="{Binding ExplicitFeeAtomicUnits}" />
+
+      <Button Content="Build plan"
+              Classes="activeHyperlink"
+              Command="{Binding BuildPlanCommand}" />
+
+      <!-- The exact spend plan is the send flow's primary content. -->
+      <StackPanel IsVisible="{Binding SpendPlan, Converter={x:Static ObjectConverters.IsNotNull}}" Spacing="8">
+        <TextBlock Text="Exact spend plan" Classes="h5" />
+        <TextBlock Classes="monoSpaced" Text="{Binding SpendPlan.SelectedInputCount, StringFormat='Selected inputs: {0}'}" />
+        <TextBlock Classes="monoSpaced" Text="{Binding SpendPlan.ConfidentialOutputCount, StringFormat='Confidential outputs: {0}'}" />
+        <TextBlock Classes="monoSpaced" Text="{Binding SpendPlan.SourceRevision, StringFormat='Source revision: {0}'}" />
+        <TextBlock Classes="monoSpaced" Text="{Binding SpendPlan.ExplicitFee.AtomicUnits, StringFormat='Explicit fee: {0} atomic units'}" />
+        <ItemsControl ItemsSource="{Binding SpendPlan.Destinations}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="ui:LiquidWalletUiSpendPlanDestination">
+              <StackPanel Spacing="2">
+                <TextBlock Classes="monoSpaced" TextWrapping="Wrap" Text="{Binding ConfidentialAddressText}" />
+                <TextBlock Classes="monoSpaced" Text="{Binding AssetIdHex}" />
+                <TextBlock Classes="monoSpaced" Text="{Binding AtomicUnits, StringFormat='{}{0} atomic units'}" />
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <ItemsControl ItemsSource="{Binding SpendPlan.SelectedTotals}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="ui:LiquidWalletUiAssetAmount">
+              <TextBlock Classes="monoSpaced" Text="{Binding AtomicUnits, StringFormat='{}{0} atomic units'}" />
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </StackPanel>
+  </ContentArea>
+</UserControl>

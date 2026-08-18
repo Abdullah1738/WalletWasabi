@@ -4800,6 +4800,17 @@ public class LiquidWalletCoinControlTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiFacadeTests+<>c__DisplayClass40_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiFacadeTests+<>c__DisplayClass41_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiFacadeTests+<>c__DisplayClass41_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c__DisplayClass18_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c__DisplayClass19_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c__DisplayClass20_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c__DisplayClass21_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c__DisplayClass22_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c__DisplayClass23_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c__DisplayClass24_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c__DisplayClass26_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c__DisplayClass27_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletReorgPlannerTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletReorgPlannerTests+<>c",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletReorgPlannerTests+<>c__DisplayClass18_0",
@@ -4957,25 +4968,25 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_759,
-			"d746938bc6eb29daa5d7b5979481c71ab79ab1fe1af1da246630fbdd02d70f64");
+			1_762,
+			"981b4898d19d3ef4e710ddd6c1e5bfe736b9ec160b52d911e53fdb9ecd6af6da");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
-			1_776,
-			"0a3fc6dba221776c410136fd04e53257fe7dd4e50c329cd8e98c7d57d17fa870",
+			1_779,
+			"96c3324e04ef30bce01f3e39a902f6f1db403e983b6c0fbd3eaed43400af4cc6",
 			permittedAddedTestTypes);
 #else
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_756,
-			"6a7ee435a3599c1852d4fa5e5575a29aa798800d4ee88f2cd4569ee6915b7393");
+			1_759,
+			"5497ec4aef14e9b23e0d6efe35069172ac0c10414da19f356e7aae19ba962dda");
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
-			1_758,
-			"60d4db31070f730923ea48d1b71bec9b690f545ec20030973c38f8133cf54298",
+			1_759,
+			"91f6103992bdd6a5ceaed537238148567d9c62504e466f4ff10430d6b7b8d79f",
 			permittedAddedTestTypes);
 #endif
 	}

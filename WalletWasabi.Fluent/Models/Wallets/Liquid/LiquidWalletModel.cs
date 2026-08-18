@@ -4,6 +4,7 @@ using ReactiveUI;
 using WalletWasabi.Fluent.Infrastructure;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Wallet.Ui;
+using System.Collections.Generic;
 
 namespace WalletWasabi.Fluent.Models.Wallets.Liquid;
 
@@ -96,6 +97,51 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	/// </summary>
 	public LiquidWalletUiReceiveAddress CreateNextReceiveAddress() =>
 		CreateReceiveAddress(_nextReceiveScriptPubKey, _nextReceiveBlindingPublicKey);
+
+	/// <summary>
+	/// Builds the exact Liquid spend plan for the send flow from the
+	/// caller-supplied selected outpoints (as hex strings), the confidential
+	/// destination address, the destination asset id, the destination
+	/// amount, and the explicit fee. Delegates to the public span-only
+	/// facade entry point
+	/// <see cref="LiquidWalletUiFacade.LoadAndCreateSpendPlan"/>: the Fluent
+	/// side supplies only the wallet name (<see cref="Name"/>), the wallet
+	/// data directory, and the caller's key/context spans; the facade loads
+	/// the state in-assembly and never returns or exposes it. This model
+	/// never names, holds, or obtains a <c>LiquidWalletState</c> (that
+	/// internal type never crosses the assembly boundary), never stores the
+	/// key or context spans (a <see cref="ReadOnlySpan{T}"/> cannot be
+	/// captured or stored; the caller owns their provenance and lifetime,
+	/// exactly as at wallet open), and performs no node connection, no
+	/// signing, and no broadcast. The <paramref name="expectedRevision"/>
+	/// argument, when supplied, is the caller's freshness fence (typically
+	/// the <see cref="LiquidWalletUiSnapshot.Revision"/> the UI last
+	/// rendered); when null, no plan-time revision fence is applied.
+	/// Fail-closed: any rejection from the landed load or spend-plan
+	/// surface surfaces as-is.
+	/// </summary>
+	public LiquidWalletUiSpendPlan CreateSpendPlan(
+		string walletDataDir,
+		ReadOnlySpan<byte> key,
+		ReadOnlySpan<byte> externalWalletNetworkContext,
+		IReadOnlyList<string> selectedOutPointHexes,
+		string confidentialDestinationAddress,
+		string destinationAssetIdHex,
+		long destinationAtomicUnits,
+		long explicitFeeAtomicUnits,
+		ulong? expectedRevision = null) =>
+		LiquidWalletUiFacade.LoadAndCreateSpendPlan(
+			walletDataDir,
+			Name,
+			_manifest,
+			key,
+			externalWalletNetworkContext,
+			selectedOutPointHexes,
+			confidentialDestinationAddress,
+			destinationAssetIdHex,
+			destinationAtomicUnits,
+			explicitFeeAtomicUnits,
+			expectedRevision);
 
 	public void Dispose()
 	{
