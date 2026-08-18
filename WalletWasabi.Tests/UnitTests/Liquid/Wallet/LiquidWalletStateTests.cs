@@ -2278,6 +2278,28 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c__DisplayClass23_1",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanTests+<>c__DisplayClass26_1",
 #endif
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+<>c",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+<>c__DisplayClass16_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+<>c__DisplayClass17_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+<>c__DisplayClass18_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+<>c__DisplayClass19_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+<>c__DisplayClass20_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+<>c__DisplayClass22_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+<>c__DisplayClass25_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+MalformedKeySigner",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+RefusingKeySigner",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+RefusingSignatureSigner",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+WellFormedSigner",
+#if DEBUG
+			// Debug-only closure renumbering for the new Ui sign-request test
+			// class: the shared array above is Release-shaped; Debug emits
+			// these three DisplayClass closures with the _1 suffix where
+			// Release shares one.
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+<>c__DisplayClass18_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+<>c__DisplayClass19_1",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletUiSignRequestTests+<>c__DisplayClass25_1",
+#endif
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>O",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass24_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests+<>c__DisplayClass25_0",
@@ -2483,6 +2505,11 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiAssetAmount",
 			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiSpendPlan",
 			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiSpendPlanDestination",
+			"WalletWasabi.Liquid.Wallet.Ui.ILiquidWalletSigner",
+			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiSignRequest",
+			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiSignRequestInput",
+			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiSignedTransaction",
+			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiSigner",
 			"WalletWasabi.Liquid.Wallet.Sync.LiquidWalletPersistenceFormat",
 			"WalletWasabi.Liquid.Wallet.Sync.LiquidWalletPersistenceFormatException",
 			"WalletWasabi.Liquid.Wallet.Sync.LiquidWalletPersistenceFrame",

@@ -1,9 +1,14 @@
+using System.Security.Cryptography;
 using WalletWasabi.Liquid.Addresses;
 using WalletWasabi.Liquid.Amounts;
 using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Network;
+using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Liquid.Transactions;
+using WalletWasabi.Liquid.Wallet.Wire;
+using LiquidOrdinaryWalletPlanEncodedFrame = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanEncodedFrame;
+using LiquidOrdinaryWalletPlanFundingBatch = WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanEncoder.LiquidOrdinaryWalletPlanFundingBatch;
 
 namespace WalletWasabi.Liquid.Wallet.Ui;
 
@@ -285,5 +290,258 @@ public static class LiquidWalletUiFacade
 			batch,
 			explicitFee);
 		return LiquidWalletUiSpendPlan.FromPlan(walletName, manifest, plan);
+	}
+
+	/// <summary>
+	/// The single public entry point the Fluent layer calls to build a
+	/// signable package: loads the state in-assembly via the landed
+	/// <see cref="LiquidWalletLoadSave.Load"/> (no
+	/// <c>expectedBaseRevision</c> is passed on this path, exactly as
+	/// <see cref="LoadAndCreateSpendPlan"/>) and delegates to the
+	/// in-assembly composition point <see cref="CreateSignRequest"/>. Its
+	/// signature names only public types plus <see cref="ReadOnlySpan{T}"/>
+	/// key/context/epoch and the already-public
+	/// <see cref="ElementsExpectationBoundRawTransactionBatch"/> funding
+	/// source; it never names the internal <see cref="LiquidWalletState"/>,
+	/// plan, or frame types. The loaded state, the plan, the frame, and the
+	/// epoch are used only for the duration of the call and are never
+	/// stored, returned, or exposed beyond the immutable hex projection.
+	/// Fail-closed exactly as the landed <c>Load</c> and wire surface: a
+	/// missing file, corrupt frame, wrong key, wrong context, stale
+	/// revision, invalid plan, unencodable frame, or funding-composition
+	/// failure surfaces as the landed exception with no retry, no fallback,
+	/// and no cached substitution.
+	/// </summary>
+	public static LiquidWalletUiSignRequest LoadAndCreateSignRequest(
+		string walletDataDir,
+		string walletName,
+		ElementsPublicNetworkManifest manifest,
+		ReadOnlySpan<byte> key,
+		ReadOnlySpan<byte> externalWalletNetworkContext,
+		IReadOnlyList<string> selectedOutPointHexes,
+		string confidentialDestinationAddress,
+		string destinationAssetIdHex,
+		long destinationAtomicUnits,
+		long explicitFeeAtomicUnits,
+		ReadOnlySpan<byte> sourceEpoch,
+		ElementsExpectationBoundRawTransactionBatch fundingSource,
+		IReadOnlyList<IReadOnlyList<string>?> previousTransactionIdsBySelectedInput,
+		ulong? expectedRevision = null)
+	{
+		ArgumentNullException.ThrowIfNull(manifest);
+		ArgumentNullException.ThrowIfNull(selectedOutPointHexes);
+		ArgumentNullException.ThrowIfNull(confidentialDestinationAddress);
+		ArgumentNullException.ThrowIfNull(destinationAssetIdHex);
+		ArgumentNullException.ThrowIfNull(fundingSource);
+		ArgumentNullException.ThrowIfNull(previousTransactionIdsBySelectedInput);
+		if (sourceEpoch.Length != LiquidOrdinaryWalletPlanWireLimits.SourceEpochLength)
+		{
+			throw new ArgumentException(
+				"A Liquid sign request requires an exact 32-byte source epoch.",
+				nameof(sourceEpoch));
+		}
+
+		LiquidWalletLoadSaveResult result = LiquidWalletLoadSave.Load(
+			walletDataDir,
+			walletName,
+			key,
+			externalWalletNetworkContext);
+		// Load always returns a non-null State; the null-forgiving operator
+		// adds no runtime check and no fallback.
+		return CreateSignRequest(
+			walletName,
+			manifest,
+			result.State!,
+			selectedOutPointHexes,
+			confidentialDestinationAddress,
+			destinationAssetIdHex,
+			destinationAtomicUnits,
+			explicitFeeAtomicUnits,
+			sourceEpoch,
+			fundingSource,
+			previousTransactionIdsBySelectedInput,
+			expectedRevision);
+	}
+
+	/// <summary>
+	/// The in-assembly composition point for the WalletWasabi-side
+	/// wallet-lifetime caller that already holds the loaded
+	/// <paramref name="state"/> from its own landed <c>Load</c>. It is
+	/// <see langword="internal"/> — not <see langword="public"/> — for
+	/// exactly the reason the landed <see cref="CreateSpendPlan"/> is
+	/// internal: it names the internal <see cref="LiquidWalletState"/>, and
+	/// a public method on this public facade class may not declare a
+	/// parameter of a less accessible type (CS0051). It composes the landed
+	/// chain: the same parse/validate/create chain as
+	/// <see cref="CreateSpendPlan"/> builds the plan; the landed
+	/// <see cref="ElementsExpectationBoundRawTransactionBatch.TryCreateOrdinaryWalletPlanFundingBatch"/>
+	/// composes the funding batch; the landed
+	/// <see cref="LiquidOrdinaryWalletPlanEncoder.TryEncode"/> encodes the
+	/// WLPQ v1 frame; and
+	/// <see cref="LiquidWalletUiSignRequest.FromPlanAndFrame"/> projects the
+	/// immutable package. The revision fence is caller-supplied, never a
+	/// self-fence, exactly as in <see cref="CreateSpendPlan"/>. A
+	/// <see langword="false"/> return from either <c>Try*</c> composition
+	/// surfaces as a fail-closed <see cref="InvalidOperationException"/>
+	/// naming the wire error code (no partial package, no fallback). The
+	/// <paramref name="state"/>, plan, funding batch, frame, and
+	/// <paramref name="sourceEpoch"/> are used only for the duration of the
+	/// call and are never stored; the frame bytes are zeroed after the hex
+	/// projection exactly as the encoder zeroes its temporaries. This
+	/// composition performs no signing, no broadcast, no node contact, and
+	/// no native call.
+	/// </summary>
+	internal static LiquidWalletUiSignRequest CreateSignRequest(
+		string walletName,
+		ElementsPublicNetworkManifest manifest,
+		LiquidWalletState state,
+		IReadOnlyList<string> selectedOutPointHexes,
+		string confidentialDestinationAddress,
+		string destinationAssetIdHex,
+		long destinationAtomicUnits,
+		long explicitFeeAtomicUnits,
+		ReadOnlySpan<byte> sourceEpoch,
+		ElementsExpectationBoundRawTransactionBatch fundingSource,
+		IReadOnlyList<IReadOnlyList<string>?> previousTransactionIdsBySelectedInput,
+		ulong? expectedRevision = null)
+	{
+		ArgumentNullException.ThrowIfNull(walletName);
+		ArgumentNullException.ThrowIfNull(manifest);
+		ArgumentNullException.ThrowIfNull(state);
+		ArgumentNullException.ThrowIfNull(selectedOutPointHexes);
+		ArgumentNullException.ThrowIfNull(confidentialDestinationAddress);
+		ArgumentNullException.ThrowIfNull(destinationAssetIdHex);
+		ArgumentNullException.ThrowIfNull(fundingSource);
+		ArgumentNullException.ThrowIfNull(previousTransactionIdsBySelectedInput);
+
+		if (selectedOutPointHexes.Count == 0)
+		{
+			throw new ArgumentException(
+				"A Liquid sign request requires at least one selected outpoint.",
+				nameof(selectedOutPointHexes));
+		}
+		if (destinationAtomicUnits <= 0)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(destinationAtomicUnits),
+				"A positive Liquid destination amount is required.");
+		}
+		if (explicitFeeAtomicUnits <= 0)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(explicitFeeAtomicUnits),
+				"A positive Liquid explicit fee is required.");
+		}
+		if (sourceEpoch.Length != LiquidOrdinaryWalletPlanWireLimits.SourceEpochLength)
+		{
+			throw new ArgumentException(
+				"A Liquid sign request requires an exact 32-byte source epoch.",
+				nameof(sourceEpoch));
+		}
+
+		// Decode each outpoint hex string to consensus bytes, exactly as the
+		// landed CreateSpendPlan chain.
+		var selectedOutPoints = new LiquidOutPoint[selectedOutPointHexes.Count];
+		for (int index = 0; index < selectedOutPoints.Length; index++)
+		{
+			string outPointHex = selectedOutPointHexes[index];
+			byte[] consensusBytes;
+			try
+			{
+				consensusBytes = Convert.FromHexString(
+					outPointHex ?? throw new ArgumentException(
+						"A Liquid selected outpoint hex string cannot be null.",
+						nameof(selectedOutPointHexes)));
+			}
+			catch (FormatException exception)
+			{
+				throw new ArgumentException(
+					"A Liquid selected outpoint must be exactly 72 hexadecimal characters (the 36-byte consensus encoding).",
+					nameof(selectedOutPointHexes),
+					exception);
+			}
+
+			selectedOutPoints[index] = LiquidOutPoint.ParseSpendableConsensusBytes(
+				consensusBytes,
+				nameof(selectedOutPointHexes));
+		}
+
+		LiquidAddress address = LiquidAddress.Parse(manifest, confidentialDestinationAddress);
+		LiquidAssetId assetId = LiquidAssetId.ParseRpcHex(destinationAssetIdHex);
+		LiquidAssetAmount amount = LiquidAssetAmount.Create(
+			assetId,
+			LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId),
+			destinationAtomicUnits);
+		LiquidSuppliedConfidentialDestination destination =
+			LiquidSuppliedConfidentialDestination.Create(
+				manifest,
+				address,
+				assetId,
+				amount,
+				LiquidWalletLabelSet.Empty);
+		LiquidSuppliedConfidentialDestinationBatch batch =
+			LiquidSuppliedConfidentialDestinationBatch.Create([destination]);
+		LiquidAssetAmount explicitFee = LiquidAssetAmount.Create(
+			LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId),
+			LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId),
+			explicitFeeAtomicUnits);
+
+		LiquidOrdinaryWalletExactSpendPlan plan = state.CreateExactOrdinaryWalletSpendPlan(
+			expectedRevision ?? state.Revision,
+			selectedOutPoints,
+			batch,
+			explicitFee);
+
+		// Compose the funding batch from the caller-supplied node-self-reported
+		// raw transactions; a false return is fail-closed with no partial package.
+		if (!fundingSource.TryCreateOrdinaryWalletPlanFundingBatch(
+			plan,
+			previousTransactionIdsBySelectedInput,
+			out LiquidOrdinaryWalletPlanFundingBatch? fundingBatch,
+			out LiquidOrdinaryWalletPlanWireErrorCode fundingErrorCode))
+		{
+			throw new InvalidOperationException(
+				$"The Liquid ordinary-wallet plan funding batch could not be composed: {fundingErrorCode.GetMessage()}.");
+		}
+
+		using (fundingBatch)
+		{
+			// Encode the canonical WLPQ v1 frame; a false return is fail-closed
+			// with no partial package.
+			if (!LiquidOrdinaryWalletPlanEncoder.TryEncode(
+				sourceEpoch,
+				plan,
+				fundingBatch,
+				out LiquidOrdinaryWalletPlanEncodedFrame? frame,
+				out LiquidOrdinaryWalletPlanWireErrorCode encodeErrorCode))
+			{
+				throw new InvalidOperationException(
+					$"The Liquid ordinary-wallet plan frame could not be encoded: {encodeErrorCode.GetMessage()}.");
+			}
+
+			using (frame)
+			{
+				// TryEncode returned true, so the frame owner is non-null; the
+				// null-forgiving operator adds no runtime check and no fallback.
+				// Project the frame to hex, then zero the temporary frame copy
+				// exactly as the encoder zeroes its temporaries. The frame owner
+				// is disposed (zeroing its bytes) by the using scope.
+				byte[] frameBytes = new byte[frame!.Length];
+				try
+				{
+					frame.CopyFrameTo(frameBytes);
+					return LiquidWalletUiSignRequest.FromPlanAndFrame(
+						walletName,
+						manifest,
+						plan,
+						frameBytes,
+						sourceEpoch);
+				}
+				finally
+				{
+					CryptographicOperations.ZeroMemory(frameBytes);
+				}
+			}
+		}
 	}
 }
