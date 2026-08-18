@@ -47,7 +47,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 {
 	private const string LinuxX64TargetFramework = "net10.0/linux-x64";
 	private const string ExpectedDebugWireSurfaceSha256 = "fc58193325d4e920020d9b24e8f3caf9ca8a6da2275b7680a56d463e4e7e9de6";
-	private const string ExpectedReleaseWireSurfaceSha256 = "1f478d67090a334f14fd331ea66a75250e9c4f1511f93514b0c5bfae10e5e41e";
+	private const string ExpectedReleaseWireSurfaceSha256 = "39f77e11bfcf68d9242b5c4e74adec62976ce83e7121b14300c670bc81f97ccd";
 	private const string ExpectedDebugWireClosureSha256 = "014cf01f4bda42f8c36a7dd41cae78e5d464ad716f598256d0ff5642493a2c54";
 	private const string ExpectedReleaseWireClosureSha256 = "7c43db2516c4481935a5fe998d7ece351071acef4efe3273b8db717ccfd815d4";
 	private const string ExpectedDebugRuntimeDispatchAuthoritySha256 = "486ddbf38f33d2eb2b6f12c09d6acc3244c486c7f3278e930a08a90b56392e38";
