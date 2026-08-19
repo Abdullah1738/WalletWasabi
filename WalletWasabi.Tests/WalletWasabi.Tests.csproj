@@ -90,6 +90,12 @@
 		<None Update="TestData\Liquid\OrdinaryWalletPlanWireV1\nonlinkable-reference\**\*">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
+		<!-- MANAGED-WALLET-SIGN-FFI-001: the native-built signable fixture (frame, descriptor,
+		     SLIP-77 master, spend public key, funding/previous transactions) the production
+		     signing binding tests drive. -->
+		<None Update="TestData\Liquid\OrdinaryWalletPlanWireV1\signable\**\*">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
 		<!-- MANAGED-WLPQ-LIVE-CALL-001: the pinned-commit native validation cdylib, copied next
 		     to the test assembly so the binding's AssemblyDirectory search path finds it. -->
 		<None Update="TestData\Liquid\OrdinaryWalletPlanWireV1\native\**\*">

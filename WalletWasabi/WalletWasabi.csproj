@@ -72,6 +72,22 @@
 		<None Update="Announcements\ReleaseHighlights.md">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
+		<!-- MANAGED-WALLET-SIGN-FFI-001: the pinned-commit production native signing cdylib,
+		     copied into the NativeSigning/ subdirectory next to the assembly so the binding's
+		     explicit NativeLibrary.Load path resolves it without colliding with the test-only
+		     validation cdylib the test assembly links flat under the same file name. The bytes
+		     are SHA-256-pinned per platform in
+		     Liquid/Wallet/Ui/LiquidWalletNativeSigningBinding.cs. -->
+		<None Update="Liquid\Wallet\Ui\Native\libwasabi_liquid_wlpq_v1.dylib">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>NativeSigning\libwasabi_liquid_wlpq_v1.dylib</Link>
+			<Visible>false</Visible>
+		</None>
+		<None Update="Liquid\Wallet\Ui\Native\libwasabi_liquid_wlpq_v1.so">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>NativeSigning\libwasabi_liquid_wlpq_v1.so</Link>
+			<Visible>false</Visible>
+		</None>
 		<None Update="Scheme\Wasabilib.scm">
 		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>

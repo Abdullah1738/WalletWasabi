@@ -1852,11 +1852,11 @@ public class LiquidOrdinaryWalletPlanWireV1CorpusTests
 		BinaryPrimitives.WriteInt32LittleEndian(nonzeroCall.AsSpan(1), isNonzero.MetadataToken);
 #if DEBUG
 		const int ExpectedIlLength = 157;
-		const string ExpectedIlSha256 = "a2c20a93aa4d4deb9027fcf92e8a21e4d6ab00ac304be0422cf6e0e4f94fd5ab";
+		const string ExpectedIlSha256 = "3ed97478aaff6de0925748b468ecdb546ba4377a9b86d3e8b8f651c16e765353";
 		byte[] identityCheck = new byte[] { 0x03, 0x04, 0xfe, 0x01, 0x16, 0xfe, 0x01 };
 #else
 		const int ExpectedIlLength = 121;
-		const string ExpectedIlSha256 = "cef8eaa1f05a943f3e74ec601e99d2ea877fc62faa2e124efa19b605a03a0e60";
+		const string ExpectedIlSha256 = "0c2a4635980a230566c37b180da065b526b69ccf78ce8e9f16355e1f7fb7e2cf";
 		byte[] identityCheck = new byte[] { 0x03, 0x04, 0x2e };
 #endif
 		try
