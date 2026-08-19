@@ -1038,6 +1038,76 @@ public sealed class ElementsRpcClient : IDisposable
 		}
 	}
 
+	/// <summary>
+	/// Submits one canonical signed transaction while holding the node-probe lock across the exact
+	/// expectation, effective-fee-asset, and generation fence. A successful receipt records node
+	/// acceptance only; it is not confirmation, currentness, propagation, or transaction-id authority.
+	/// No retry or fallback is performed.
+	/// </summary>
+	public async Task<ElementsExpectationBoundBroadcastReceipt> BroadcastExpectationBoundRawTransactionAsync(
+		ElementsNodeExpectation expectation,
+		string expectedEffectiveFeeAsset,
+		string signedTransactionHex,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(expectation);
+		ElementsNodeExpectation normalizedExpectation = expectation.Normalize();
+		LiquidAssetId normalizedEffectiveFeeAsset =
+			LiquidAssetId.ParseRpcHex(expectedEffectiveFeeAsset, nameof(expectedEffectiveFeeAsset));
+		RequireCanonicalTransactionHex(signedTransactionHex, nameof(signedTransactionHex));
+
+		await _probeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			ElementsExpectationBoundNodeObservation nodeObservation =
+				await GetExpectationBoundNodeObservationCoreAsync(
+					normalizedExpectation,
+					normalizedEffectiveFeeAsset,
+					cancellationToken).ConfigureAwait(false);
+			string acceptedTransactionIdHex = await CallHex32Async(
+				"sendrawtransaction",
+				[signedTransactionHex],
+				cancellationToken).ConfigureAwait(false);
+			ElementsNodeGenerationObservation generationAfterBroadcast =
+				await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+			if (generationAfterBroadcast != nodeObservation.Generation)
+			{
+				throw InvalidResult(
+					"expectation-bound transaction broadcast",
+					"node generation changed during transaction submission");
+			}
+
+			return new ElementsExpectationBoundBroadcastReceipt(
+				nodeObservation,
+				acceptedTransactionIdHex);
+		}
+		finally
+		{
+			_probeLock.Release();
+		}
+	}
+
+	private static void RequireCanonicalTransactionHex(string value, string parameterName)
+	{
+		ArgumentNullException.ThrowIfNull(value, parameterName);
+		if (value.Length == 0 || value.Length % 2 != 0)
+		{
+			throw new ArgumentException(
+				"A nonempty even-length lowercase hexadecimal transaction is required.",
+				parameterName);
+		}
+
+		foreach (char character in value)
+		{
+			if (!char.IsAsciiDigit(character) && character is not (>= 'a' and <= 'f'))
+			{
+				throw new ArgumentException(
+					"A nonempty even-length lowercase hexadecimal transaction is required.",
+					parameterName);
+			}
+		}
+	}
+
 	private async Task<ElementsExpectationBoundNodeObservation> GetExpectationBoundNodeObservationCoreAsync(
 		ElementsNodeExpectation expectation,
 		LiquidAssetId expectedEffectiveFeeAsset,

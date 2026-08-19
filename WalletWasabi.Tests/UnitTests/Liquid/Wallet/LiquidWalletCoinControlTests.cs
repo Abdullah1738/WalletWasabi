@@ -4757,6 +4757,36 @@ public class LiquidWalletCoinControlTests
 	{
 		string[] permittedAddedTestTypes =
 		[
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>O",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c+<<SurfacesBroadcastTimeoutWithoutRetryAsync>b__12_0>d",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c__DisplayClass10_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c__DisplayClass11_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c__DisplayClass12_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c__DisplayClass13_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c__DisplayClass14_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c__DisplayClass15_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c__DisplayClass17_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c__DisplayClass8_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c__DisplayClass9_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<FailsClosedAfterSubmitWhenGenerationChangesAsync>d__14",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<RejectsExpectationMismatchBeforeSubmittingAsync>d__13",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<RejectsInvalidTransactionHexBeforeAnyNodeContactAsync>d__8",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<RejectsMalformedAcceptanceWithoutReceiptAsync>d__15",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<RejectsNullTransactionHexBeforeAnyNodeContactAsync>d__9",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<RejectsProtocolFailureResponsesWithoutRetryAsync>d__17",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<SubmitsOnceInsideExactFenceAndReturnsNarrowReceiptAsync>d__7",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<SurfacesBroadcastTimeoutWithoutRetryAsync>d__12",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<SurfacesNodeRejectionWithoutRetryOrReceiptAsync>d__10",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<SurfacesTransportFailureWithoutRetryAsync>d__11",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+BroadcastHandler",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+BroadcastHandler+<SendAsync>d__15",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+BroadcastHarness",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+BroadcastHarness+<>c__DisplayClass0_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+RpcInvocation",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+ThrowOnBroadcastHandler",
+			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+ThrowOnBroadcastHandler+<SendAsync>d__0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<BindsExactExpectationAndFeeInsideUnchangedGenerationAsync>d__86",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<RejectsGenerationOrStatusDriftBeforeExpectationAndFeeMismatchAsync>d__87",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsRpcClientTests+<RejectsIdentityOrFeeMismatchOnlyAfterStableFenceAsync>d__88",
@@ -4983,12 +5013,19 @@ public class LiquidWalletCoinControlTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus+<>c",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus+CorpusTree",
 		];
+		string[] permittedAddedProductionTypes =
+		[
+			"WalletWasabi.Liquid.Rpc.ElementsBroadcastBindingLevel",
+			"WalletWasabi.Liquid.Rpc.ElementsExpectationBoundBroadcastReceipt",
+			"WalletWasabi.Liquid.Rpc.ElementsRpcClient+<BroadcastExpectationBoundRawTransactionAsync>d__66",
+		];
 #if DEBUG
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
 			1_770,
-			"95e2e171575c5b93f8fec9d425371fc914170cebff92086b4ab79be2cb4b88f3");
+			"a54d771a9c8450f596e8f5aaa10089c96a93fb0f21c6ea7f1a8ad1fcaf403be1",
+			permittedAddedProductionTypes);
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
@@ -5000,7 +5037,8 @@ public class LiquidWalletCoinControlTests
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
 			1_767,
-			"d2ed138dab26bb5a48093b749792dacc9c5d6dc78d5c1b870ffd3b753df52a12");
+			"126bee5d73e70f89af593a9ac75539df50ead4fc6cb00649c55f4b0e53a7c5d3",
+			permittedAddedProductionTypes);
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
