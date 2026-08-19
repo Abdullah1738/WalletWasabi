@@ -63,7 +63,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedDebugImportClosureSha256 =
 		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "PENDING-LINUX-X64-DEBUG-IMPORT-AUTHORITY-V2");
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseImportClosureSha256 =
-		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "98ded521ee2cdcc32e313eac442b46ede3e23bc22d5f8321e24135a60dfd9c05");
+		("8bfa4868f51556f60144f7746b44a46aea48a66ef1e6e0329f9f4fde3b2073ef", "83b0c6ef338dcdf9fb2e2b8856aecb8e1bff7b2c1a3cdb67b32f4089b7e90905");
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedDebugReferenceAuthoritySha256 =
 		("ef61142bc45c04415be4ee870ff4b4db9345dc8beb787c67ee67bc6c7d3d8fdb", "PENDING-LINUX-X64-DEBUG-REFERENCE-AUTHORITY-V2");
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseReferenceAuthoritySha256 =
