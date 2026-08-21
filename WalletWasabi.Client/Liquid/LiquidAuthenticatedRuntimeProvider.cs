@@ -39,7 +39,7 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 		_manifestSource = manifestSource ?? throw new ArgumentNullException(nameof(manifestSource));
 	}
 
-	internal ValueTask<LiquidAuthenticatedWalletSession> OpenAsync(
+	internal async ValueTask<LiquidAuthenticatedWalletSession> OpenAsync(
 		LiquidWalletIdentity identity,
 		LiquidPasswordAuthorizationLease passwordAuthorization,
 		CancellationToken cancellationToken)
@@ -87,17 +87,19 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 			LiquidWalletRuntimeHandoff handoff = new(identity.CanonicalWalletId, identity.NetworkManifestId, snapshot);
 			LiquidAuthenticatedWalletSession session = new(identity, handoff, km, adapter, rpcClient);
 			string key = RegistryKey(identity);
+			bool duplicate;
 			lock (_gate)
 			{
 				ObjectDisposedException.ThrowIf(_disposed, this);
-				if (!_sessions.TryAdd(key, session))
-				{
-					// Duplicate open: this session owns a cookie-bearing RPC client and a
-					// retained master-key copy. Dispose it before refusing so no secret-
-					// bearing resources are orphaned.
-					await session.DisposeAsync().ConfigureAwait(false);
-					throw new InvalidOperationException("The Liquid wallet already has an active authenticated session.");
-				}
+				duplicate = !_sessions.TryAdd(key, session);
+			}
+			if (duplicate)
+			{
+				// Duplicate open: this session owns a cookie-bearing RPC client and a
+				// retained master-key copy. Dispose it before refusing so no secret-
+				// bearing resources are orphaned. Disposal happens outside the lock.
+				await session.DisposeAsync().ConfigureAwait(false);
+				throw new InvalidOperationException("The Liquid wallet already has an active authenticated session.");
 			}
 
 			return ValueTask.FromResult(session);
