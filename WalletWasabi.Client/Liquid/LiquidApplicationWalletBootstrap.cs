@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using WalletWasabi.Liquid.Wallet.Ui;
 
 namespace WalletWasabi.Client.Liquid;
 
@@ -34,10 +35,10 @@ internal sealed class LiquidApplicationWalletBootstrap
         _applicationDataDirectory = Path.GetFullPath(applicationDataDirectory);
     }
 
-    internal LiquidAuthenticatedRuntimeProvider CreateProvider()
+    internal LiquidAuthenticatedRuntimeProvider CreateProvider(Action<LiquidWalletRuntimeHandoff>? publishHandoff = null)
     {
         LiquidRpcProfileSource profileSource = new(_applicationDataDirectory);
         ElementsPublicNetworkManifestSource manifestSource = new("elements-regtest");
-        return new LiquidAuthenticatedRuntimeProvider(profileSource, _walletDirectories, manifestSource);
+        return new LiquidAuthenticatedRuntimeProvider(profileSource, _walletDirectories, manifestSource, publishHandoff);
     }
 }

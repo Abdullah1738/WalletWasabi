@@ -10,23 +10,25 @@ using WalletWasabi.Logging;
 using WalletWasabi.Services.Terminate;
 using WalletWasabi.Liquid.Wallet.Ui;
 using Constants = WalletWasabi.Helpers.Constants;
+using WalletWasabi.Client.Liquid;
 
 namespace WalletWasabi.Client;
 
 public class WasabiApplication
 {
-	private readonly LiquidWalletRuntimeHandoff? _liquidWalletRuntimeHandoff = null;
+	private readonly LiquidWalletRuntimeHandoffHolder? _liquidHandoffHolder;
 	public WasabiAppBuilder AppConfig { get; }
 	public Global Global { get; }
 	public Config Config { get; }
 	public SingleInstanceChecker SingleInstanceChecker { get; }
 	public TerminateService TerminateService { get; }
-	public LiquidWalletRuntimeHandoff? LiquidWalletRuntime => _liquidWalletRuntimeHandoff;
+	public LiquidWalletRuntimeHandoff? LiquidWalletRuntime => _liquidHandoffHolder?.Value;
 	private static Guid InstanceGuid { get; } = Guid.NewGuid();
 
 	public WasabiApplication(WasabiAppBuilder wasabiAppBuilder)
 	{
 		AppConfig = wasabiAppBuilder;
+		_liquidHandoffHolder = null;
 
 		CheckVersionAndHelp();
 		Directory.CreateDirectory(Config.DataDir);
@@ -42,7 +44,38 @@ public class WasabiApplication
 	internal static WasabiApplication CreateLiquid(WasabiAppBuilder wasabiAppBuilder)
 	{
 		ArgumentNullException.ThrowIfNull(wasabiAppBuilder);
-		return new WasabiApplication(wasabiAppBuilder);
+
+		string liquidWalletRoot = Path.Combine(Config.DataDir, "liquid", "wallets");
+		Directory.CreateDirectory(liquidWalletRoot);
+		LiquidApplicationWalletBootstrap bootstrap = new(new LiquidWalletDirectories(liquidWalletRoot), Config.DataDir);
+		LiquidWalletRuntimeHandoffHolder holder = new();
+#pragma warning disable CA2000 // Dispose objects before losing scope - ownership transfers to the lifecycle coordinator's cleanup
+		LiquidAuthenticatedRuntimeProvider provider = bootstrap.CreateProvider(holder.Publish);
+		// No wallet is open at composition time: the handoff is published by the
+		// provider into the holder when OpenAsync publishes the session. The
+		// composition carries a null handoff until then; the coordinator owns its
+		// disposal regardless.
+		LiquidWalletRuntimeComposition composition = new(provider, null);
+#pragma warning restore CA2000
+		return new WasabiApplication(wasabiAppBuilder, composition, holder);
+	}
+
+	private WasabiApplication(WasabiAppBuilder wasabiAppBuilder, LiquidWalletRuntimeComposition composition, LiquidWalletRuntimeHandoffHolder holder)
+	{
+		AppConfig = wasabiAppBuilder;
+
+		CheckVersionAndHelp();
+		Directory.CreateDirectory(Config.DataDir);
+		Config = new Config(LoadOrCreateConfigs(), wasabiAppBuilder.Arguments);
+		SetupLogger();
+		Logger.LogDebug($"Wasabi was started with these argument(s): {string.Join(" ", AppConfig.Arguments.DefaultIfEmpty("none"))}.");
+
+		Global = new Global(Config.DataDir, Config);
+		SingleInstanceChecker = new(Config.DataDir);
+
+		LiquidApplicationLifecycleCoordinator coordinator = new(composition, Global, SingleInstanceChecker, AppConfig.Terminate);
+		_liquidHandoffHolder = holder;
+		TerminateService = new(coordinator.TerminateApplicationAsync, AppConfig.Terminate);
 	}
 
 	private void CheckVersionAndHelp()

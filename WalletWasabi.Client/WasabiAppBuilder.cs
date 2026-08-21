@@ -40,11 +40,7 @@ public record WasabiAppBuilder(string AppName, string[] Arguments)
 		runtime switch
 		{
 			ApplicationRuntime.Bitcoin => InvokeFactory(applicationFactory),
-			// LIQUID-PROVIDER-OWNERSHIP-SEAM-001: the ownership seam types land in this slice;
-			// the application-level Liquid composition root (bootstrap -> provider -> coordinator
-			// wired into TerminateService) is deliberately not live yet. Fail closed rather than
-			// silently running the Bitcoin path under a Liquid runtime selection.
-			ApplicationRuntime.Liquid when typeof(TApplication) == typeof(WasabiApplication) => throw new NotSupportedException("Liquid application composition is not yet live; the ownership seam lands before the composition root."),
+			ApplicationRuntime.Liquid when typeof(TApplication) == typeof(WasabiApplication) => (TApplication)(object)WasabiApplication.CreateLiquid(this),
 			ApplicationRuntime.Liquid => throw new NotSupportedException("Liquid application composition is only available for WasabiApplication."),
 			_ => throw new ArgumentOutOfRangeException(nameof(runtime), runtime, "An explicit supported application runtime is required."),
 		};

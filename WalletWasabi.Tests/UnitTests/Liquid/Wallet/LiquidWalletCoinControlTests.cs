@@ -5019,6 +5019,7 @@ public class LiquidWalletCoinControlTests
 			"WalletWasabi.Liquid.Rpc.ElementsBroadcastBindingLevel",
 			"WalletWasabi.Liquid.Rpc.ElementsExpectationBoundBroadcastReceipt",
 			"WalletWasabi.Liquid.Rpc.ElementsRpcClient+<BroadcastExpectationBoundRawTransactionAsync>d__66",
+			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiOutpointCoordinate",
 		];
 #if DEBUG
 		AssertExactAssemblyTypeManifest(

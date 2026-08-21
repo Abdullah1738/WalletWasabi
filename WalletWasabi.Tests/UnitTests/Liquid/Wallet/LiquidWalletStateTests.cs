@@ -2563,6 +2563,7 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Liquid.Wallet.LiquidWalletLoadSaveResult",
 			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiAssetBalance",
 			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiFacade",
+			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiOutpointCoordinate",
 			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiReceiveAddress",
 			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiSnapshot",
 			"WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiAssetAmount",

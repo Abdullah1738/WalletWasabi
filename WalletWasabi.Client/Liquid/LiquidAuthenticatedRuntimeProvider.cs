@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
@@ -22,9 +24,17 @@ internal sealed class ElementsPublicNetworkManifestSource
 
 internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 {
+	// The frozen Liquid v1 replay/context branch: a hardened child of the
+	// authenticated master whose private key is the HKDF key material for the
+	// per-wallet persistence key and external network context.
+	private const uint ReplayContextBranchIndex = 1108790945;
+	private const string ReplayKeyInfo = "WalletWasabi/Liquid/v1/replay";
+	private const string ContextKeyInfo = "WalletWasabi/Liquid/v1/context";
+
 	private readonly LiquidRpcProfileSource _rpcProfileSource;
 	private readonly LiquidWalletDirectories _walletDirectories;
 	private readonly ElementsPublicNetworkManifestSource _manifestSource;
+	private readonly Action<LiquidWalletRuntimeHandoff>? _publishHandoff;
 	private readonly Dictionary<string, LiquidAuthenticatedWalletSession> _sessions = new(StringComparer.Ordinal);
 	private readonly object _gate = new();
 	private bool _disposed;
@@ -32,11 +42,13 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 	internal LiquidAuthenticatedRuntimeProvider(
 		LiquidRpcProfileSource rpcProfileSource,
 		LiquidWalletDirectories walletDirectories,
-		ElementsPublicNetworkManifestSource manifestSource)
+		ElementsPublicNetworkManifestSource manifestSource,
+		Action<LiquidWalletRuntimeHandoff>? publishHandoff = null)
 	{
 		_rpcProfileSource = rpcProfileSource ?? throw new ArgumentNullException(nameof(rpcProfileSource));
 		_walletDirectories = walletDirectories ?? throw new ArgumentNullException(nameof(walletDirectories));
 		_manifestSource = manifestSource ?? throw new ArgumentNullException(nameof(manifestSource));
+		_publishHandoff = publishHandoff;
 	}
 
 	internal async ValueTask<LiquidAuthenticatedWalletSession> OpenAsync(
@@ -76,7 +88,8 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 				profile.Endpoint,
 				new NetworkCredential(lease.Username.ToString(), lease.Password.ToString()),
 				new ElementsRpcTimeouts(profile.ConnectTimeout, profile.RequestTimeout, profile.RequestTimeout));
-			LiquidWalletSignerKeyAdapter adapter = new(root, outPoint => null, km.GetNetwork());
+			Func<string, (int Account, int Change, int Index)?> outpointLocator = BuildOutpointLocator(identity, root);
+			LiquidWalletSignerKeyAdapter adapter = new(root, outpointLocator, km.GetNetwork());
 			_ = LiquidWalletNativeSigner.Create(
 				adapter,
 				"wpkh(" + Convert.ToHexString(root.PrivateKey.PubKey.ToBytes()) + ")",
@@ -101,6 +114,10 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 				await session.DisposeAsync().ConfigureAwait(false);
 				throw new InvalidOperationException("The Liquid wallet already has an active authenticated session.");
 			}
+
+			// Publication is the application's assignment-only surface; when no sink is
+			// wired (provider used without a composition root) this is a no-op.
+			_publishHandoff?.Invoke(handoff);
 
 			return session;
 		}
@@ -164,6 +181,79 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 		{
 			throw new AggregateException(errors);
 		}
+	}
+
+	// Builds the real outpoint locator from the opened wallet's landed state. The
+	// per-wallet persistence key and external network context are derived from the
+	// authenticated master via the frozen replay/context branch, then the landed
+	// load/save path opens the sealed state. A fresh wallet with no landed state
+	// yields an empty map: the locator still refuses every outpoint fail-closed.
+	private Func<string, (int Account, int Change, int Index)?> BuildOutpointLocator(LiquidWalletIdentity identity, ExtKey root)
+	{
+		string walletDataDir = _walletDirectories.WalletDirectory;
+		string walletName = identity.CanonicalWalletId;
+		ExtKey replayContextChild = root.Derive(new KeyPath(ReplayContextBranchIndex | 0x80000000U));
+		byte[] keyMaterial = replayContextChild.PrivateKey.ToBytes();
+		try
+		{
+			byte[] salt = ComputePersistenceSalt(identity);
+			byte[] key = LiquidKeyDomain.DeriveHkdf(keyMaterial, salt, ReplayKeyInfo);
+			byte[] externalWalletNetworkContext = LiquidKeyDomain.DeriveHkdf(keyMaterial, salt, ContextKeyInfo);
+			try
+			{
+				Dictionary<string, (int Account, int Change, int Index)> map = new(StringComparer.Ordinal);
+				string filePath = Path.Combine(walletDataDir, walletName + ".lwwal");
+				if (File.Exists(filePath))
+				{
+					foreach (KeyValuePair<string, LiquidWalletUiOutpointCoordinate> entry in
+						LiquidWalletUiFacade.LoadAndGetOutpointSpendCoordinates(
+							walletDataDir,
+							walletName,
+							key,
+							externalWalletNetworkContext))
+					{
+						map[entry.Key] = (entry.Value.Account, entry.Value.Change, entry.Value.Index);
+					}
+				}
+
+				return outpointHex =>
+				{
+					try
+					{
+						return outpointHex is not null && map.TryGetValue(outpointHex, out (int Account, int Change, int Index) coordinates)
+							? coordinates
+							: null;
+					}
+					catch (Exception)
+					{
+						return null;
+					}
+				};
+			}
+			finally
+			{
+				CryptographicOperations.ZeroMemory(key);
+				CryptographicOperations.ZeroMemory(externalWalletNetworkContext);
+			}
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(keyMaterial);
+		}
+	}
+
+	// salt = SHA256(UTF8(networkGenesisDisplay) || UTF8(canonicalWalletId)). The
+	// Client binding carries only the manifest identity, not the manifest genesis
+	// block hash, so the pinned fallback uses UTF8(identity.NetworkManifestId) as
+	// the networkGenesisDisplay bytes for this slice.
+	private static byte[] ComputePersistenceSalt(LiquidWalletIdentity identity)
+	{
+		byte[] networkGenesisDisplay = Encoding.UTF8.GetBytes(identity.NetworkManifestId);
+		byte[] canonicalWalletId = Encoding.UTF8.GetBytes(identity.CanonicalWalletId);
+		byte[] saltInput = new byte[networkGenesisDisplay.Length + canonicalWalletId.Length];
+		networkGenesisDisplay.CopyTo(saltInput, 0);
+		canonicalWalletId.CopyTo(saltInput, networkGenesisDisplay.Length);
+		return SHA256.HashData(saltInput);
 	}
 
 	private void ValidateIdentity(LiquidWalletIdentity identity)

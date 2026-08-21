@@ -12,13 +12,13 @@ internal sealed class LiquidWalletRuntimeComposition : IAsyncDisposable
 
 	internal LiquidWalletRuntimeComposition(
 		LiquidAuthenticatedRuntimeProvider provider,
-		LiquidWalletRuntimeHandoff publicHandoff)
+		LiquidWalletRuntimeHandoff? publicHandoff)
 	{
 		_provider = provider ?? throw new ArgumentNullException(nameof(provider));
-		PublicHandoff = publicHandoff ?? throw new ArgumentNullException(nameof(publicHandoff));
+		PublicHandoff = publicHandoff;
 	}
 
-	internal LiquidWalletRuntimeHandoff PublicHandoff { get; }
+	internal LiquidWalletRuntimeHandoff? PublicHandoff { get; }
 	internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
 	public async ValueTask DisposeAsync()

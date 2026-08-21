@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Security.Cryptography;
 using WalletWasabi.Liquid.Addresses;
 using WalletWasabi.Liquid.Amounts;
@@ -543,5 +544,45 @@ public static class LiquidWalletUiFacade
 				}
 			}
 		}
+	}
+
+	/// <summary>
+	/// The single public entry point the Client composition root calls on Liquid
+	/// wallet open to obtain the outpoint-to-spend-coordinate map for the signing
+	/// seam's outpoint locator. Loads the landed state in-assembly via the landed
+	/// <see cref="LiquidWalletLoadSave.Load"/> and projects each unspent output's
+	/// consensus outpoint hex (the same 72-character form the signing seam hands
+	/// over) to its BIP32 coordinates <c>(account, change, index)</c>. The account
+	/// is always <c>0</c> in v1 (the frozen domain has exactly one spend account).
+	/// The loaded state is used only for the projection and is never stored,
+	/// returned, or exposed. Fail-closed exactly as the landed <c>Load</c>: a
+	/// missing file, corrupt frame, wrong key, wrong context, or revision mismatch
+	/// surfaces as the landed exception with no retry, no fallback, and no
+	/// empty-map substitution. This projection performs no signing, no broadcast,
+	/// no node contact, and no key custody; the key/context spans are
+	/// caller-supplied <see cref="ReadOnlySpan{T}"/> values that cannot be captured
+	/// or stored, so the clearing obligation is structural.
+	/// </summary>
+	public static IReadOnlyDictionary<string, LiquidWalletUiOutpointCoordinate> LoadAndGetOutpointSpendCoordinates(
+		string walletDataDir,
+		string walletName,
+		ReadOnlySpan<byte> key,
+		ReadOnlySpan<byte> externalWalletNetworkContext)
+	{
+		LiquidWalletLoadSaveResult result = LiquidWalletLoadSave.Load(
+			walletDataDir,
+			walletName,
+			key,
+			externalWalletNetworkContext);
+		// Load always returns a non-null State; the null-forgiving operator adds
+		// no runtime check and no fallback.
+		var map = new Dictionary<string, LiquidWalletUiOutpointCoordinate>(StringComparer.Ordinal);
+		foreach (LiquidOwnedOutput output in result.State!.GetUnspentOutputs())
+		{
+			string outpointKey = Convert.ToHexString(output.OutPoint.ToConsensusBytes()).ToLowerInvariant();
+			map[outpointKey] = new LiquidWalletUiOutpointCoordinate(0, (int)output.SpendKey.Branch, (int)output.SpendKey.Index);
+		}
+
+		return map;
 	}
 }
