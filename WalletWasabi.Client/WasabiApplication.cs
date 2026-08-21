@@ -8,17 +8,20 @@ using WalletWasabi.Extensions;
 using WalletWasabi.Helpers;
 using WalletWasabi.Logging;
 using WalletWasabi.Services.Terminate;
+using WalletWasabi.Liquid.Wallet.Ui;
 using Constants = WalletWasabi.Helpers.Constants;
 
 namespace WalletWasabi.Client;
 
 public class WasabiApplication
 {
+	private readonly LiquidWalletRuntimeHandoff? _liquidWalletRuntimeHandoff = null;
 	public WasabiAppBuilder AppConfig { get; }
 	public Global Global { get; }
 	public Config Config { get; }
 	public SingleInstanceChecker SingleInstanceChecker { get; }
 	public TerminateService TerminateService { get; }
+	public LiquidWalletRuntimeHandoff? LiquidWalletRuntime => _liquidWalletRuntimeHandoff;
 	private static Guid InstanceGuid { get; } = Guid.NewGuid();
 
 	public WasabiApplication(WasabiAppBuilder wasabiAppBuilder)
@@ -34,6 +37,12 @@ public class WasabiApplication
 		Global = new Global(Config.DataDir, Config);
 		SingleInstanceChecker = new(Config.DataDir);
 		TerminateService = new(TerminateApplicationAsync, AppConfig.Terminate);
+	}
+
+	internal static WasabiApplication CreateLiquid(WasabiAppBuilder wasabiAppBuilder)
+	{
+		ArgumentNullException.ThrowIfNull(wasabiAppBuilder);
+		return new WasabiApplication(wasabiAppBuilder);
 	}
 
 	private void CheckVersionAndHelp()
