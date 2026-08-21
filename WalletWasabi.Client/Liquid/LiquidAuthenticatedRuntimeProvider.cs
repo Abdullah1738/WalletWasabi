@@ -102,7 +102,7 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 				throw new InvalidOperationException("The Liquid wallet already has an active authenticated session.");
 			}
 
-			return ValueTask.FromResult(session);
+			return session;
 		}
 		finally
 		{
