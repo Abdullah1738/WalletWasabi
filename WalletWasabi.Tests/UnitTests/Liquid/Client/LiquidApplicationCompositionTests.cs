@@ -21,8 +21,11 @@ public sealed class LiquidApplicationCompositionTests
 	{
 		using TemporaryDirectory directory = new();
 		string wallets = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
-		LiquidWalletRuntimeHandoff handoff = new("alpha", "liquid-mainnet", new LiquidWalletUiBootstrapSnapshot("alpha", "liquid-mainnet", 0));
-		LiquidWalletRuntimeComposition composition = new(CreateProvider(directory.Path, wallets), handoff);
+		LiquidWalletRuntimeHandoff handoff = new("alpha", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", new LiquidWalletUiBootstrapSnapshot("alpha", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", 0));
+		LiquidWalletRuntimeComposition composition = new(
+			CreateProvider(directory.Path, wallets),
+			handoff,
+			LiquidWalletSendExecutionCommandService.CreateSendCommand(CreateProvider(directory.Path, wallets)));
 
 		await composition.DisposeAsync();
 		await composition.DisposeAsync();
@@ -74,7 +77,7 @@ public sealed class LiquidApplicationCompositionTests
 	}
 
 	private static LiquidAuthenticatedRuntimeProvider CreateProvider(string dataDirectory, string walletDirectory) =>
-		new(new LiquidRpcProfileSource(dataDirectory), new LiquidWalletDirectories(walletDirectory), new ElementsPublicNetworkManifestSource("liquid-mainnet"));
+		new(new LiquidRpcProfileSource(dataDirectory), new LiquidWalletDirectories(walletDirectory), new ElementsPublicNetworkManifestSource("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b"));
 
 	private sealed class TemporaryDirectory : IDisposable
 	{

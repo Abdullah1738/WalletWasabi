@@ -2429,7 +2429,7 @@ public class ElementsRpcClientTests
 				CancellationToken.None);
 		using (frame)
 		{
-			Assert.Equal("liquidtestnet", nodeObservation.Expectation.Chain);
+			Assert.Equal("liquidtestnet", nodeObservation.Expectation!.Chain);
 			Assert.Equal(ExpectationStartupId, nodeObservation.Generation.StartupId);
 			Assert.Equal(9UL, nodeObservation.Generation.ChainstateRevision);
 			Assert.True(nodeObservation.HasExactGenerationFenceObservation);

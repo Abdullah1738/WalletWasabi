@@ -324,7 +324,8 @@ public sealed class ElementsRpcClient : IDisposable
 		{
 			throw new ElementsRpcException(
 				ElementsRpcFailureKind.Timeout,
-				$"Elements RPC '{method}' exceeded the total request timeout.");
+				$"Elements RPC '{method}' exceeded the total request timeout.",
+				method: method);
 		}
 	}
 
@@ -403,7 +404,8 @@ public sealed class ElementsRpcClient : IDisposable
 					ElementsRpcFailureKind.Rpc,
 					$"Elements RPC '{method}' failed with code {code}.",
 					rpcCode: code,
-					httpStatusCode: statusCode);
+					httpStatusCode: statusCode,
+					method: method);
 			}
 			if (!response.IsSuccessStatusCode)
 			{
@@ -418,7 +420,8 @@ public sealed class ElementsRpcClient : IDisposable
 				ElementsRpcFailureKind.Protocol,
 				$"Elements RPC '{method}' returned invalid JSON.",
 				httpStatusCode: statusCode,
-				innerException: exception);
+				innerException: exception,
+				method: method);
 		}
 	}
 
@@ -436,7 +439,8 @@ public sealed class ElementsRpcClient : IDisposable
 			throw new ElementsRpcException(
 				ElementsRpcFailureKind.Transport,
 				$"Elements RPC '{method}' transport failed.",
-				innerException: exception);
+				innerException: exception,
+				method: method);
 		}
 	}
 
@@ -472,7 +476,8 @@ public sealed class ElementsRpcClient : IDisposable
 				{
 					throw new ElementsRpcException(
 						ElementsRpcFailureKind.Timeout,
-						$"Elements RPC '{method}' response body exceeded the idle timeout.");
+						$"Elements RPC '{method}' response body exceeded the idle timeout.",
+						method: method);
 				}
 
 				if (read == 0)
@@ -997,7 +1002,8 @@ public sealed class ElementsRpcClient : IDisposable
 		new(
 			ElementsRpcFailureKind.Protocol,
 			$"Elements RPC '{method}' returned an invalid result: {reason}.",
-			httpStatusCode: httpStatusCode);
+			httpStatusCode: httpStatusCode,
+			method: method);
 
 	private static ElementsRpcException ProtocolFailure(
 		string method,
@@ -1006,13 +1012,15 @@ public sealed class ElementsRpcClient : IDisposable
 		new(
 			ElementsRpcFailureKind.Protocol,
 			$"Elements RPC '{method}' protocol failure: {reason}.",
-			httpStatusCode: httpStatusCode);
+			httpStatusCode: httpStatusCode,
+			method: method);
 
 	private static ElementsRpcException HttpFailure(string method, HttpStatusCode statusCode) =>
 		new(
 			ElementsRpcFailureKind.Http,
 			$"Elements RPC '{method}' returned HTTP {(int)statusCode}.",
-			httpStatusCode: statusCode);
+			httpStatusCode: statusCode,
+			method: method);
 
 	public async Task<ElementsExpectationBoundNodeObservation> GetExpectationBoundNodeObservationAsync(
 		ElementsNodeExpectation expectation,
@@ -1039,19 +1047,27 @@ public sealed class ElementsRpcClient : IDisposable
 	}
 
 	/// <summary>
-	/// Submits one canonical signed transaction while holding the node-probe lock across the exact
-	/// expectation, effective-fee-asset, and generation fence. A successful receipt records node
-	/// acceptance only; it is not confirmation, currentness, propagation, or transaction-id authority.
-	/// No retry or fallback is performed.
+	/// MANAGED-WALLET-UI-SEND-EXECUTE-001 (V2 section 5; 2026-08-21 amendment section 7): submits
+	/// one canonical signed transaction while holding the node-probe lock across the exact
+	/// effective-fee-asset and generation fence, performing its own pre-submit fee-asset and
+	/// generation observation. The caller supplies no pre-formed node-identity expectation: the
+	/// observation is self-performed under <c>_probeLock</c> and the receipt carries
+	/// <see cref="ElementsExpectationBoundNodeObservation.Expectation"/> as
+	/// <see langword="null"/>. When <paramref name="expectedNodeExpectation"/> is supplied it is
+	/// a freshness fence only — the self-observed node status is verified against it fail-closed;
+	/// when null no static-expectation fence is applied (no expectation is ever fabricated).
+	/// Exactly one <c>sendrawtransaction</c>; no retry or fallback. The stage attribution
+	/// (pre-submit observation vs submit) is preserved exactly. A successful receipt records node
+	/// acceptance only; it is not confirmation, currentness, propagation, or transaction-id
+	/// authority.
 	/// </summary>
 	public async Task<ElementsExpectationBoundBroadcastReceipt> BroadcastExpectationBoundRawTransactionAsync(
-		ElementsNodeExpectation expectation,
+		ElementsNodeExpectation? expectedNodeExpectation,
 		string expectedEffectiveFeeAsset,
 		string signedTransactionHex,
 		CancellationToken cancellationToken)
 	{
-		ArgumentNullException.ThrowIfNull(expectation);
-		ElementsNodeExpectation normalizedExpectation = expectation.Normalize();
+		ElementsNodeExpectation? normalizedExpectation = expectedNodeExpectation?.Normalize();
 		LiquidAssetId normalizedEffectiveFeeAsset =
 			LiquidAssetId.ParseRpcHex(expectedEffectiveFeeAsset, nameof(expectedEffectiveFeeAsset));
 		RequireCanonicalTransactionHex(signedTransactionHex, nameof(signedTransactionHex));
@@ -1059,15 +1075,83 @@ public sealed class ElementsRpcClient : IDisposable
 		await _probeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
-			ElementsExpectationBoundNodeObservation nodeObservation =
-				await GetExpectationBoundNodeObservationCoreAsync(
-					normalizedExpectation,
-					normalizedEffectiveFeeAsset,
+			ElementsExpectationBoundNodeObservation nodeObservation;
+			try
+			{
+				ElementsNodeGenerationObservation generationBefore =
+					await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+				ElementsNodeStatus nodeStatus = await GetNodeStatusCoreAsync(cancellationToken).ConfigureAwait(false);
+				ElementsNodeGenerationObservation generationAfterStatus =
+					await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+				ElementsFeeAssetGenerationObservation feeObservation =
+					await GetFeeAssetGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+
+				EnsureExactExpectationBoundGenerationFence(
+					generationBefore,
+					generationAfterStatus,
+					feeObservation.GenerationBefore,
+					feeObservation.GenerationAfter,
+					nodeStatus);
+
+				// When the caller supplies a node-identity expectation it is a freshness fence over
+				// the self-observed node status; the expectation is never fabricated here.
+				if (normalizedExpectation is not null)
+				{
+					nodeStatus.EnsureMatches(normalizedExpectation);
+				}
+
+				var mismatches = new List<string>();
+				if (!StringComparer.Ordinal.Equals(nodeStatus.PeggedAsset, feeObservation.PeggedAsset))
+				{
+					mismatches.Add("pegged_asset");
+				}
+				if (!StringComparer.Ordinal.Equals(
+					feeObservation.EffectiveFeeAsset,
+					normalizedEffectiveFeeAsset.CanonicalRpcHex))
+				{
+					mismatches.Add("fee_asset");
+				}
+				if (mismatches.Count > 0)
+				{
+					throw new ElementsNodeMismatchException(mismatches);
+				}
+
+				// Preserve the caller-supplied expectation on the observation when present so the
+				// receipt carries it; when none is supplied the observation is self-reported.
+				nodeObservation = normalizedExpectation is not null
+					? new ElementsExpectationBoundNodeObservation(
+						normalizedExpectation,
+						normalizedEffectiveFeeAsset.CanonicalRpcHex,
+						nodeStatus,
+						generationBefore)
+					: new ElementsExpectationBoundNodeObservation(
+						normalizedEffectiveFeeAsset.CanonicalRpcHex,
+						nodeStatus,
+						generationBefore);
+			}
+			catch (ElementsRpcException rpcException) when (rpcException.FailureKind == ElementsRpcFailureKind.Rpc)
+			{
+				// A pre-submit observation-phase RPC rejection: the sendrawtransaction call was
+				// never issued, so zero broadcasts occurred. Attribute the stage so the caller
+				// classifies this as a pre-submit rejection without parsing the message text.
+				throw new ElementsBroadcastStageException(ElementsBroadcastStage.PreSubmitObservation, rpcException);
+			}
+
+			string acceptedTransactionIdHex;
+			try
+			{
+				acceptedTransactionIdHex = await CallHex32Async(
+					"sendrawtransaction",
+					[signedTransactionHex],
 					cancellationToken).ConfigureAwait(false);
-			string acceptedTransactionIdHex = await CallHex32Async(
-				"sendrawtransaction",
-				[signedTransactionHex],
-				cancellationToken).ConfigureAwait(false);
+			}
+			catch (ElementsRpcException rpcException) when (rpcException.FailureKind == ElementsRpcFailureKind.Rpc)
+			{
+				// An RPC-kind rejection returned by sendrawtransaction itself under the fenced
+				// generation: exactly one submission, attributed to the submit stage.
+				throw new ElementsBroadcastStageException(ElementsBroadcastStage.Submit, rpcException);
+			}
+
 			ElementsNodeGenerationObservation generationAfterBroadcast =
 				await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
 			if (generationAfterBroadcast != nodeObservation.Generation)
@@ -1274,6 +1358,116 @@ public sealed class ElementsRpcClient : IDisposable
 		return new ElementsExpectationBoundRawTransactionBatch(nodeObservation, transactions);
 	}
 
+	/// <summary>
+	/// MANAGED-WALLET-UI-SEND-EXECUTE-001 (amendment section 7): fetches bounded raw
+	/// transaction bytes under the node-probe lock with the exact effective-fee-asset and
+	/// generation fence, performing its own pre-submit fee-asset and generation observation
+	/// without a fabricated <see cref="ElementsNodeExpectation"/>. The send-execution funding
+	/// path binds the session's RPC client and effective fee asset; it does not invent a
+	/// static node-identity expectation. No retry is performed.
+	/// </summary>
+	internal async Task<ElementsExpectationBoundRawTransactionBatch> GetObservedRawTransactionsAsync(
+		string expectedEffectiveFeeAsset,
+		IReadOnlyList<ElementsRawTransactionRequest> requests,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(requests);
+		LiquidAssetId normalizedEffectiveFeeAsset =
+			LiquidAssetId.ParseRpcHex(expectedEffectiveFeeAsset, nameof(expectedEffectiveFeeAsset));
+		int requestCount = requests.Count;
+		if (requestCount is < 1 or > MaxRawTransactionCount)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(requests),
+				"Between one and one hundred raw transaction requests are required.");
+		}
+
+		var normalizedRequests = new ElementsRawTransactionRequest[requestCount];
+		for (int index = 0; index < requestCount; index++)
+		{
+			normalizedRequests[index] = requests[index]
+				?? throw new ArgumentException("Every raw transaction request is required.", nameof(requests));
+		}
+
+		await _probeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			ElementsNodeGenerationObservation generationBefore =
+				await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+			ElementsFeeAssetGenerationObservation feeObservation =
+				await GetFeeAssetGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+			ElementsNodeGenerationObservation generationAfterFee =
+				await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+
+			if (generationBefore != feeObservation.GenerationBefore
+				|| generationBefore != feeObservation.GenerationAfter
+				|| generationBefore != generationAfterFee)
+			{
+				throw InvalidResult(
+					"observed raw transaction batch",
+					"node generation changed during the observation");
+			}
+			if (!StringComparer.Ordinal.Equals(
+				feeObservation.EffectiveFeeAsset,
+				normalizedEffectiveFeeAsset.CanonicalRpcHex))
+			{
+				throw new ElementsNodeMismatchException(["fee_asset"]);
+			}
+
+			var transactions = new ElementsRawTransactionObservation[requestCount];
+			long aggregateBytes = 0;
+			for (int index = 0; index < normalizedRequests.Length; index++)
+			{
+				byte[] transactionBytes = await GetRawTransactionBytesCoreAsync(
+					normalizedRequests[index],
+					cancellationToken).ConfigureAwait(false);
+				aggregateBytes = checked(aggregateBytes + transactionBytes.Length);
+				if (aggregateBytes > MaxRawTransactionBatchBytes)
+				{
+					throw InvalidResult(
+						"observed raw transaction batch",
+						"the aggregate raw transaction byte limit was exceeded");
+				}
+
+				transactions[index] = new ElementsRawTransactionObservation(
+					normalizedRequests[index],
+					transactionBytes);
+			}
+
+			ElementsNodeGenerationObservation generationAfterTransactions =
+				await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+			if (generationAfterTransactions != generationBefore)
+			{
+				throw InvalidResult(
+					"observed raw transaction batch",
+					"node generation changed during raw transaction acquisition");
+			}
+
+			ElementsNodeStatus nodeStatus = await GetNodeStatusCoreAsync(cancellationToken).ConfigureAwait(false);
+			ElementsNodeGenerationObservation generationAfterStatus =
+				await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+			if (generationAfterStatus != generationBefore
+				|| nodeStatus.Blocks != generationBefore.Blocks
+				|| !StringComparer.Ordinal.Equals(nodeStatus.BestBlockHash, generationBefore.BestBlockHash))
+			{
+				throw InvalidResult(
+					"observed raw transaction batch",
+					"node generation changed during the final observation");
+			}
+
+			return new ElementsExpectationBoundRawTransactionBatch(
+				new ElementsExpectationBoundNodeObservation(
+					normalizedEffectiveFeeAsset.CanonicalRpcHex,
+					nodeStatus,
+					generationBefore),
+				transactions);
+		}
+		finally
+		{
+			_probeLock.Release();
+		}
+	}
+
 	private async Task<byte[]> GetRawTransactionBytesCoreAsync(
 		ElementsRawTransactionRequest request,
 		CancellationToken cancellationToken)
@@ -1338,7 +1532,8 @@ public sealed class ElementsRpcClient : IDisposable
 		{
 			throw new ElementsRpcException(
 				ElementsRpcFailureKind.Timeout,
-				$"Elements RPC '{method}' exceeded the total request timeout.");
+				$"Elements RPC '{method}' exceeded the total request timeout.",
+				method: method);
 		}
 	}
 

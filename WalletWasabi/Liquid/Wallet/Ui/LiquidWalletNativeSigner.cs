@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 
 namespace WalletWasabi.Liquid.Wallet.Ui;
 
@@ -24,13 +25,14 @@ namespace WalletWasabi.Liquid.Wallet.Ui;
 /// caching. This binding performs no node contact, no RPC, no broadcast, and no sighash
 /// computation in managed code.
 /// </summary>
-public sealed class LiquidWalletNativeSigner : ILiquidWalletSigner
+public sealed class LiquidWalletNativeSigner : ILiquidWalletSigner, IDisposable
 {
 	private readonly ILiquidWalletSigner _keyOwner;
 	private readonly byte[] _descriptor;
 	private readonly ulong _lastIndex;
 	private readonly byte[] _slip77MasterKey;
 	private readonly Func<byte[]>? _entropyOverride;
+	private int _disposed;
 
 	private LiquidWalletNativeSigner(
 		ILiquidWalletSigner keyOwner,
@@ -133,6 +135,13 @@ public sealed class LiquidWalletNativeSigner : ILiquidWalletSigner
 			return false;
 		}
 
+		// Fail-closed after disposal: the retained descriptor/SLIP-77 arrays are zeroed, so a
+		// post-disposal sign attempt is a rejection, never a partial or stale-key operation.
+		if (Volatile.Read(ref _disposed) != 0)
+		{
+			return false;
+		}
+
 		byte[] frame;
 		byte[] epoch;
 		try
@@ -209,19 +218,30 @@ public sealed class LiquidWalletNativeSigner : ILiquidWalletSigner
 						return false;
 					}
 
-					string signedTransactionHex = Convert.ToHexString(
-						outTransaction.AsSpan(0, (int)outTransactionLength)).ToLowerInvariant();
+					byte[] signedTransactionBytes = outTransaction.AsSpan(0, (int)outTransactionLength).ToArray();
+					try
+					{
+						// Establish the exact local transaction id from the finalized transaction bytes
+						// through the native read-only wln_wlpq_transaction_id_v1 export. Fail-closed:
+						// a native non-OK status, or an id that is not exactly 64 lowercase nonzero hex,
+						// rejects before broadcast is reachable (SigningRejected).
+						if (!TryGetCanonicalTransactionIdHex(signedTransactionBytes, out string transactionIdHex))
+						{
+							return false;
+						}
 
-					// The native export reports only the serialized transaction; the transaction
-					// id is the double-SHA256 of the non-witness serialization. The container
-					// carries the empty id when the signer does not report one; this binding does
-					// not re-implement the consensus serializer to recover it.
-					signedTransaction = LiquidWalletUiSignedTransaction.Create(
-						request.NetworkManifestId,
-						request.SourceRevision,
-						signedTransactionHex,
-						string.Empty);
-					return true;
+						string signedTransactionHex = Convert.ToHexString(signedTransactionBytes).ToLowerInvariant();
+						signedTransaction = LiquidWalletUiSignedTransaction.Create(
+							request.NetworkManifestId,
+							request.SourceRevision,
+							signedTransactionHex,
+							transactionIdHex);
+						return true;
+					}
+					finally
+					{
+						CryptographicOperations.ZeroMemory(signedTransactionBytes);
+					}
 				}
 				finally
 				{
@@ -258,11 +278,77 @@ public sealed class LiquidWalletNativeSigner : ILiquidWalletSigner
 			return;
 		}
 		byte[] supplied = _entropyOverride();
-		if (supplied.Length != entropy.Length)
+		try
 		{
-			throw new InvalidOperationException("The entropy seed must be exactly 32 bytes.");
+			if (supplied.Length != entropy.Length)
+			{
+				throw new InvalidOperationException("The entropy seed must be exactly 32 bytes.");
+			}
+			supplied.CopyTo(entropy, 0);
 		}
-		supplied.CopyTo(entropy, 0);
+		finally
+		{
+			// The caller-supplied entropy override array is secret-bearing and zeroed after use
+			// (the V2 section 3 testing-entropy lifecycle); the destination buffer is zeroed by
+			// the caller's finally.
+			CryptographicOperations.ZeroMemory(supplied);
+		}
+	}
+
+	/// <summary>
+	/// Computes the canonical (RPC/display byte order) 64-character lowercase hex transaction id
+	/// of the finalized transaction bytes via the native read-only
+	/// <c>wln_wlpq_transaction_id_v1</c> export. Fail-closed: returns <see langword="false"/>
+	/// when the native call reports a non-OK status or when the native-returned id is not exactly
+	/// 64 lowercase nonzero hexadecimal characters. This computes no sighash and re-implements no
+	/// consensus serializer; the byte-order convention is the frozen native one.
+	/// </summary>
+	private static bool TryGetCanonicalTransactionIdHex(byte[] transactionBytes, out string transactionIdHex)
+	{
+		transactionIdHex = string.Empty;
+		if (!LiquidWalletNativeSigningBinding.TryGetTransactionId(transactionBytes, out byte[] txidHex64))
+		{
+			return false;
+		}
+		if (txidHex64.Length != LiquidWalletNativeSigningBinding.TransactionIdHexLengthV1)
+		{
+			return false;
+		}
+
+		bool hasNonzero = false;
+		foreach (byte value in txidHex64)
+		{
+			bool isDigit = value is >= (byte)'0' and <= (byte)'9';
+			bool isLowerHex = value is >= (byte)'a' and <= (byte)'f';
+			if (!isDigit && !isLowerHex)
+			{
+				return false;
+			}
+			hasNonzero |= value != (byte)'0';
+		}
+		if (!hasNonzero)
+		{
+			return false;
+		}
+
+		transactionIdHex = Encoding.ASCII.GetString(txidHex64);
+		return true;
+	}
+
+	/// <summary>
+	/// Zeroizes the retained descriptor and SLIP-77 master blinding-key arrays. After disposal
+	/// <see cref="TrySignAndFinalize"/> rejects fail-closed; the static
+	/// <see cref="Create"/>/<see cref="CreateForTesting"/> factories are unaffected. Disposal is
+	/// idempotent and never disposes the caller-owned key owner.
+	/// </summary>
+	public void Dispose()
+	{
+		if (Interlocked.Exchange(ref _disposed, 1) != 0)
+		{
+			return;
+		}
+		CryptographicOperations.ZeroMemory(_descriptor);
+		CryptographicOperations.ZeroMemory(_slip77MasterKey);
 	}
 
 	/// <summary>

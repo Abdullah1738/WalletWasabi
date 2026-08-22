@@ -52,7 +52,8 @@ internal sealed class LiquidWalletSyncSession
 			.CanonicalRpcHex;
 		if (!StringComparer.Ordinal.Equals(sessionPeggedAsset, observation.EffectiveFeeAsset) ||
 			!StringComparer.Ordinal.Equals(sessionPeggedAsset, observation.NodeStatus.PeggedAsset) ||
-			!StringComparer.Ordinal.Equals(sessionPeggedAsset, observation.Expectation.PeggedAsset) ||
+			(observation.Expectation is not null &&
+				!StringComparer.Ordinal.Equals(sessionPeggedAsset, observation.Expectation.PeggedAsset)) ||
 			!StringComparer.Ordinal.Equals(sessionPeggedAsset, state.PeggedAssetId.CanonicalRpcHex))
 		{
 			throw new ArgumentException(

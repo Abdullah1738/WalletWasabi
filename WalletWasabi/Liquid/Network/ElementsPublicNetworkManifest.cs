@@ -83,6 +83,28 @@ public sealed class ElementsPublicNetworkManifest
 	public static ElementsPublicNetworkManifest LiquidTestnet { get; } =
 		DecodeKnown(TestnetCanonicalCbor, TestnetCborSha256, TestnetManifestId);
 
+	/// <summary>
+	/// Resolves a reviewed manifest by its domain-separated manifest id (ordinal). The catalog is
+	/// the reviewed allowlist (mainnet and testnet today); an id with no reviewed manifest —
+	/// including the Liquid regtest binding, whose reviewed manifest has not landed — throws
+	/// fail-closed. Never fabricates or parses an unreviewed manifest.
+	/// </summary>
+	public static ElementsPublicNetworkManifest GetByManifestId(string manifestId)
+	{
+		ArgumentException.ThrowIfNullOrEmpty(manifestId);
+		if (StringComparer.Ordinal.Equals(manifestId, LiquidMainnet.ManifestId))
+		{
+			return LiquidMainnet;
+		}
+		if (StringComparer.Ordinal.Equals(manifestId, LiquidTestnet.ManifestId))
+		{
+			return LiquidTestnet;
+		}
+
+		throw new ElementsNetworkManifestException(
+			"No reviewed Elements public-network manifest exists for the supplied manifest id.");
+	}
+
 	public string CanonicalCborSha256 { get; }
 	public string ManifestId { get; }
 	public int ManifestSchema { get; }

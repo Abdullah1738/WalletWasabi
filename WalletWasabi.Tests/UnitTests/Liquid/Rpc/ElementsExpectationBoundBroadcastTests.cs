@@ -101,6 +101,9 @@ public class ElementsExpectationBoundBroadcastTests
 		Assert.Empty(harness.Handler.Methods);
 	}
 
+	// The pre-submit/submit split now wraps an RPC-kind sendrawtransaction rejection in the
+	// internal stage exception (attributed to the submit stage); the inner exception carries the
+	// RPC kind, code, and structured method identity. Exactly one submission, no retry, no receipt.
 	[Theory]
 	[InlineData(-26)]
 	[InlineData(-27)]
@@ -113,12 +116,15 @@ public class ElementsExpectationBoundBroadcastTests
 		harness.Handler.StatusCodeSelector = invocation =>
 			invocation.Method == "sendrawtransaction" ? HttpStatusCode.InternalServerError : HttpStatusCode.OK;
 
-		ElementsRpcException exception = await Assert.ThrowsAsync<ElementsRpcException>(() =>
+		ElementsBroadcastStageException wrapper = await Assert.ThrowsAsync<ElementsBroadcastStageException>(() =>
 			harness.Client.BroadcastExpectationBoundRawTransactionAsync(
 				ValidExpectation(), PeggedAsset, SignedTransactionHex, CancellationToken.None));
 
+		Assert.Equal(ElementsBroadcastStage.Submit, wrapper.Stage);
+		ElementsRpcException exception = Assert.IsType<ElementsRpcException>(wrapper.InnerException);
 		Assert.Equal(ElementsRpcFailureKind.Rpc, exception.FailureKind);
 		Assert.Equal(rpcCode, exception.RpcCode);
+		Assert.Equal("sendrawtransaction", exception.Method);
 		Assert.Single(harness.Handler.Methods, method => method == "sendrawtransaction");
 		Assert.Equal("sendrawtransaction", harness.Handler.Methods[^1]);
 	}
@@ -288,6 +294,78 @@ public class ElementsExpectationBoundBroadcastTests
 		Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
 		Assert.Single(harness.Handler.Methods, method => method == "sendrawtransaction");
 		Assert.Equal("sendrawtransaction", harness.Handler.Methods[^1]);
+	}
+
+	// MANAGED-WALLET-UI-SEND-EXECUTE-001 section 5: every ElementsRpcException now carries the
+	// exact RPC method string as structured data (no message parse), and the broadcast operation
+	// attributes the stage so a caller can distinguish a pre-submit observation-phase RPC
+	// rejection from a sendrawtransaction RPC rejection. An RPC-kind rejection from
+	// sendrawtransaction itself surfaces as an internal stage wrapper attributed to the submit
+	// stage; zero extra submissions occur.
+	[Theory]
+	[InlineData(-26)]
+	[InlineData(-27)]
+	public async Task BroadcastRpcRejectionIsAttributedToTheSubmitStageAsync(int rpcCode)
+	{
+		using var harness = new BroadcastHarness(invocation => invocation.Method == "sendrawtransaction"
+			? $"{{\"result\":null,\"error\":{{\"code\":{rpcCode},\"message\":\"rejected\"}},\"id\":\"{invocation.Id}\"}}"
+			: ValidBroadcastResult(invocation));
+		harness.Handler.StatusCodeSelector = invocation =>
+			invocation.Method == "sendrawtransaction" ? HttpStatusCode.InternalServerError : HttpStatusCode.OK;
+
+		ElementsBroadcastStageException wrapper = await Assert.ThrowsAsync<ElementsBroadcastStageException>(() =>
+			harness.Client.BroadcastExpectationBoundRawTransactionAsync(
+				ValidExpectation(), PeggedAsset, SignedTransactionHex, CancellationToken.None));
+
+		Assert.Equal(ElementsBroadcastStage.Submit, wrapper.Stage);
+		ElementsRpcException inner = Assert.IsType<ElementsRpcException>(wrapper.InnerException);
+		Assert.Equal(ElementsRpcFailureKind.Rpc, inner.FailureKind);
+		Assert.Equal(rpcCode, inner.RpcCode);
+		Assert.Equal("sendrawtransaction", inner.Method);
+		Assert.Single(harness.Handler.Methods, method => method == "sendrawtransaction");
+	}
+
+	// An RPC-kind rejection from a pre-submit observation method (node warmup -28 on
+	// getblockchaininfo) surfaces with the pre-submit stage and the exact method identity;
+	// sendrawtransaction is never reached (zero broadcasts).
+	[Fact]
+	public async Task PreSubmitObservationRpcRejectionIsAttributedPreSubmitAsync()
+	{
+		using var harness = new BroadcastHarness(invocation => invocation.Method == "getblockchaininfo"
+			? $"{{\"result\":null,\"error\":{{\"code\":-28,\"message\":\"warming up\"}},\"id\":\"{invocation.Id}\"}}"
+			: ValidBroadcastResult(invocation));
+		harness.Handler.StatusCodeSelector = invocation =>
+			invocation.Method == "getblockchaininfo" ? HttpStatusCode.InternalServerError : HttpStatusCode.OK;
+
+		ElementsBroadcastStageException wrapper = await Assert.ThrowsAsync<ElementsBroadcastStageException>(() =>
+			harness.Client.BroadcastExpectationBoundRawTransactionAsync(
+				ValidExpectation(), PeggedAsset, SignedTransactionHex, CancellationToken.None));
+
+		Assert.Equal(ElementsBroadcastStage.PreSubmitObservation, wrapper.Stage);
+		ElementsRpcException inner = Assert.IsType<ElementsRpcException>(wrapper.InnerException);
+		Assert.Equal(ElementsRpcFailureKind.Rpc, inner.FailureKind);
+		Assert.Equal(-28, inner.RpcCode);
+		Assert.Equal("getblockchaininfo", inner.Method);
+		Assert.DoesNotContain("sendrawtransaction", harness.Handler.Methods);
+	}
+
+	// Every existing exception factory populates Method with the exact RPC method string already
+	// interpolated into the message; no message text change. A non-RPC-kind rejection (here a
+	// transport failure on a pre-submit observation method) propagates unwrapped with its Method.
+	[Fact]
+	public async Task EveryRpcExceptionCarriesTheStructuredMethodAsync()
+	{
+		using var handler = new ThrowOnBroadcastHandler();
+		using var httpClient = CreateHttpClient(handler);
+		using var client = new ElementsRpcClient(httpClient);
+
+		ElementsRpcException exception = await Assert.ThrowsAsync<ElementsRpcException>(() =>
+			client.BroadcastExpectationBoundRawTransactionAsync(
+				ValidExpectation(), PeggedAsset, SignedTransactionHex, CancellationToken.None));
+
+		Assert.Equal(ElementsRpcFailureKind.Transport, exception.FailureKind);
+		Assert.NotNull(exception.Method);
+		Assert.Equal("sendrawtransaction", exception.Method);
 	}
 
 	private static string ValidBroadcastResult(RpcInvocation invocation) => invocation.Method switch

@@ -92,7 +92,7 @@ public class LiquidWalletNativeSignerTests
 
 			LiquidWalletUiSignRequest request = BuildRequest();
 			using var keyOwner = new Secp256k1KeyOwner(ReadFieldBytes("spend_key"));
-			LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(
+			using LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(
 				keyOwner,
 				ReadField("descriptor"),
 				ulong.Parse(ReadField("last_index")),
@@ -147,7 +147,7 @@ public class LiquidWalletNativeSignerTests
 
 		LiquidWalletUiSignRequest request = BuildRequest();
 		using var keyOwner = new Secp256k1KeyOwner(ReadFieldBytes("spend_key"));
-		LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.CreateForTesting(
+		using LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.CreateForTesting(
 			keyOwner,
 			ReadField("descriptor"),
 			ulong.Parse(ReadField("last_index")),
@@ -170,7 +170,7 @@ public class LiquidWalletNativeSignerTests
 		LiquidWalletUiSignRequest request = BuildRequest();
 		byte[] wrongKey = SHA256.HashData("wrong spend key"u8.ToArray());
 		using var keyOwner = new Secp256k1KeyOwner(wrongKey);
-		LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(
+		using LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(
 			keyOwner,
 			ReadField("descriptor"),
 			ulong.Parse(ReadField("last_index")),
@@ -187,7 +187,7 @@ public class LiquidWalletNativeSignerTests
 	{
 		LiquidWalletUiSignRequest request = BuildRequest();
 		using var keyOwner = new Secp256k1KeyOwner(ReadFieldBytes("spend_key"), corruptDigest: true);
-		LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(
+		using LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(
 			keyOwner,
 			ReadField("descriptor"),
 			ulong.Parse(ReadField("last_index")),
@@ -209,7 +209,7 @@ public class LiquidWalletNativeSignerTests
 			frame[frame.Length / 2] ^= 0xff;
 			LiquidWalletUiSignRequest request = BuildRequest(overrideFrame: frame);
 			using var keyOwner = new Secp256k1KeyOwner(ReadFieldBytes("spend_key"));
-			LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(
+			using LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(
 				keyOwner,
 				ReadField("descriptor"),
 				ulong.Parse(ReadField("last_index")),
@@ -235,23 +235,25 @@ public class LiquidWalletNativeSignerTests
 		ulong lastIndex = ulong.Parse(ReadField("last_index"));
 		byte[] slip77 = ReadFieldBytes("slip77");
 
-		var refusingKey = LiquidWalletNativeSigner.Create(new RefusingKeyOwner(refusePublicKey: true), descriptor, lastIndex, slip77);
+		using var refusingKey = LiquidWalletNativeSigner.Create(new RefusingKeyOwner(refusePublicKey: true), descriptor, lastIndex, slip77);
 		Assert.False(refusingKey.TrySignAndFinalize(request, out LiquidWalletUiSignedTransaction? refusedKey));
 		Assert.Null(refusedKey);
 
-		var refusingSignature = LiquidWalletNativeSigner.Create(new RefusingKeyOwner(refusePublicKey: false), descriptor, lastIndex, slip77);
+		using var refusingSignature = LiquidWalletNativeSigner.Create(new RefusingKeyOwner(refusePublicKey: false), descriptor, lastIndex, slip77);
 		Assert.False(refusingSignature.TrySignAndFinalize(request, out LiquidWalletUiSignedTransaction? refusedSignature));
 		Assert.Null(refusedSignature);
 	}
 
-	// Required evidence §8: the facade/seam boundary is unchanged. LiquidWalletNativeSigner
-	// exposes exactly Create and TrySignAndFinalize (public) plus the explicit ILiquidWalletSigner
-	// members; the seam interface is byte-identical (exactly GetPublicKeyHex and SignDigestHex).
+	// Required evidence §8: the facade/seam boundary is unchanged apart from the disposal
+	// surface added by MANAGED-WALLET-UI-SEND-EXECUTE-001. LiquidWalletNativeSigner exposes
+	// exactly Create, TrySignAndFinalize, and Dispose (public) plus the explicit
+	// ILiquidWalletSigner members; the seam interface is byte-identical (exactly
+	// GetPublicKeyHex and SignDigestHex).
 	[Fact]
 	public void NativeSignerExposesExactlyTheFrozenSurface()
 	{
 		Assert.Equal(
-			["Create", "TrySignAndFinalize"],
+			["Create", "Dispose", "TrySignAndFinalize"],
 			typeof(LiquidWalletNativeSigner)
 				.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)
 				.Select(method => method.Name)
@@ -306,7 +308,7 @@ public class LiquidWalletNativeSignerTests
 		Assert.Throws<ArgumentException>(() => LiquidWalletNativeSigner.Create(keyOwner, descriptor, 1, new byte[33]));
 
 		// A null request is a fail-closed false, never a throw.
-		LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(keyOwner, descriptor, 1, slip77);
+		using LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(keyOwner, descriptor, 1, slip77);
 		Assert.False(signer.TrySignAndFinalize(null!, out LiquidWalletUiSignedTransaction? nullRequest));
 		Assert.Null(nullRequest);
 	}
@@ -373,6 +375,122 @@ public class LiquidWalletNativeSignerTests
 			binder: null,
 			args: [outPointHex, assetIdHex, atomicUnits],
 			culture: null)!;
+
+	// MANAGED-WALLET-UI-SEND-EXECUTE-001: the signer now populates TransactionIdHex from the
+	// native wln_wlpq_transaction_id_v1 export, fail-closed. On the happy path the populated id
+	// is exactly 64 lowercase hex, nonzero, and equals the RPC/display-order (byte-reversed)
+	// committed ground-truth consensus txid.
+	[Fact]
+	public void TrySignAndFinalizePopulatesTheCanonicalNonzeroTransactionId()
+	{
+		LiquidWalletUiSignRequest request = BuildRequest();
+		using var keyOwner = new Secp256k1KeyOwner(ReadFieldBytes("spend_key"));
+		using LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(
+			keyOwner,
+			ReadField("descriptor"),
+			ulong.Parse(ReadField("last_index")),
+			ReadFieldBytes("slip77"));
+
+		Assert.True(signer.TrySignAndFinalize(request, out LiquidWalletUiSignedTransaction? signedTransaction));
+		Assert.NotNull(signedTransaction);
+		string txidHex = signedTransaction.TransactionIdHex;
+		Assert.Equal(64, txidHex.Length);
+		Assert.Equal(txidHex, txidHex.ToLowerInvariant());
+		Assert.NotEqual(new string('0', 64), txidHex);
+		Assert.All(txidHex, c => Assert.True(char.IsAsciiDigit(c) || (c >= 'a' && c <= 'f')));
+
+		// The populated id is the RPC/display-order id of the exact produced transaction bytes:
+		// recomputing it through the binding returns the same value (the id commits to the
+		// transaction). The native ground-truth consensus txid is asserted on the deterministic
+		// seed-pinned path (NativeGroundTruthTxidAndWtxidAreAsserted / the txid row below), not
+		// here — this path uses a fresh random entropy seed, so the confidential blinding (and
+		// hence the id) differs run to run.
+		Assert.True(
+			LiquidWalletNativeSigningBinding.TryGetTransactionId(
+				Convert.FromHexString(signedTransaction.SignedTransactionHex),
+				out byte[] recomputed),
+			"The produced transaction must re-decode to a transaction id.");
+		Assert.Equal(txidHex, System.Text.Encoding.ASCII.GetString(recomputed));
+	}
+
+	// The deterministic seed-pinned path yields the native ground-truth transaction, so its
+	// populated TransactionIdHex is exactly the RPC/display order of the committed consensus
+	// signed_txid.
+	[Fact]
+	public void DeterministicSeedPopulatesTheNativeGroundTruthTransactionId()
+	{
+		LiquidWalletUiSignRequest request = BuildRequest();
+		using var keyOwner = new Secp256k1KeyOwner(ReadFieldBytes("spend_key"));
+		using LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.CreateForTesting(
+			keyOwner,
+			ReadField("descriptor"),
+			ulong.Parse(ReadField("last_index")),
+			ReadFieldBytes("slip77"),
+			() => (byte[])ReadFieldBytes("entropy_seed").Clone());
+
+		Assert.True(signer.TrySignAndFinalize(request, out LiquidWalletUiSignedTransaction? signedTransaction));
+		Assert.NotNull(signedTransaction);
+		byte[] expectedConsensus = ReadFieldBytes("signed_txid");
+		string expectedRpcHex = Convert.ToHexStringLower(expectedConsensus.Reverse().ToArray());
+		Assert.Equal(expectedRpcHex, signedTransaction.TransactionIdHex);
+	}
+
+	// Disposal: after Dispose the signer rejects TrySignAndFinalize fail-closed (false, no
+	// throw), and the retained descriptor and SLIP-77 arrays are zeroed. Create/CreateForTesting
+	// remain usable post-disposal-of-another-instance (static factories unaffected).
+	[Fact]
+	public void DisposeRejectsSubsequentSignAttemptsAndZeroizesRetainedArrays()
+	{
+		using var keyOwner = new Secp256k1KeyOwner(ReadFieldBytes("spend_key"));
+		using LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.Create(
+			keyOwner,
+			ReadField("descriptor"),
+			ulong.Parse(ReadField("last_index")),
+			ReadFieldBytes("slip77"));
+
+		byte[] descriptorField = GetField<byte[]>(signer, "_descriptor");
+		byte[] slip77Field = GetField<byte[]>(signer, "_slip77MasterKey");
+		Assert.Contains(descriptorField, b => b != 0);
+		Assert.Contains(slip77Field, b => b != 0);
+
+		signer.Dispose();
+
+		Assert.All(descriptorField, b => Assert.Equal(0, b));
+		Assert.All(slip77Field, b => Assert.Equal(0, b));
+
+		Assert.False(signer.TrySignAndFinalize(BuildRequest(), out LiquidWalletUiSignedTransaction? afterDispose));
+		Assert.Null(afterDispose);
+
+		// Dispose is idempotent.
+		signer.Dispose();
+	}
+
+	// FillEntropy override zeroization: the array returned by the test override is zeroed by the
+	// signer after it is consumed (the caller-supplied entropy lifecycle repair of V2 section 3).
+	[Fact]
+	public void FillEntropyZeroizesTheOverrideArrayAfterUse()
+	{
+		byte[] overrideSeed = ReadFieldBytes("entropy_seed");
+		byte[] overrideCopy = [.. overrideSeed];
+		LiquidWalletUiSignRequest request = BuildRequest();
+		using var keyOwner = new Secp256k1KeyOwner(ReadFieldBytes("spend_key"));
+		using LiquidWalletNativeSigner signer = LiquidWalletNativeSigner.CreateForTesting(
+			keyOwner,
+			ReadField("descriptor"),
+			ulong.Parse(ReadField("last_index")),
+			ReadFieldBytes("slip77"),
+			() => overrideCopy);
+
+		Assert.True(signer.TrySignAndFinalize(request, out _));
+		Assert.All(overrideCopy, b => Assert.Equal(0, b));
+	}
+
+	private static T GetField<T>(object instance, string name)
+	{
+		FieldInfo? field = instance.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance);
+		Assert.NotNull(field);
+		return (T)field!.GetValue(instance)!;
+	}
 
 	/// <summary>
 	/// A key owner holding one real secp256k1 spend key: returns its compressed public key and

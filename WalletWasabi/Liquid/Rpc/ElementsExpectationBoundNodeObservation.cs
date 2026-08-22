@@ -27,7 +27,30 @@ public sealed class ElementsExpectationBoundNodeObservation
 		Generation = generation;
 	}
 
-	public ElementsNodeExpectation Expectation { get; }
+	/// <summary>
+	/// MANAGED-WALLET-UI-SEND-EXECUTE-001 (amendment section 7): an observation made without a
+	/// fabricated <see cref="ElementsNodeExpectation"/>. The send-execution funding path binds
+	/// the effective fee asset and the generation fence and self-observes the node status; it
+	/// does not invent a static node-identity expectation, so <see cref="Expectation"/> is
+	/// null here.
+	/// </summary>
+	internal ElementsExpectationBoundNodeObservation(
+		string effectiveFeeAsset,
+		ElementsNodeStatus nodeStatus,
+		ElementsNodeGenerationObservation generation)
+	{
+		ArgumentNullException.ThrowIfNull(nodeStatus);
+		ArgumentNullException.ThrowIfNull(generation);
+
+		Expectation = null;
+		EffectiveFeeAsset = LiquidAssetId.ParseRpcHex(
+			effectiveFeeAsset,
+			nameof(effectiveFeeAsset)).CanonicalRpcHex;
+		NodeStatus = nodeStatus;
+		Generation = generation;
+	}
+
+	public ElementsNodeExpectation? Expectation { get; }
 	public string EffectiveFeeAsset { get; }
 	public ElementsNodeStatus NodeStatus { get; }
 	public ElementsNodeGenerationObservation Generation { get; }

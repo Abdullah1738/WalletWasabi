@@ -51,13 +51,13 @@ public sealed class LiquidProviderOwnershipSeamTests
 			"  alpha  ",
 			walletFile,
 			" local ",
-			" liquid-mainnet ",
+			" b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b ",
 			directories);
 
 		Assert.Equal("alpha", identity.CanonicalWalletId);
 		Assert.Equal(Path.GetFullPath(walletFile), identity.CanonicalWalletFilePath);
 		Assert.Equal("local", identity.RuntimeProfileName);
-		Assert.Equal("liquid-mainnet", identity.NetworkManifestId);
+		Assert.Equal("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", identity.NetworkManifestId);
 	}
 
 	[Fact]
@@ -69,7 +69,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 		File.WriteAllText(outsideFile, "{}");
 
 		Assert.Throws<InvalidDataException>(() => LiquidWalletIdentity.Create(
-			"alpha", outsideFile, "local", "liquid-mainnet", new LiquidWalletDirectories(walletDirectory)));
+			"alpha", outsideFile, "local", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", new LiquidWalletDirectories(walletDirectory)));
 	}
 
 	[Fact]
@@ -79,12 +79,12 @@ public sealed class LiquidProviderOwnershipSeamTests
 		string walletDirectory = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
 		string walletFile = Path.Combine(walletDirectory, "alpha.json");
 		KeyManager.CreateNew(out _, "TestPassword", NBitcoin.Network.RegTest, walletFile);
-		LiquidWalletIdentity identity = LiquidWalletIdentity.Create("alpha", walletFile, "local", "liquid-mainnet", new LiquidWalletDirectories(walletDirectory));
+		LiquidWalletIdentity identity = LiquidWalletIdentity.Create("alpha", walletFile, "local", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", new LiquidWalletDirectories(walletDirectory));
 		LiquidAuthenticatedRuntimeProvider provider = new(
 			new LiquidRpcProfileSource(directory.Path),
 			new LiquidWalletDirectories(walletDirectory),
-			new ElementsPublicNetworkManifestSource("liquid-mainnet"));
-		CreateRpcProfile(directory.Path, "local", "liquid-mainnet");
+			new ElementsPublicNetworkManifestSource("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b"));
+		CreateRpcProfile(directory.Path, "local", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b");
 
 		using LiquidPasswordAuthorizationLease firstLease = LiquidPasswordAuthorizationLease.Create("TestPassword");
 		LiquidAuthenticatedWalletSession session = await provider.OpenAsync(identity, firstLease, default);
@@ -106,9 +106,9 @@ public sealed class LiquidProviderOwnershipSeamTests
 		string walletDirectory = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
 		string walletFile = Path.Combine(walletDirectory, "alpha.json");
 		KeyManager.CreateNew(out _, "TestPassword", NBitcoin.Network.RegTest, walletFile);
-		LiquidWalletIdentity identity = LiquidWalletIdentity.Create("alpha", walletFile, "local", "liquid-mainnet", new LiquidWalletDirectories(walletDirectory));
-		CreateRpcProfile(directory.Path, "local", "liquid-mainnet");
-		LiquidAuthenticatedRuntimeProvider provider = new(new LiquidRpcProfileSource(directory.Path), new LiquidWalletDirectories(walletDirectory), new ElementsPublicNetworkManifestSource("liquid-mainnet"));
+		LiquidWalletIdentity identity = LiquidWalletIdentity.Create("alpha", walletFile, "local", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", new LiquidWalletDirectories(walletDirectory));
+		CreateRpcProfile(directory.Path, "local", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b");
+		LiquidAuthenticatedRuntimeProvider provider = new(new LiquidRpcProfileSource(directory.Path), new LiquidWalletDirectories(walletDirectory), new ElementsPublicNetworkManifestSource("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b"));
 		using LiquidPasswordAuthorizationLease openLease = LiquidPasswordAuthorizationLease.Create("TestPassword");
 		LiquidAuthenticatedWalletSession session = await provider.OpenAsync(identity, openLease, default);
 

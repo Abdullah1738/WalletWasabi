@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
 using WalletWasabi.Client.Configuration;
@@ -54,8 +55,13 @@ public class WasabiApplication
 		// No wallet is open at composition time: the handoff is published by the
 		// provider into the holder when OpenAsync publishes the session. The
 		// composition carries a null handoff until then; the coordinator owns its
-		// disposal regardless.
-		LiquidWalletRuntimeComposition composition = new(provider, null);
+		// disposal regardless. The send-execution command surface is the single
+		// public delegate built by the WalletWasabi-resident command service over
+		// the provider's typed session source; the composition stores only that
+		// delegate and never names the executor, scope, session, or RPC client.
+		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> sendCommand =
+			LiquidWalletSendExecutionCommandService.CreateSendCommand(provider);
+		LiquidWalletRuntimeComposition composition = new(provider, null, sendCommand);
 #pragma warning restore CA2000
 		return new WasabiApplication(wasabiAppBuilder, composition, holder);
 	}

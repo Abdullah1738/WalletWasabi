@@ -22,7 +22,7 @@ internal sealed class ElementsPublicNetworkManifestSource
 	internal string ManifestId { get; }
 }
 
-internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
+internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable, ILiquidWalletSendSessionSource
 {
 	// The frozen Liquid v1 replay/context branch: a hardened child of the
 	// authenticated master whose private key is the HKDF key material for the
@@ -35,6 +35,7 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 	private readonly LiquidWalletDirectories _walletDirectories;
 	private readonly ElementsPublicNetworkManifestSource _manifestSource;
 	private readonly Action<LiquidWalletRuntimeHandoff>? _publishHandoff;
+	private readonly Action<string>? _sendRefreshSink;
 	private readonly Dictionary<string, LiquidAuthenticatedWalletSession> _sessions = new(StringComparer.Ordinal);
 	private readonly object _gate = new();
 	private bool _disposed;
@@ -43,12 +44,14 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 		LiquidRpcProfileSource rpcProfileSource,
 		LiquidWalletDirectories walletDirectories,
 		ElementsPublicNetworkManifestSource manifestSource,
-		Action<LiquidWalletRuntimeHandoff>? publishHandoff = null)
+		Action<LiquidWalletRuntimeHandoff>? publishHandoff = null,
+		Action<string>? sendRefreshSink = null)
 	{
 		_rpcProfileSource = rpcProfileSource ?? throw new ArgumentNullException(nameof(rpcProfileSource));
 		_walletDirectories = walletDirectories ?? throw new ArgumentNullException(nameof(walletDirectories));
 		_manifestSource = manifestSource ?? throw new ArgumentNullException(nameof(manifestSource));
 		_publishHandoff = publishHandoff;
+		_sendRefreshSink = sendRefreshSink;
 	}
 
 	internal async ValueTask<LiquidAuthenticatedWalletSession> OpenAsync(
@@ -90,15 +93,35 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 				new ElementsRpcTimeouts(profile.ConnectTimeout, profile.RequestTimeout, profile.RequestTimeout));
 			Func<string, (int Account, int Change, int Index)?> outpointLocator = BuildOutpointLocator(identity, root);
 			LiquidWalletSignerKeyAdapter adapter = new(root, outpointLocator, km.GetNetwork());
-			_ = LiquidWalletNativeSigner.Create(
+
+			// The descriptor text and highest derived index are known at open time; the session
+			// retains them (internal-only) so the per-call execution scope factory can construct
+			// the call-scoped signer without re-reading a file or asking the caller.
+			string descriptor = "wpkh(" + Convert.ToHexString(root.PrivateKey.PubKey.ToBytes()) + ")";
+			ulong lastIndex = 0;
+			// Validates the descriptor/SLIP-77 shape at open; the signer is constructed per-send by
+			// the execution scope, not retained here, so this throwaway instance is disposed inline.
+			using (LiquidWalletNativeSigner.Create(
 				adapter,
-				"wpkh(" + Convert.ToHexString(root.PrivateKey.PubKey.ToBytes()) + ")",
-				0,
-				slip77);
+				descriptor,
+				lastIndex,
+				slip77))
+			{
+			}
 
 			LiquidWalletUiBootstrapSnapshot snapshot = new(identity.CanonicalWalletId, identity.NetworkManifestId, sourceRevision: 0);
 			LiquidWalletRuntimeHandoff handoff = new(identity.CanonicalWalletId, identity.NetworkManifestId, snapshot);
-			LiquidAuthenticatedWalletSession session = new(identity, handoff, km, adapter, rpcClient);
+			LiquidAuthenticatedWalletSession session = new(
+				identity,
+				handoff,
+				km,
+				adapter,
+				rpcClient,
+				root,
+				descriptor,
+				lastIndex,
+				_walletDirectories.WalletDirectory,
+				_sendRefreshSink);
 			string key = RegistryKey(identity);
 			bool duplicate;
 			lock (_gate)
@@ -144,6 +167,30 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 			await session.DisposeAsync().ConfigureAwait(false);
 			session = null;
 		}
+	}
+
+	/// <summary>
+	/// Resolves the live authenticated session for one canonical wallet id, or
+	/// <see langword="null"/> when no session is open. Internal-only: the per-call execution
+	/// scope factory uses this to re-derive secret-bearing values from the session's retained
+	/// authenticated master at scope-open time; the returned session is never disposed by the
+	/// caller.
+	/// </summary>
+	internal LiquidAuthenticatedWalletSession? TryGetOpenSession(string canonicalWalletId)
+	{
+		ArgumentException.ThrowIfNullOrEmpty(canonicalWalletId);
+		lock (_gate)
+		{
+			foreach (LiquidAuthenticatedWalletSession session in _sessions.Values)
+			{
+				if (StringComparer.Ordinal.Equals(session.Identity.CanonicalWalletId, canonicalWalletId)
+					&& !session.IsDisposed)
+				{
+					return session;
+				}
+			}
+		}
+		return null;
 	}
 
 	public async ValueTask DisposeAsync()
@@ -270,4 +317,14 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 	}
 
 	private static string RegistryKey(LiquidWalletIdentity identity) => identity.CanonicalWalletId + "\0" + identity.NetworkManifestId;
+
+	/// <summary>The manifest identity this provider's wallets are bound to (non-secret).</summary>
+	internal string ManifestId => _manifestSource.ManifestId;
+
+	// ILiquidWalletSendSessionSource: the command-service-facing session-resolution view.
+	// The session already exposes the internal ILiquidWalletSendSession surface.
+	string ILiquidWalletSendSessionSource.ManifestId => ManifestId;
+
+	ILiquidWalletSendSession? ILiquidWalletSendSessionSource.TryGetOpenSession(string canonicalWalletId) =>
+		TryGetOpenSession(canonicalWalletId);
 }

@@ -119,7 +119,8 @@ public sealed class ElementsExpectationBoundRawTransactionBatch
 				out errorCode);
 		}
 		string planPeggedAsset = plan.GetPeggedAssetId().CanonicalRpcHex;
-		if (!StringComparer.Ordinal.Equals(NodeObservation.Expectation.PeggedAsset, planPeggedAsset) ||
+		if ((NodeObservation.Expectation is not null &&
+				!StringComparer.Ordinal.Equals(NodeObservation.Expectation.PeggedAsset, planPeggedAsset)) ||
 			!StringComparer.Ordinal.Equals(NodeObservation.NodeStatus.PeggedAsset, planPeggedAsset) ||
 			!StringComparer.Ordinal.Equals(NodeObservation.EffectiveFeeAsset, planPeggedAsset))
 		{

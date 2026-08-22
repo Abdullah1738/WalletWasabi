@@ -100,7 +100,7 @@ public class LiquidWalletSyncSessionTests
 		Assert.Equal(0, result.AppliedTransactionCount);
 		Assert.Equal(0, result.ConfirmationCount);
 		Assert.Same(state, result.State);
-		Assert.Equal(PeggedAssetHex, result.NodeObservation.Expectation.PeggedAsset);
+		Assert.Equal(PeggedAssetHex, result.NodeObservation.Expectation!.PeggedAsset);
 		Assert.Equal(StartupIdHex, result.NodeObservation.Generation.StartupId);
 		Assert.Equal(0, result.State.UnspentOutputCount);
 	}

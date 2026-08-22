@@ -1,3 +1,5 @@
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Input;
 using WalletWasabi.Fluent.Models.Wallets.Liquid;
 using WalletWasabi.Fluent.ViewModels.Navigation;
@@ -37,10 +39,14 @@ public partial class LiquidSendViewModel : RoutableViewModel
 	[AutoNotify] private string _selectedOutPointHexesText = "";
 	[AutoNotify] private long _explicitFeeAtomicUnits;
 
-	public LiquidSendViewModel(UiContext uiContext, LiquidWalletModel walletModel)
+	public LiquidSendViewModel(
+		UiContext uiContext,
+		LiquidWalletModel walletModel,
+		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>>? executeSendCommand = null)
 		: base(uiContext)
 	{
 		WalletModel = walletModel;
+		ExecuteSendCommand = executeSendCommand;
 		Recipient = new LiquidSendRecipientViewModel(uiContext);
 
 		SetupCancel(enableCancel: true, enableCancelOnEscape: true, enableCancelOnPressed: true);
@@ -54,6 +60,16 @@ public partial class LiquidSendViewModel : RoutableViewModel
 	}
 
 	public LiquidWalletModel WalletModel { get; }
+
+	/// <summary>
+	/// The single narrow non-secret send-execution command surface (MANAGED-WALLET-UI-SEND-EXECUTE-001,
+	/// V2 section 8): the application composition layer supplies one
+	/// <see cref="Func{T1,T2,TResult}"/> over the public request/result types at construction. This
+	/// view model never receives an executor scope factory, a secret-bearing parameter, or any
+	/// key/context. It is null only when no Liquid runtime composition is wired (no session source);
+	/// it is never a fabricated no-op.
+	/// </summary>
+	public Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>>? ExecuteSendCommand { get; }
 
 	public LiquidSendRecipientViewModel Recipient { get; }
 

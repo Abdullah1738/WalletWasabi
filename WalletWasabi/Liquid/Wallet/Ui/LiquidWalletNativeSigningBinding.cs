@@ -53,6 +53,13 @@ internal static unsafe partial class LiquidWalletNativeSigningBinding
 	/// <summary>The exact length of the caller-supplied CSPRNG entropy seed.</summary>
 	internal const int EntropyLength = 32;
 
+	/// <summary>
+	/// The exact byte length of the native-returned transaction id: exactly 64 lowercase ASCII
+	/// hexadecimal bytes (no NUL terminator), the RPC/display byte order of the finalized
+	/// transaction's non-witness id.
+	/// </summary>
+	internal const int TransactionIdHexLengthV1 = 64;
+
 	/// <summary>The exact byte length of one consensus-serialized callback outpoint.</summary>
 	internal const int OutPointBytesV1 = 36;
 
@@ -214,19 +221,78 @@ internal static unsafe partial class LiquidWalletNativeSigningBinding
 	}
 
 	/// <summary>
-	/// The lazily resolved native export address. The pinned cdylib is loaded once from its exact
-	/// hash-pinned path via <see cref="NativeLibrary.Load(string)"/> and the
-	/// <c>wln_wlpq_sign_finalize_v1</c> export address is bound; the caller casts it to the exact
-	/// unmanaged function-pointer type. The artifact hash is verified before the load; any failure
-	/// surfaces as a <see cref="PlatformNotSupportedException"/>.
+	/// The lazily resolved native library handle. The pinned cdylib is loaded once from its exact
+	/// hash-pinned path via <see cref="NativeLibrary.Load(string)"/> after the artifact hash is
+	/// verified; every export below is bound from this single handle. The artifact hash is
+	/// verified before the load; any failure surfaces as a <see cref="PlatformNotSupportedException"/>.
+	/// </summary>
+	private static readonly Lazy<IntPtr> NativeLibraryHandle = new(LoadNativeLibraryHandle);
+
+	/// <summary>
+	/// The lazily resolved <c>wln_wlpq_sign_finalize_v1</c> export address, bound from
+	/// <see cref="NativeLibraryHandle"/>; the caller casts it to the exact unmanaged
+	/// function-pointer type.
 	/// </summary>
 	private static readonly Lazy<IntPtr> NativeEntryPointAddress = new(LoadEntryPointAddress);
 
-	private static IntPtr LoadEntryPointAddress()
+	/// <summary>
+	/// The lazily resolved <c>wln_wlpq_transaction_id_v1</c> export address, bound from the same
+	/// hash-pinned <see cref="NativeLibraryHandle"/> as the sign/finalize export.
+	/// </summary>
+	private static readonly Lazy<IntPtr> NativeTransactionIdEntryPointAddress = new(LoadTransactionIdEntryPointAddress);
+
+	private static IntPtr LoadNativeLibraryHandle()
 	{
 		EnsurePinnedNativeArtifact();
-		IntPtr handle = NativeLibrary.Load(ResolveLibraryPath());
-		return NativeLibrary.GetExport(handle, "wln_wlpq_sign_finalize_v1");
+		return NativeLibrary.Load(ResolveLibraryPath());
+	}
+
+	private static IntPtr LoadEntryPointAddress() =>
+		NativeLibrary.GetExport(NativeLibraryHandle.Value, "wln_wlpq_sign_finalize_v1");
+
+	private static IntPtr LoadTransactionIdEntryPointAddress() =>
+		NativeLibrary.GetExport(NativeLibraryHandle.Value, "wln_wlpq_transaction_id_v1");
+
+	/// <summary>
+	/// Computes the finalized transaction id of one consensus-serialized transaction by a live
+	/// call into the native <c>wln_wlpq_transaction_id_v1</c> read-only export. On success the
+	/// output is exactly 64 lowercase ASCII hexadecimal bytes (no NUL), the RPC/display byte
+	/// order of the transaction's non-witness id, matching the frozen convention of
+	/// <see cref="Transactions.LiquidTransactionId.CanonicalRpcHex"/>. Fail-closed: a null or
+	/// empty transaction, or any native non-OK status (a corrupt/undecodable transaction), returns
+	/// <see langword="false"/> and the output buffer is not populated. This binding performs no
+	/// node contact, no RPC, no broadcast, and re-implements no consensus serializer.
+	/// </summary>
+	internal static bool TryGetTransactionId(byte[] transactionBytes, out byte[] txidHex64)
+	{
+		txidHex64 = [];
+		if (transactionBytes is null || transactionBytes.Length == 0)
+		{
+			return false;
+		}
+
+		byte[] output = new byte[TransactionIdHexLengthV1];
+		int status;
+		unsafe
+		{
+			fixed (byte* transactionPointer = transactionBytes)
+			fixed (byte* outPointer = output)
+			{
+				status = ((delegate* unmanaged[Cdecl]<byte*, ulong, byte*, ulong, int>)NativeTransactionIdEntryPointAddress.Value)(
+					transactionPointer,
+					(ulong)transactionBytes.Length,
+					outPointer,
+					(ulong)output.Length);
+			}
+		}
+
+		if (status != StatusOkV1)
+		{
+			return false;
+		}
+
+		txidHex64 = output;
+		return true;
 	}
 
 	/// <summary>
