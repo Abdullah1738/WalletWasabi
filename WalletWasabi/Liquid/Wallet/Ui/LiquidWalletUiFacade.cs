@@ -54,6 +54,62 @@ public static class LiquidWalletUiFacade
 		LiquidWalletUiSnapshot.Capture(walletName, manifest, state);
 
 	/// <summary>
+	/// Projects the already-loaded <paramref name="state"/> into an
+	/// immutable display-ready transaction-history snapshot: every retained
+	/// transaction effect, newest applied first, with identity permanently
+	/// redacted to the display-only <see cref="LiquidWalletUiHistoryRow.TransactionReference"/>.
+	/// The <paramref name="state"/> reference is used only for the duration
+	/// of the call and is never stored. It is <see langword="internal"/> —
+	/// not <see langword="public"/> — for exactly the reason the landed
+	/// <see cref="CaptureBalances"/> is internal: it names the internal
+	/// <see cref="LiquidWalletState"/>, and a public method on this public
+	/// facade class may not declare a parameter of a less accessible type
+	/// (CS0051). Throws <see cref="ArgumentException"/> when the state's
+	/// pegged asset does not match the manifest's. Stores nothing.
+	/// </summary>
+	internal static LiquidWalletUiHistorySnapshot CaptureHistory(
+		string walletName,
+		ElementsPublicNetworkManifest manifest,
+		LiquidWalletState state) =>
+		LiquidWalletUiHistorySnapshot.Capture(walletName, manifest, state);
+
+	/// <summary>
+	/// The single public entry point the Fluent/Desktop lifetime layer calls
+	/// to load the retained Liquid transaction history beside an already
+	/// presented balance snapshot: resolves the loaded state via the landed
+	/// <see cref="LiquidWalletLoadSave.Load"/> — exactly once, with the
+	/// caller's non-null <paramref name="expectedBaseRevision"/> (the
+	/// revision of the balance snapshot the history is to accompany; there
+	/// is no optional/null self-fence) — and projects the returned state
+	/// exactly once via <see cref="LiquidWalletUiHistorySnapshot.Capture"/>.
+	/// Fail-closed exactly as the landed <c>Load</c>: a missing file,
+	/// corrupt frame, wrong key, wrong context, wrong revision, or manifest
+	/// mismatch surfaces as the landed exception with no retry, no fallback,
+	/// no empty-snapshot substitution, and no stale cached history. The
+	/// loaded state is used only for the projection and is not retained.
+	/// </summary>
+	public static LiquidWalletUiHistorySnapshot LoadAndCaptureHistory(
+		string walletDataDir,
+		string walletName,
+		ElementsPublicNetworkManifest manifest,
+		ReadOnlySpan<byte> key,
+		ReadOnlySpan<byte> externalWalletNetworkContext,
+		ulong expectedBaseRevision)
+	{
+		ArgumentNullException.ThrowIfNull(manifest);
+
+		LiquidWalletLoadSaveResult result = LiquidWalletLoadSave.Load(
+			walletDataDir,
+			walletName,
+			key,
+			externalWalletNetworkContext,
+			expectedBaseRevision);
+		// Load always returns a non-null State; the null-forgiving operator
+		// adds no runtime check and no fallback.
+		return LiquidWalletUiHistorySnapshot.Capture(walletName, manifest, result.State!);
+	}
+
+	/// <summary>
 	/// Derives and projects one confidential receive address from the
 	/// caller-supplied next-receive script and blinding public key. The
 	/// caller owns the script and blinding-key derivation (key management

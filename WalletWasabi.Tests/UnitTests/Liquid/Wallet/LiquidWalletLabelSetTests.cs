@@ -28,11 +28,11 @@ public class LiquidWalletLabelSetTests
 #if DEBUG
 	private const string ExpectedImplementationManifestSha256 = "c9f52a520e477d02736e20ede1fd3cc350a7b7f4d8200d4e34c69e5d1248946b";
 	private const string ExpectedProductionReferencesSha256 = "e0b8516c317a78c14b4ab083b1dcf9b1bc480e86b43f4e4f17ba769460f289bc";
-	private const string ExpectedTestReferencesSha256 = "742606719e1c60102876dc28cef3bcdc73ad1f341e608f398bfa37cfc38cef69";
+	private const string ExpectedTestReferencesSha256 = "18ebab78852a15635e3942832acd6f35981a8aad32f5949d4a661eb4e7b7d384";
 #else
 	private const string ExpectedImplementationManifestSha256 = "64e6c427a822f98b3bbb179918b71d28561c5f41a588e761ef7b81eeab8ca4f7";
 	private const string ExpectedProductionReferencesSha256 = "e0b8516c317a78c14b4ab083b1dcf9b1bc480e86b43f4e4f17ba769460f289bc";
-	private const string ExpectedTestReferencesSha256 = "742606719e1c60102876dc28cef3bcdc73ad1f341e608f398bfa37cfc38cef69";
+	private const string ExpectedTestReferencesSha256 = "18ebab78852a15635e3942832acd6f35981a8aad32f5949d4a661eb4e7b7d384";
 #endif
 
 	private static readonly ScalarRange[] ControlRanges =

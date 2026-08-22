@@ -16,27 +16,102 @@
               Classes="h8 plain activeHyperLink" Command="{Binding ReceiveCommand}" Cursor="Hand"
               HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0 0 0 0" />
 
-      <!-- The multiasset balance set is the primary content: one row per
-           asset, pegged asset (L-BTC) first, then issued assets in the
-           landed canonical ascending asset-id-hex order. Each row renders
-           the asset id's canonical hex and the exact atomic-unit amount;
-           every value is confidential on chain. -->
-      <ItemsControl ItemsSource="{Binding BalanceRows}">
-        <ItemsControl.ItemTemplate>
-          <DataTemplate x:DataType="liquid:LiquidAssetBalanceItemViewModel">
-            <DockPanel Margin="0 4 0 4">
-              <TextBlock DockPanel.Dock="Left" Classes="monoSpaced"
-                         Text="{Binding AssetIdHex}" />
-              <TextBlock DockPanel.Dock="Right" Classes="monoSpaced"
-                         Text="{Binding AtomicUnits}" />
-              <TextBlock DockPanel.Dock="Right" Margin="8 0 8 0"
-                         Text="L-BTC" IsVisible="{Binding IsPeggedAsset}" />
-              <TextBlock DockPanel.Dock="Right" Margin="8 0 0 0"
-                         Text="confidential" IsVisible="{Binding IsConfidential}" />
-            </DockPanel>
-          </DataTemplate>
-        </ItemsControl.ItemTemplate>
-      </ItemsControl>
+      <ScrollViewer DockPanel.Dock="Top" VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+
+          <!-- The multiasset balance set is the primary content: one row per
+               asset, pegged asset (L-BTC) first, then issued assets in the
+               landed canonical ascending asset-id-hex order. Each row renders
+               the asset id's canonical hex and the exact atomic-unit amount;
+               every value is confidential on chain. -->
+          <ItemsControl ItemsSource="{Binding BalanceRows}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="liquid:LiquidAssetBalanceItemViewModel">
+                <DockPanel Margin="0 4 0 4">
+                  <TextBlock DockPanel.Dock="Left" Classes="monoSpaced"
+                             Text="{Binding AssetIdHex}" />
+                  <TextBlock DockPanel.Dock="Right" Classes="monoSpaced"
+                             Text="{Binding AtomicUnits}" />
+                  <TextBlock DockPanel.Dock="Right" Margin="8 0 8 0"
+                             Text="L-BTC" IsVisible="{Binding IsPeggedAsset}" />
+                  <TextBlock DockPanel.Dock="Right" Margin="8 0 0 0"
+                             Text="confidential" IsVisible="{Binding IsConfidential}" />
+                </DockPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <!-- Liquid transaction history: newest applied first, a complete
+               revision-scoped replacement. The list is virtualizing and
+               keyboard-navigable with one tab stop and Up/Down row traversal.
+               Transaction reference, asset identity, and amounts are wrapped
+               in PrivacyContentControl (text replacement); status and
+               credit/debit are always text, never color/icon alone. No full
+               transaction id, block hash, address, label, outpoint, or
+               timestamp appears anywhere. -->
+          <TextBlock Classes="h8" Margin="0 16 0 4" Text="History" />
+
+          <!-- Unloaded / updating state: no prior rows are exposed. -->
+          <TextBlock Margin="0 4 0 4"
+                     Text="Liquid transaction history is not available at this wallet revision"
+                     IsVisible="{Binding !IsHistoryLoaded}" />
+
+          <!-- Empty state: history is loaded but the retained wallet history
+               has no transactions. -->
+          <TextBlock Margin="0 4 0 4"
+                     Text="No Liquid transactions in the retained wallet history"
+                     IsVisible="{Binding IsHistoryEmpty}" />
+
+          <ListBox ItemsSource="{Binding HistoryRows}"
+                   AutomationProperties.Name="Liquid transaction history"
+                   IsVisible="{Binding IsHistoryLoaded}"
+                   SelectedIndex="{Binding SelectedHistoryIndex, Mode=TwoWay}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="liquid:LiquidHistoryItemViewModel">
+                <StackPanel Margin="0 6 0 6"
+                            AutomationProperties.Name="{Binding AccessibilitySummary}">
+                  <DockPanel>
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding StatusText}" />
+                    <!-- Display-only redacted reference; never a key/identity. -->
+                    <PrivacyContentControl DockPanel.Dock="Right"
+                                           PrivacyReplacementMode="Text"
+                                           UseOpacity="False"
+                                           MaxPrivacyChars="20">
+                      <TextBlock Classes="monoSpaced" Opacity="0.7"
+                                 Text="{Binding TransactionReference}" />
+                    </PrivacyContentControl>
+                  </DockPanel>
+
+                  <ItemsControl ItemsSource="{Binding AssetChanges}"
+                                IsVisible="{Binding HasBalanceChange}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="liquid:LiquidHistoryAssetChangeItemViewModel">
+                        <DockPanel Margin="16 2 0 2">
+                          <TextBlock DockPanel.Dock="Left" Text="{Binding DirectionText}" />
+                          <PrivacyContentControl DockPanel.Dock="Right"
+                                                 PrivacyReplacementMode="Text"
+                                                 UseOpacity="False"
+                                                 MaxPrivacyChars="20">
+                            <StackPanel Orientation="Horizontal">
+                              <TextBlock Classes="monoSpaced" Text="{Binding NetAtomicUnits}" />
+                              <TextBlock Margin="6 0 0 0" Text="{Binding AssetDisplayReference}" />
+                            </StackPanel>
+                          </PrivacyContentControl>
+                        </DockPanel>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+
+                  <TextBlock Margin="16 2 0 2" Opacity="0.7"
+                             Text="{Binding EmptyChangeText}"
+                             IsVisible="{Binding !HasBalanceChange}" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+
+        </StackPanel>
+      </ScrollViewer>
 
     </DockPanel>
   </ContentArea>

@@ -29,6 +29,8 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	private readonly ElementsPublicNetworkManifest _manifest;
 	private readonly BehaviorSubject<LiquidWalletUiSnapshot> _balances;
 	private readonly BehaviorSubject<bool> _loaded;
+	private readonly BehaviorSubject<LiquidWalletUiHistorySnapshot?> _history;
+	private readonly BehaviorSubject<bool> _historyLoaded;
 	private readonly byte[] _nextReceiveScriptPubKey;
 	private readonly byte[] _nextReceiveBlindingPublicKey;
 
@@ -52,10 +54,16 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 
 		_balances = new BehaviorSubject<LiquidWalletUiSnapshot>(initialSnapshot);
 		_loaded = new BehaviorSubject<bool>(true);
+		_history = new BehaviorSubject<LiquidWalletUiHistorySnapshot?>(null);
+		_historyLoaded = new BehaviorSubject<bool>(false);
 
 		Balances = _balances.AsObservable();
 		HasBalance = Balances.Select(snapshot => !snapshot.IsEmpty);
 		Loaded = _loaded.AsObservable();
+		History = _history.AsObservable()
+			.Where(snapshot => snapshot is not null)
+			.Select(snapshot => snapshot!);
+		HistoryLoaded = _historyLoaded.AsObservable();
 	}
 
 	public string Name { get; }
@@ -67,16 +75,73 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	public IObservable<bool> Loaded { get; }
 
 	/// <summary>
+	/// The retained Liquid transaction history paired with the current
+	/// balance <see cref="Snapshot"/>, or <see langword="null"/> when no
+	/// exact-revision history has been captured. History starts unloaded:
+	/// no fabricated empty snapshot is ever emitted.
+	/// </summary>
+	public LiquidWalletUiHistorySnapshot? HistorySnapshot { get; private set; }
+	public IObservable<LiquidWalletUiHistorySnapshot> History { get; }
+	public bool IsHistoryLoaded => _historyLoaded.Value;
+	public IObservable<bool> HistoryLoaded { get; }
+
+	/// <summary>
 	/// Re-captures the balance snapshot from the caller's advanced state
 	/// (the caller holds the live state from its own landed load; this model
 	/// never does). Each emission on <see cref="Balances"/> is a fresh
-	/// immutable <see cref="LiquidWalletUiSnapshot"/>.
+	/// immutable <see cref="LiquidWalletUiSnapshot"/>. Revision-pair fence:
+	/// when the accepted balance snapshot's revision differs from
+	/// <see cref="HistorySnapshot"/>/<c>?.Revision</c>, history becomes
+	/// unloaded before the new balance emission is observable — the previous
+	/// history object may remain held for diagnostics but is never again
+	/// displayed or announced. A same-revision balance refresh leaves a
+	/// successfully paired history loaded. This is an in-process
+	/// projection-pair fence only; it is not persistence freshness or
+	/// anti-rollback authority.
 	/// </summary>
 	public void RefreshBalances(LiquidWalletUiSnapshot snapshot)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
+		if (HistorySnapshot is { } history && history.Revision != snapshot.Revision)
+		{
+			HistorySnapshot = null;
+			_historyLoaded.OnNext(false);
+		}
+
 		Snapshot = snapshot;
 		_balances.OnNext(snapshot);
+	}
+
+	/// <summary>
+	/// Accepts one immutable history snapshot captured by the
+	/// application-owned wallet lifetime layer via
+	/// <see cref="LiquidWalletUiFacade.LoadAndCaptureHistory"/> with
+	/// <c>expectedBaseRevision: Snapshot.Revision</c>, or from the same
+	/// already-loaded state inside <c>WalletWasabi</c>. Validates wallet
+	/// name, network manifest id, pegged asset id, and exact revision
+	/// against the model's current <see cref="Snapshot"/>; any mismatch
+	/// throws before changing either history field or stream. Success
+	/// stores and emits the immutable snapshot, then marks history loaded.
+	/// This model never receives key or context spans.
+	/// </summary>
+	public void RefreshHistory(LiquidWalletUiHistorySnapshot snapshot)
+	{
+		ArgumentNullException.ThrowIfNull(snapshot);
+		LiquidWalletUiSnapshot balance = Snapshot ??
+			throw new InvalidOperationException(
+				"Liquid history cannot be paired before a balance snapshot exists.");
+		if (!StringComparer.Ordinal.Equals(snapshot.WalletName, Name) ||
+			!StringComparer.Ordinal.Equals(snapshot.NetworkManifestId, balance.NetworkManifestId) ||
+			!StringComparer.Ordinal.Equals(snapshot.PeggedAssetIdHex, balance.PeggedAssetIdHex) ||
+			snapshot.Revision != balance.Revision)
+		{
+			throw new InvalidOperationException(
+				"The Liquid history snapshot does not pair with the current balance snapshot.");
+		}
+
+		HistorySnapshot = snapshot;
+		_history.OnNext(snapshot);
+		_historyLoaded.OnNext(true);
 	}
 
 	/// <summary>
@@ -147,5 +212,7 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	{
 		_balances.Dispose();
 		_loaded.Dispose();
+		_history.Dispose();
+		_historyLoaded.Dispose();
 	}
 }

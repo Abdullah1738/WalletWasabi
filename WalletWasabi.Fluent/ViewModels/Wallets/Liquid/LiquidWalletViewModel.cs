@@ -26,6 +26,11 @@ namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 public partial class LiquidWalletViewModel : RoutableViewModel
 {
 	private ReadOnlyObservableCollection<LiquidAssetBalanceItemViewModel>? _balanceRows;
+	private readonly ObservableCollection<LiquidHistoryItemViewModel> _historyRows = new();
+	private readonly ReadOnlyObservableCollection<LiquidHistoryItemViewModel> _historyRowsReadOnly;
+	private bool _isHistoryLoaded;
+	private bool _isHistoryEmpty;
+	private int _selectedHistoryIndex = -1;
 
 	public LiquidWalletViewModel(UiContext uiContext, LiquidWalletModel walletModel)
 		: base(uiContext)
@@ -45,6 +50,38 @@ public partial class LiquidWalletViewModel : RoutableViewModel
 			.Bind(out _balanceRows)
 			.Subscribe();
 
+		// The retained transaction history is a complete revision-scoped
+		// replacement: every valid emission replaces the whole visible row
+		// set in snapshot order. The redacted TransactionReference is never
+		// used as a DynamicData key, equality identity, or deduplication
+		// input — two rows sharing a reference remain two rows. When history
+		// is unloaded (revision-pair fence) the collection exposes no stale
+		// rows.
+		_historyRowsReadOnly = new ReadOnlyObservableCollection<LiquidHistoryItemViewModel>(_historyRows);
+		walletModel.History
+			.ObserveOn(RxApp.MainThreadScheduler)
+			.Subscribe(snapshot =>
+			{
+				_historyRows.Clear();
+				foreach (var row in snapshot.Rows)
+				{
+					_historyRows.Add(new LiquidHistoryItemViewModel(uiContext, row));
+				}
+
+				IsHistoryEmpty = _historyRows.Count == 0;
+			});
+		walletModel.HistoryLoaded
+			.ObserveOn(RxApp.MainThreadScheduler)
+			.Subscribe(loaded =>
+			{
+				IsHistoryLoaded = loaded;
+				if (!loaded)
+				{
+					_historyRows.Clear();
+					IsHistoryEmpty = false;
+				}
+			});
+
 		ReceiveCommand = ReactiveCommand.Create(() =>
 			UiContext.Navigate(NavigationTarget.DialogScreen)
 				.To(new LiquidReceiveViewModel(uiContext, walletModel)));
@@ -56,6 +93,31 @@ public partial class LiquidWalletViewModel : RoutableViewModel
 	public LiquidWalletModel WalletModel { get; }
 
 	public ReadOnlyObservableCollection<LiquidAssetBalanceItemViewModel>? BalanceRows => _balanceRows;
+
+	public ReadOnlyObservableCollection<LiquidHistoryItemViewModel> HistoryRows => _historyRowsReadOnly;
+
+	public bool IsHistoryLoaded
+	{
+		get => _isHistoryLoaded;
+		private set => this.RaiseAndSetIfChanged(ref _isHistoryLoaded, value);
+	}
+
+	public bool IsHistoryEmpty
+	{
+		get => _isHistoryEmpty;
+		private set => this.RaiseAndSetIfChanged(ref _isHistoryEmpty, value);
+	}
+
+	/// <summary>
+	/// The keyboard-driven selected history row index (one tab stop,
+	/// Up/Down traversal). Never keyed by the redacted transaction
+	/// reference.
+	/// </summary>
+	public int SelectedHistoryIndex
+	{
+		get => _selectedHistoryIndex;
+		set => this.RaiseAndSetIfChanged(ref _selectedHistoryIndex, value);
+	}
 
 	public ICommand ReceiveCommand { get; }
 
