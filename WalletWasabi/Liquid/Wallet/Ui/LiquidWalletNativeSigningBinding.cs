@@ -70,19 +70,19 @@ internal static unsafe partial class LiquidWalletNativeSigningBinding
 	internal const int InitialOutputCapacity = 1 << 20;
 
 	/// <summary>The full native commit the pinned cdylib was built from.</summary>
-	internal const string PinnedNativeCommit = "4486ae3f4b85064096df2ef27b0434bd227b639a";
+	internal const string PinnedNativeCommit = "1f94ac7e4880782f5e0476acbb9ae672cde051a0";
 
 	/// <summary>
 	/// The SHA-256 of the pinned-commit macOS arm64 cdylib
 	/// (<c>libwasabi_liquid_wlpq_v1.dylib</c>) tracked under the production Native/ directory.
 	/// </summary>
-	internal const string MacOsLibrarySha256 = "8c2e5f116f72cf049c873fe8f661723c20862db4b69c458fbb69feffbd2f28f2";
+	internal const string MacOsLibrarySha256 = "1788d2fc1e63edaa458b5fd31df1c8a54d4de5ab344a4e7e656fa19423fe532d";
 
 	/// <summary>
 	/// The SHA-256 of the pinned-commit Linux x86-64 cdylib
 	/// (<c>libwasabi_liquid_wlpq_v1.so</c>) tracked under the production Native/ directory.
 	/// </summary>
-	internal const string LinuxLibrarySha256 = "5e2a6f2e3aa954036597f11a11e2b09f1b7160780e0c051694bcda0cf599584a";
+	internal const string LinuxLibrarySha256 = "8e3ab6d80d643ebd95c33d0d415b0e6b2c5973684d40a809b17f37b8e450f3d5";
 
 	/// <summary>
 	/// The dynamic library file name produced by the pinned native build.
