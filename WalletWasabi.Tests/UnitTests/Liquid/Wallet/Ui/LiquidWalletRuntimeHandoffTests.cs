@@ -14,6 +14,6 @@ public sealed class LiquidWalletRuntimeHandoffTests
 		Assert.DoesNotContain(type.GetProperties(), property => typeof(Delegate).IsAssignableFrom(property.PropertyType));
 		Assert.DoesNotContain(type.GetMethods(), method => method.Name.Contains("Dispose", StringComparison.Ordinal));
 		Assert.DoesNotContain(type.GetProperties(), property => property.PropertyType.Name.Contains("Provider", StringComparison.Ordinal));
-		Assert.Equal(new[] { "BootstrapSnapshot", "CanonicalWalletId", "NetworkManifestId" }, type.GetProperties().Select(x => x.Name).OrderBy(x => x).ToArray());
+		Assert.Equal(new[] { "Balances", "CanonicalWalletId", "History", "NetworkManifestId", "ReceiveMaterial", "SelectableOutputs" }, type.GetProperties().Select(x => x.Name).OrderBy(x => x).ToArray());
 	}
 }

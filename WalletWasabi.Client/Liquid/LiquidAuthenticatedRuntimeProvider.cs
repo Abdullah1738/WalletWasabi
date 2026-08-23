@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
 using WalletWasabi.Blockchain.Keys;
+using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Liquid.Wallet.Ui;
 
@@ -82,10 +83,6 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable, ILi
 				throw new InvalidDataException("Liquid wallet authentication failed.");
 			}
 
-			byte[] slip77 = LiquidKeyDomain.DeriveHkdf(
-				root.PrivateKey.ToBytes(),
-				Array.Empty<byte>(),
-				"WalletWasabi/Liquid/v1/slip77");
 			using LiquidRpcAuthenticationLease lease = new LiquidRpcCookieCredentialSource(profile).Acquire();
 			ElementsRpcClient rpcClient = ElementsRpcClient.Create(
 				profile.Endpoint,
@@ -93,24 +90,44 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable, ILi
 				new ElementsRpcTimeouts(profile.ConnectTimeout, profile.RequestTimeout, profile.RequestTimeout));
 			Func<string, (int Account, int Change, int Index)?> outpointLocator = BuildOutpointLocator(identity, root);
 			LiquidWalletSignerKeyAdapter adapter = new(root, outpointLocator, km.GetNetwork());
-
-			// The descriptor text and highest derived index are known at open time; the session
-			// retains them (internal-only) so the per-call execution scope factory can construct
-			// the call-scoped signer without re-reading a file or asking the caller.
-			string descriptor = "wpkh(" + Convert.ToHexString(root.PrivateKey.PubKey.ToBytes()) + ")";
-			ulong lastIndex = 0;
-			// Validates the descriptor/SLIP-77 shape at open; the signer is constructed per-send by
-			// the execution scope, not retained here, so this throwaway instance is disposed inline.
-			using (LiquidWalletNativeSigner.Create(
+			ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.GetByManifestId(identity.NetworkManifestId);
+			LiquidAuthenticatedWalletStateOwner stateOwner = LiquidAuthenticatedWalletStateOwner.Open(
+				identity,
+				manifest,
+				_walletDirectories.WalletDirectory,
+				root,
 				adapter,
-				descriptor,
-				lastIndex,
-				slip77))
+				rpcClient);
+
+			// The descriptor is the real Liquid account xpub catalog and LastIndex is the durable
+			// external allocation made by the state owner, never the root key or an observed-output guess.
+			string descriptor = stateOwner.Descriptor;
+			ulong lastIndex = stateOwner.LastIndex;
+			byte[] rootPrivateKey = root.PrivateKey.ToBytes();
+			byte[] slip77 = Array.Empty<byte>();
+			try
 			{
+				slip77 = LiquidKeyDomain.DeriveHkdf(
+					rootPrivateKey,
+					Array.Empty<byte>(),
+					"WalletWasabi/Liquid/v1/slip77");
+				using (LiquidWalletNativeSigner.Create(adapter, descriptor, lastIndex, slip77))
+				{
+				}
+			}
+			finally
+			{
+				CryptographicOperations.ZeroMemory(slip77);
+				CryptographicOperations.ZeroMemory(rootPrivateKey);
 			}
 
-			LiquidWalletUiBootstrapSnapshot snapshot = new(identity.CanonicalWalletId, identity.NetworkManifestId, sourceRevision: 0);
-			LiquidWalletRuntimeHandoff handoff = new(identity.CanonicalWalletId, identity.NetworkManifestId, snapshot);
+			LiquidWalletRuntimeHandoff handoff = new(
+				identity.CanonicalWalletId,
+				identity.NetworkManifestId,
+				stateOwner.Balances,
+				stateOwner.SelectableOutputs,
+				stateOwner.History,
+				stateOwner.ReceiveMaterial);
 			LiquidAuthenticatedWalletSession session = new(
 				identity,
 				handoff,
@@ -118,6 +135,7 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable, ILi
 				adapter,
 				rpcClient,
 				root,
+				stateOwner,
 				descriptor,
 				lastIndex,
 				_walletDirectories.WalletDirectory,

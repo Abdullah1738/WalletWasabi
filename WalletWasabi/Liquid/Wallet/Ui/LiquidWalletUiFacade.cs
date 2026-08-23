@@ -39,6 +39,33 @@ namespace WalletWasabi.Liquid.Wallet.Ui;
 /// </summary>
 public static class LiquidWalletUiFacade
 {
+	public static LiquidWalletUiSnapshot CaptureAllocationBalances(
+		string walletName,
+		ElementsPublicNetworkManifest manifest,
+		LiquidWalletExternalIndexAllocation allocation)
+	{
+		ArgumentNullException.ThrowIfNull(allocation);
+		return LiquidWalletUiSnapshot.Capture(walletName, manifest, allocation.State);
+	}
+
+	public static LiquidWalletUiSelectableOutputsSnapshot CaptureSelectableOutputs(
+		string walletName,
+		ElementsPublicNetworkManifest manifest,
+		LiquidWalletExternalIndexAllocation allocation)
+	{
+		ArgumentNullException.ThrowIfNull(allocation);
+		return LiquidWalletUiSelectableOutputsSnapshot.Capture(walletName, manifest, allocation.State);
+	}
+
+	public static LiquidWalletUiHistorySnapshot CaptureAllocationHistory(
+		string walletName,
+		ElementsPublicNetworkManifest manifest,
+		LiquidWalletExternalIndexAllocation allocation)
+	{
+		ArgumentNullException.ThrowIfNull(allocation);
+		return LiquidWalletUiHistorySnapshot.Capture(walletName, manifest, allocation.State);
+	}
+
 	/// <summary>
 	/// Projects the already-loaded <paramref name="state"/> into an
 	/// immutable display-ready snapshot. The <paramref name="state"/>

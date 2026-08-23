@@ -29,7 +29,8 @@ internal static class LiquidWalletPersistenceHandoff
 		LiquidWalletState state,
 		ulong generation,
 		ReadOnlySpan<byte> key,
-		ReadOnlySpan<byte> externalWalletNetworkContext)
+		ReadOnlySpan<byte> externalWalletNetworkContext,
+		ulong externalIndexHighWater = 0)
 	{
 		ArgumentNullException.ThrowIfNull(state);
 
@@ -38,8 +39,9 @@ internal static class LiquidWalletPersistenceHandoff
 			snapshot,
 			generation,
 			key,
-			externalWalletNetworkContext);
-		return LiquidWalletPersistenceHandoffResult.Create(envelope, snapshot.Revision, generation);
+			externalWalletNetworkContext,
+			externalIndexHighWater);
+		return LiquidWalletPersistenceHandoffResult.Create(envelope, snapshot.Revision, generation, externalIndexHighWater);
 	}
 
 	public static LiquidWalletPersistenceHandoffResult Import(
@@ -63,6 +65,7 @@ internal static class LiquidWalletPersistenceHandoff
 			envelope: null,
 			restored.Revision,
 			openResult.Generation,
+			openResult.ExternalIndexHighWater,
 			restored);
 	}
 }

@@ -40,14 +40,17 @@ internal sealed class LiquidWalletReplayOpenResult
 {
 	public LiquidWalletReplayOpenResult(
 		ulong generation,
+		ulong externalIndexHighWater,
 		LiquidWalletReplaySnapshot snapshot)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
 		Generation = generation;
+		ExternalIndexHighWater = externalIndexHighWater;
 		Snapshot = snapshot;
 	}
 
 	public ulong Generation { get; }
+	public ulong ExternalIndexHighWater { get; }
 	public LiquidWalletReplaySnapshot Snapshot { get; }
 
 	public override string ToString() => nameof(LiquidWalletReplayOpenResult);
@@ -557,11 +560,13 @@ internal sealed class LiquidWalletReplayProtectedPayload
 	internal const int PaddingBucketLength = 4_096;
 
 	private const ushort EnvelopeVersion = 1;
-	private const ushort PayloadVersion = 1;
+	private const ushort LegacyPayloadVersion = 1;
+	private const ushort PayloadVersion = 2;
 	private const ushort Aes256GcmAlgorithm = 1;
 	private const int HeaderLength = 48;
 	private const int InnerGenerationLength = sizeof(ulong);
 	private const int InnerLengthFieldLength = sizeof(uint);
+	private const int InnerExternalIndexHighWaterLength = sizeof(ulong);
 	internal const int InnerPrefixLength = InnerGenerationLength + InnerLengthFieldLength;
 	// This exact 16 MiB ceiling bounds allocation before payload authentication.
 	internal const int MaxPaddedPlaintextLength = 16_777_216;
@@ -580,7 +585,8 @@ internal sealed class LiquidWalletReplayProtectedPayload
 		LiquidWalletReplaySnapshot snapshot,
 		ulong generation,
 		ReadOnlySpan<byte> key,
-		ReadOnlySpan<byte> externalWalletNetworkContext)
+		ReadOnlySpan<byte> externalWalletNetworkContext,
+		ulong externalIndexHighWater = 0)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
 		ValidateKeyAndContext(key, externalWalletNetworkContext);
@@ -590,7 +596,7 @@ internal sealed class LiquidWalletReplayProtectedPayload
 		byte[]? associatedData = null;
 		try
 		{
-			int innerLength = checked(InnerPrefixLength + canonical.Length);
+			int innerLength = checked(InnerPrefixLength + canonical.Length + InnerExternalIndexHighWaterLength);
 			int paddedLength = RoundUpToBucket(innerLength);
 			if (paddedLength > MaxPaddedPlaintextLength)
 			{
@@ -603,6 +609,9 @@ internal sealed class LiquidWalletReplayProtectedPayload
 				plaintext.AsSpan(InnerGenerationLength),
 				(uint)canonical.Length);
 			canonical.CopyTo(plaintext.AsSpan(InnerPrefixLength));
+			BinaryPrimitives.WriteUInt64LittleEndian(
+				plaintext.AsSpan(InnerPrefixLength + canonical.Length),
+				externalIndexHighWater);
 			RandomNumberGenerator.Fill(plaintext.AsSpan(innerLength));
 
 			byte[] envelope = new byte[checked(HeaderLength + paddedLength + TagLength)];
@@ -684,8 +693,12 @@ internal sealed class LiquidWalletReplayProtectedPayload
 			}
 			LiquidWalletReplaySnapshot snapshot = LiquidWalletReplayCodec.Decode(
 				plaintext.AsSpan(InnerPrefixLength, (int)canonicalLength));
+			ulong externalIndexHighWater = values.PayloadVersion == PayloadVersion
+				? BinaryPrimitives.ReadUInt64LittleEndian(
+					plaintext.AsSpan(checked(InnerPrefixLength + (int)canonicalLength), InnerExternalIndexHighWaterLength))
+				: 0;
 
-			return new LiquidWalletReplayOpenResult(generation, snapshot);
+			return new LiquidWalletReplayOpenResult(generation, externalIndexHighWater, snapshot);
 		}
 		catch (Exception exception) when (
 			exception is ArgumentException or
@@ -752,9 +765,10 @@ internal sealed class LiquidWalletReplayProtectedPayload
 
 	private static HeaderValues ReadHeader(ReadOnlySpan<byte> header, int envelopeLength)
 	{
+		ushort payloadVersion = BinaryPrimitives.ReadUInt16LittleEndian(header[10..]);
 		if (!header[..Magic.Length].SequenceEqual(Magic) ||
 			BinaryPrimitives.ReadUInt16LittleEndian(header[8..]) != EnvelopeVersion ||
-			BinaryPrimitives.ReadUInt16LittleEndian(header[10..]) != PayloadVersion ||
+			payloadVersion is not (LegacyPayloadVersion or PayloadVersion) ||
 			BinaryPrimitives.ReadUInt16LittleEndian(header[12..]) != Aes256GcmAlgorithm ||
 			BinaryPrimitives.ReadUInt16LittleEndian(header[14..]) != 0 ||
 			BinaryPrimitives.ReadUInt64LittleEndian(header[24..]) != 0 ||
@@ -775,7 +789,7 @@ internal sealed class LiquidWalletReplayProtectedPayload
 			throw new InvalidDataException();
 		}
 
-		return new HeaderValues((int)ciphertextLength, (int)plaintextLength);
+		return new HeaderValues((int)ciphertextLength, (int)plaintextLength, payloadVersion);
 	}
 
 	private static byte[] BuildAssociatedData(
@@ -790,5 +804,6 @@ internal sealed class LiquidWalletReplayProtectedPayload
 
 	private readonly record struct HeaderValues(
 		int CiphertextLength,
-		int PlaintextLength);
+		int PlaintextLength,
+		ushort PayloadVersion);
 }

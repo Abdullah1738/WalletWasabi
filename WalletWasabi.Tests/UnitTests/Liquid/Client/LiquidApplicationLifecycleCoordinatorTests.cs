@@ -4,6 +4,9 @@ using System.Threading.Tasks;
 using WalletWasabi.Client;
 using WalletWasabi.Client.Configuration;
 using WalletWasabi.Client.Liquid;
+using WalletWasabi.Liquid.Assets;
+using WalletWasabi.Liquid.Network;
+using WalletWasabi.Liquid.Wallet;
 using WalletWasabi.Liquid.Wallet.Ui;
 using Xunit;
 #pragma warning disable CA2000
@@ -17,7 +20,7 @@ public sealed class LiquidApplicationLifecycleCoordinatorTests
 	{
 		using TemporaryDirectory directory = new();
 		string wallets = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
-		await using LiquidWalletRuntimeComposition composition = new(CreateProvider(directory.Path, wallets), new LiquidWalletRuntimeHandoff("alpha", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", new LiquidWalletUiBootstrapSnapshot("alpha", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", 0)));
+		await using LiquidWalletRuntimeComposition composition = new(CreateProvider(directory.Path, wallets), CreateHandoff());
 
 		int terminated = 0;
 		Global global = new(directory.Path, new Config(PersistentConfigManager.DefaultMainNetConfig, cliArgs: []));
@@ -37,6 +40,20 @@ public sealed class LiquidApplicationLifecycleCoordinatorTests
 
 	private static LiquidAuthenticatedRuntimeProvider CreateProvider(string dataDirectory, string walletDirectory) =>
 		new(new LiquidRpcProfileSource(dataDirectory), new LiquidWalletDirectories(walletDirectory), new ElementsPublicNetworkManifestSource("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b"));
+
+	private static LiquidWalletRuntimeHandoff CreateHandoff()
+	{
+		const string walletName = "alpha";
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidMainnet;
+		LiquidWalletState state = LiquidWalletState.Empty(LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId));
+		return new LiquidWalletRuntimeHandoff(
+			walletName,
+			manifest.ManifestId,
+			LiquidWalletUiSnapshot.Capture(walletName, manifest, state),
+			LiquidWalletUiSelectableOutputsSnapshot.Capture(walletName, manifest, state),
+			LiquidWalletUiHistorySnapshot.Capture(walletName, manifest, state),
+			new LiquidWalletUiReceiveMaterial([0x51], Convert.FromHexString("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")));
+	}
 
 	private sealed class TemporaryDirectory : IDisposable
 	{

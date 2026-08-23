@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using WalletWasabi.Client.Liquid;
 using WalletWasabi.Liquid.Amounts;
 using WalletWasabi.Liquid.Assets;
+using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Transactions;
 using WalletWasabi.Liquid.Wallet;
 using WalletWasabi.Liquid.Wallet.Ui;
@@ -21,7 +22,7 @@ public sealed class LiquidApplicationCompositionTests
 	{
 		using TemporaryDirectory directory = new();
 		string wallets = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
-		LiquidWalletRuntimeHandoff handoff = new("alpha", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", new LiquidWalletUiBootstrapSnapshot("alpha", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", 0));
+		LiquidWalletRuntimeHandoff handoff = CreateHandoff();
 		LiquidWalletRuntimeComposition composition = new(
 			CreateProvider(directory.Path, wallets),
 			handoff,
@@ -78,6 +79,20 @@ public sealed class LiquidApplicationCompositionTests
 
 	private static LiquidAuthenticatedRuntimeProvider CreateProvider(string dataDirectory, string walletDirectory) =>
 		new(new LiquidRpcProfileSource(dataDirectory), new LiquidWalletDirectories(walletDirectory), new ElementsPublicNetworkManifestSource("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b"));
+
+	private static LiquidWalletRuntimeHandoff CreateHandoff()
+	{
+		const string walletName = "alpha";
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidMainnet;
+		LiquidWalletState state = LiquidWalletState.Empty(LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId));
+		return new LiquidWalletRuntimeHandoff(
+			walletName,
+			manifest.ManifestId,
+			LiquidWalletUiSnapshot.Capture(walletName, manifest, state),
+			LiquidWalletUiSelectableOutputsSnapshot.Capture(walletName, manifest, state),
+			LiquidWalletUiHistorySnapshot.Capture(walletName, manifest, state),
+			new LiquidWalletUiReceiveMaterial([0x51], Convert.FromHexString("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")));
+	}
 
 	private sealed class TemporaryDirectory : IDisposable
 	{

@@ -1,3 +1,4 @@
+using System.IO;
 using WalletWasabi.Liquid.Wallet.Sync;
 
 namespace WalletWasabi.Liquid.Wallet;
@@ -46,6 +47,8 @@ namespace WalletWasabi.Liquid.Wallet;
 /// </summary>
 internal static class LiquidWalletLoadSave
 {
+	internal static object GenerationFence { get; } = new();
+
 	/// <summary>
 	/// Loads one Liquid managed wallet's sealed state file from
 	/// <paramref name="walletDataDir"/> and restores the
@@ -78,7 +81,8 @@ internal static class LiquidWalletLoadSave
 		return LiquidWalletLoadSaveResult.CreateLoaded(
 			result.State!,
 			result.Revision,
-			result.Generation);
+			result.Generation,
+			result.ExternalIndexHighWater);
 	}
 
 	/// <summary>
@@ -96,20 +100,86 @@ internal static class LiquidWalletLoadSave
 		ReadOnlySpan<byte> key,
 		ReadOnlySpan<byte> externalWalletNetworkContext)
 	{
+		lock (GenerationFence)
+		{
+			return SaveCore(walletDataDir, walletName, state, generation, key, externalWalletNetworkContext, null, null);
+		}
+	}
+
+	internal static LiquidWalletLoadSaveResult SaveWithExternalIndexHighWater(
+		string walletDataDir,
+		string walletName,
+		LiquidWalletState state,
+		ulong generation,
+		ulong externalIndexHighWater,
+		ulong expectedGeneration,
+		ReadOnlySpan<byte> key,
+		ReadOnlySpan<byte> externalWalletNetworkContext)
+	{
+		lock (GenerationFence)
+		{
+			return SaveCore(
+				walletDataDir,
+				walletName,
+				state,
+				generation,
+				key,
+				externalWalletNetworkContext,
+				externalIndexHighWater,
+				expectedGeneration);
+		}
+	}
+
+	private static LiquidWalletLoadSaveResult SaveCore(
+		string walletDataDir,
+		string walletName,
+		LiquidWalletState state,
+		ulong generation,
+		ReadOnlySpan<byte> key,
+		ReadOnlySpan<byte> externalWalletNetworkContext,
+		ulong? requestedExternalIndexHighWater,
+		ulong? expectedGeneration)
+	{
 		ArgumentNullException.ThrowIfNull(state);
 
 		string filePath = LiquidWalletPersistencePaths.GetWalletStateFilePath(
 			walletDataDir,
 			walletName);
+		ulong externalIndexHighWater = requestedExternalIndexHighWater ?? 0;
+		if (File.Exists(filePath))
+		{
+			LiquidWalletLoadSaveResult current = Load(walletDataDir, walletName, key, externalWalletNetworkContext);
+			if (requestedExternalIndexHighWater.HasValue || expectedGeneration.HasValue)
+			{
+				if (expectedGeneration is ulong expected && current.Generation != expected)
+				{
+					throw new InvalidOperationException("The Liquid wallet persistence generation changed during save.");
+				}
+				if (generation < current.Generation)
+				{
+					throw new InvalidOperationException("The Liquid wallet persistence generation moved backwards.");
+				}
+				if (requestedExternalIndexHighWater is ulong requested && requested < current.ExternalIndexHighWater)
+				{
+					throw new InvalidOperationException("The Liquid external receive-index high-water moved backwards.");
+				}
+			}
+
+			// A state save never lowers the authenticated external receive-index high-water.
+			// A generic save carries the on-disk value forward unchanged; an allocating save
+			// supplies the advanced value above.
+			externalIndexHighWater = Math.Max(externalIndexHighWater, current.ExternalIndexHighWater);
+		}
 		LiquidWalletPersistenceHandoffResult result =
 			LiquidWalletPersistenceHandoff.Export(
 				state,
 				generation,
 				key,
-				externalWalletNetworkContext);
+				externalWalletNetworkContext,
+				externalIndexHighWater);
 		// Export always returns a non-null Envelope; the null-forgiving
 		// operator adds no runtime check and no fallback.
 		LiquidWalletPersistenceFormat.Save(filePath, result.Envelope!);
-		return LiquidWalletLoadSaveResult.CreateSaved(result.Revision, result.Generation);
+		return LiquidWalletLoadSaveResult.CreateSaved(result.Revision, result.Generation, result.ExternalIndexHighWater);
 	}
 }

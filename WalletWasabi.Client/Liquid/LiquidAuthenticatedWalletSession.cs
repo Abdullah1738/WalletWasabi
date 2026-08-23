@@ -28,6 +28,7 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 		LiquidWalletSignerKeyAdapter signerKeyAdapter,
 		ElementsRpcClient rpcClient,
 		ExtKey authenticatedMaster,
+		LiquidAuthenticatedWalletStateOwner stateOwner,
 		string descriptor,
 		ulong lastIndex,
 		string walletDataDirectory,
@@ -39,6 +40,7 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 		SignerKeyAdapter = signerKeyAdapter ?? throw new ArgumentNullException(nameof(signerKeyAdapter));
 		RpcClient = rpcClient ?? throw new ArgumentNullException(nameof(rpcClient));
 		AuthenticatedMaster = authenticatedMaster ?? throw new ArgumentNullException(nameof(authenticatedMaster));
+		StateOwner = stateOwner ?? throw new ArgumentNullException(nameof(stateOwner));
 		Descriptor = descriptor ?? throw new ArgumentNullException(nameof(descriptor));
 		LastIndex = lastIndex;
 		WalletDataDirectory = string.IsNullOrWhiteSpace(walletDataDirectory)
@@ -52,6 +54,7 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 	internal KeyManager KeyManager { get; }
 	internal LiquidWalletSignerKeyAdapter SignerKeyAdapter { get; }
 	internal ElementsRpcClient RpcClient { get; }
+	internal LiquidAuthenticatedWalletStateOwner StateOwner { get; }
 
 	/// <summary>
 	/// The retained authenticated master key (internal-only). The per-call execution scope

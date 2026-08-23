@@ -17,30 +17,35 @@ internal sealed class LiquidWalletLoadSaveResult
 	private LiquidWalletLoadSaveResult(
 		LiquidWalletState? state,
 		ulong revision,
-		ulong generation)
+		ulong generation,
+		ulong externalIndexHighWater)
 	{
 		State = state;
 		Revision = revision;
 		Generation = generation;
+		ExternalIndexHighWater = externalIndexHighWater;
 	}
 
 	public LiquidWalletState? State { get; }
 	public ulong Revision { get; }
 	public ulong Generation { get; }
+	public ulong ExternalIndexHighWater { get; }
 
 	internal static LiquidWalletLoadSaveResult CreateLoaded(
 		LiquidWalletState state,
 		ulong revision,
-		ulong generation)
+		ulong generation,
+		ulong externalIndexHighWater)
 	{
 		ArgumentNullException.ThrowIfNull(state);
-		return new LiquidWalletLoadSaveResult(state, revision, generation);
+		return new LiquidWalletLoadSaveResult(state, revision, generation, externalIndexHighWater);
 	}
 
 	internal static LiquidWalletLoadSaveResult CreateSaved(
 		ulong revision,
-		ulong generation) =>
-		new(state: null, revision, generation);
+		ulong generation,
+		ulong externalIndexHighWater) =>
+		new(state: null, revision, generation, externalIndexHighWater);
 
 	public override string ToString() => nameof(LiquidWalletLoadSaveResult);
 }
