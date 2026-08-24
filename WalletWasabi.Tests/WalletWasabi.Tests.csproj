@@ -87,6 +87,16 @@
 		<None Update="TestData\Liquid\WalletFactsWireV1\nonlinkable-reference\**\*">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
+		<!-- NATIVE-WALLET-FACTS-OBSERVATION-FFI-001: native e2e fixture bytes and the
+		     production hash-pinned macOS artifact under its dedicated resolution path. -->
+		<None Update="TestData\Liquid\WalletFactsWireV1\live\**\*">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Include="..\WalletWasabi\Liquid\Wallet\Ui\Native\libwasabi_liquid_wallet_facts_v1.dylib">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>NativeWalletFacts\libwasabi_liquid_wallet_facts_v1.dylib</Link>
+			<Visible>false</Visible>
+		</None>
 		<None Update="TestData\Liquid\OrdinaryWalletPlanWireV1\nonlinkable-reference\**\*">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>

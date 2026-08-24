@@ -832,7 +832,7 @@ public class LiquidWalletFactsWireV1StructuralRequestCodecTests
 			"ToString",
 			"get_Length");
 
-		Type[] allowed = [codec, owner];
+		Type[] allowed = [codec, owner, typeof(WalletWasabi.Liquid.Wallet.Ui.LiquidWalletNativeFactsObserver)];
 		foreach (Type type in owner.Assembly.GetTypes())
 		{
 			foreach (FieldInfo field in type.GetFields(AllDeclared))
