@@ -2,6 +2,9 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using NBitcoin;
 using WalletWasabi.Liquid.Amounts;
 using WalletWasabi.Liquid.Assets;
@@ -21,6 +24,45 @@ public class LiquidWalletLoadSaveTests
 	private const string IssuedAssetHex = "2222222222222222222222222222222222222222222222222222222222222222";
 	private const string PublicKeyHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 	private const string BlockHashHex = "4444444444444444444444444444444444444444444444444444444444444444";
+
+	private const string FreshChildSource = """
+		using System;
+		using System.Text.Json;
+		using WalletWasabi.Liquid.Wallet;
+
+		internal static class Program
+		{
+			private static int Main()
+			{
+				using JsonDocument input = JsonDocument.Parse(Console.In.ReadToEnd());
+				JsonElement root = input.RootElement;
+				LiquidWalletLoadSaveResult loaded = LiquidWalletLoadSave.Load(
+					root.GetProperty("dir").GetString()!,
+					root.GetProperty("name").GetString()!,
+					Convert.FromHexString(root.GetProperty("key").GetString()!),
+					Convert.FromHexString(root.GetProperty("context").GetString()!));
+				var state = loaded.State!;
+				Console.Write(JsonSerializer.Serialize(new
+				{
+					loaded.Revision,
+					loaded.Generation,
+					loaded.ExternalIndexHighWater,
+					state.AppliedTransactionCount,
+					state.UnspentOutputCount,
+					peggedBalance = state.GetBalances().GetAmountOrZero(
+						WalletWasabi.Liquid.Assets.LiquidAssetId.ParseRpcHex(
+							"1111111111111111111111111111111111111111111111111111111111111111")).AtomicUnits,
+				}));
+				return 0;
+			}
+		}
+		""";
+
+	private static readonly Lazy<string> FreshChildAssemblyPath = new(() =>
+		RoslynFreshChildHarness.CompileChildAssembly(
+			FreshChildSource,
+			"liquid-load-save-child",
+			"liquid-load-save-child.dll"));
 
 	private static LiquidAssetId PeggedAsset => LiquidAssetId.ParseRpcHex(PeggedAssetHex);
 	private static LiquidAssetId IssuedAsset => LiquidAssetId.ParseRpcHex(IssuedAssetHex);
@@ -221,7 +263,9 @@ public class LiquidWalletLoadSaveTests
 		try
 		{
 			string walletDataDir = GetWorkDir();
-			Assert.False(File.Exists(Path.Combine(walletDataDir, "missing.lwwal")));
+			string missingFilePath = Path.Combine(walletDataDir, "missing.lwwal");
+			File.Delete(missingFilePath);
+			Assert.False(File.Exists(missingFilePath));
 			Assert.Throws<InvalidOperationException>(() =>
 				LiquidWalletLoadSave.Load(walletDataDir, "missing", key, context));
 			Assert.False(File.Exists(Path.Combine(walletDataDir, "missing.lwwal")));
@@ -523,6 +567,151 @@ public class LiquidWalletLoadSaveTests
 			CryptographicOperations.ZeroMemory(context);
 			CryptographicOperations.ZeroMemory(foreignKey);
 		}
+	}
+
+	[Fact]
+	public void SaveWithExpectedGenerationValidatesNullStateBeforeDisk()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		string filePath = Path.Combine(dir, "null.lwwal");
+		File.WriteAllBytes(filePath, [1, 2, 3]);
+		byte[] retained = File.ReadAllBytes(filePath);
+		using LiquidWalletLoadSave.SaveObservationScope observation = LiquidWalletLoadSave.SaveObservationScope.Begin();
+		Assert.Throws<ArgumentNullException>(() => LiquidWalletLoadSave.SaveWithExpectedGeneration(dir, "null", null!, 8, 7, key, context));
+		Assert.Equal(0, observation.ExportWriteEntryCount);
+		Assert.Equal(retained, File.ReadAllBytes(filePath));
+	}
+
+	[Fact]
+	public void ExpectedGenerationFreshChildReopensNonEmptyStateAndRollback()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState older = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(Tx('a'), [], [Output(Tx('a'), 0, PeggedAsset, 123)]));
+		LiquidWalletLoadSave.Save(dir, "rollback", older, 41, key, context);
+		string filePath = Path.Combine(dir, "rollback.lwwal");
+		byte[] olderBytes = File.ReadAllBytes(filePath);
+		LiquidWalletState newer = older.Apply(1, Delta(Tx('b'), [], [Output(Tx('b'), 0, PeggedAsset, 77)]));
+		LiquidWalletLoadSave.SaveWithExpectedGeneration(dir, "rollback", newer, 42, 41, key, context);
+		AssertFreshChild(dir, "rollback", key, context, 2, 42, 0, 2, 2, 200);
+		File.WriteAllBytes(filePath, olderBytes);
+		AssertFreshChild(dir, "rollback", key, context, 1, 41, 0, 1, 1, 123);
+	}
+
+	[Fact]
+	public void ExpectedGenerationRejectsMismatchAndBackwardBeforeExport()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset).Apply(0, Delta(Tx('c'), [], [Output(Tx('c'), 0, PeggedAsset, 55)]));
+		LiquidWalletLoadSave.Save(dir, "reject", state, 29, key, context);
+		string filePath = Path.Combine(dir, "reject.lwwal");
+		byte[] retained = File.ReadAllBytes(filePath);
+		using LiquidWalletLoadSave.SaveObservationScope observation = LiquidWalletLoadSave.SaveObservationScope.Begin();
+		Assert.Equal("The Liquid wallet persistence generation changed during save.", Assert.Throws<InvalidOperationException>(() =>
+			LiquidWalletLoadSave.SaveWithExpectedGeneration(dir, "reject", state, 30, 28, key, context)).Message);
+		Assert.Equal("The Liquid wallet persistence generation moved backwards.", Assert.Throws<InvalidOperationException>(() =>
+			LiquidWalletLoadSave.SaveWithExpectedGeneration(dir, "reject", state, 28, 29, key, context)).Message);
+		Assert.Equal(0, observation.ExportWriteEntryCount);
+		Assert.Equal(retained, File.ReadAllBytes(filePath));
+	}
+
+	[Theory]
+	[InlineData("missing")]
+	[InlineData("unreadable")]
+	[InlineData("malformed")]
+	public void ExpectedGenerationOverwritesAbsentUnreadableAndMalformed(string kind)
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset).Apply(0, Delta(Tx('d'), [], [Output(Tx('d'), 0, PeggedAsset, 66)]));
+		string walletName = "expected-" + kind;
+		if (kind == "unreadable")
+		{
+			byte[] foreignKey = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+			LiquidWalletLoadSave.Save(dir, walletName, state, 6, foreignKey, context);
+		}
+		else if (kind == "malformed")
+		{
+			File.WriteAllBytes(Path.Combine(dir, walletName + ".lwwal"), "WLWALFMT"u8.ToArray());
+		}
+		LiquidWalletLoadSave.SaveWithExpectedGeneration(dir, walletName, state, 17, 999, key, context);
+		AssertFreshChild(dir, walletName, key, context, 1, 17, 0, 1, 1, 66);
+	}
+
+	[Fact]
+	public void ExpectedGenerationPreservesHighWaterAndRejectsAfterAllocator()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset).Apply(0, Delta(Tx('e'), [], [Output(Tx('e'), 0, PeggedAsset, 88)]));
+		LiquidWalletLoadSave.Save(dir, "allocator", state, 50, key, context);
+		for (int i = 0; i < 3; i++) { LiquidWalletExternalIndexAllocator.Allocate(dir, "allocator", key, context); }
+		Assert.Equal(3ul, LiquidWalletLoadSave.SaveWithExpectedGeneration(dir, "allocator", state, 54, 53, key, context).ExternalIndexHighWater);
+		LiquidWalletExternalIndexAllocator.Allocate(dir, "allocator", key, context);
+		byte[] retained = File.ReadAllBytes(Path.Combine(dir, "allocator.lwwal"));
+		using LiquidWalletLoadSave.SaveObservationScope observation = LiquidWalletLoadSave.SaveObservationScope.Begin();
+		Assert.Equal("The Liquid wallet persistence generation changed during save.", Assert.Throws<InvalidOperationException>(() =>
+			LiquidWalletLoadSave.SaveWithExpectedGeneration(dir, "allocator", state, 55, 54, key, context)).Message);
+		Assert.Equal(0, observation.ExportWriteEntryCount);
+		Assert.Equal(retained, File.ReadAllBytes(Path.Combine(dir, "allocator.lwwal")));
+		AssertFreshChild(dir, "allocator", key, context, 1, 55, 4, 1, 1, 88);
+	}
+
+	[Fact]
+	public async Task TwoExpectedGenerationWritersRaceAndExactlyOneCommits()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState seed = LiquidWalletState.Empty(PeggedAsset).Apply(0, Delta(Tx('f'), [], [Output(Tx('f'), 0, PeggedAsset, 10)]));
+		LiquidWalletState first = seed.Apply(1, Delta(Tx('a'), [], [Output(Tx('a'), 0, PeggedAsset, 20)]));
+		LiquidWalletState second = seed.Apply(1, Delta(Tx('b'), [], [Output(Tx('b'), 0, PeggedAsset, 30)]));
+		LiquidWalletLoadSave.Save(dir, "race", seed, 70, key, context);
+		string filePath = Path.Combine(dir, "race.lwwal");
+		byte[] retained = File.ReadAllBytes(filePath);
+		using var reached = new ManualResetEventSlim();
+		using var release = new ManualResetEventSlim();
+		using LiquidWalletLoadSave.SaveObservationScope observation = LiquidWalletLoadSave.SaveObservationScope.Begin();
+		observation.EntryReached = reached;
+		observation.EntryRelease = release;
+		Task<(LiquidWalletLoadSaveResult? Result, Exception? Error, long Balance)> Writer(LiquidWalletState candidate, long balance) => Task.Run(() =>
+		{
+			try { return (LiquidWalletLoadSave.SaveWithExpectedGeneration(dir, "race", candidate, 71, 70, key, context), (Exception?)null, balance); }
+			catch (Exception error) { return ((LiquidWalletLoadSaveResult?)null, error, balance); }
+		});
+		var one = Writer(first, 30);
+		Assert.True(reached.Wait(TimeSpan.FromSeconds(30)));
+		var two = Writer(second, 40);
+		await Task.Delay(100);
+		Assert.Equal(retained, File.ReadAllBytes(filePath));
+		release.Set();
+		var outcomes = await Task.WhenAll(one, two);
+		var winner = Assert.Single(outcomes, outcome => outcome.Result is not null);
+		var loser = Assert.Single(outcomes, outcome => outcome.Error is not null);
+		Assert.Equal("The Liquid wallet persistence generation changed during save.", Assert.IsType<InvalidOperationException>(loser.Error).Message);
+		Assert.Equal(1, observation.ExportWriteEntryCount);
+		AssertFreshChild(dir, "race", key, context, 2, 71, 0, 2, 2, winner.Balance);
+	}
+
+	private static void AssertFreshChild(string dir, string name, byte[] key, byte[] context, ulong revision, ulong generation, ulong highWater, int applied, int unspent, long balance)
+	{
+		using JsonDocument result = RoslynFreshChildHarness.RunChild(FreshChildAssemblyPath.Value,
+			new { dir, name, key = Convert.ToHexString(key), context = Convert.ToHexString(context) });
+		JsonElement root = result.RootElement;
+		Assert.Equal(revision, root.GetProperty("Revision").GetUInt64());
+		Assert.Equal(generation, root.GetProperty("Generation").GetUInt64());
+		Assert.Equal(highWater, root.GetProperty("ExternalIndexHighWater").GetUInt64());
+		Assert.Equal(applied, root.GetProperty("AppliedTransactionCount").GetInt32());
+		Assert.Equal(unspent, root.GetProperty("UnspentOutputCount").GetInt32());
+		Assert.Equal(balance, root.GetProperty("peggedBalance").GetInt64());
 	}
 
 	private static string GetWorkDir()

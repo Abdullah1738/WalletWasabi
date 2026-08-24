@@ -63,11 +63,22 @@ internal static class LiquidWalletLoadSave
 			ActiveObservation.Value = this;
 		}
 
-		internal int ExportWriteEntryCount { get; private set; }
+		private int _exportWriteEntryCount;
+
+		internal int ExportWriteEntryCount => Volatile.Read(ref _exportWriteEntryCount);
+
+		internal ManualResetEventSlim? EntryReached { get; set; }
+
+		internal ManualResetEventSlim? EntryRelease { get; set; }
 
 		internal static SaveObservationScope Begin() => new();
 
-		internal void RecordExportWriteEntry() => ExportWriteEntryCount++;
+		internal void RecordExportWriteEntry()
+		{
+			Interlocked.Increment(ref _exportWriteEntryCount);
+			EntryReached?.Set();
+			EntryRelease?.Wait();
+		}
 
 		public void Dispose()
 		{
@@ -146,6 +157,8 @@ internal static class LiquidWalletLoadSave
 		ReadOnlySpan<byte> key,
 		ReadOnlySpan<byte> externalWalletNetworkContext)
 	{
+		ArgumentNullException.ThrowIfNull(state);
+
 		lock (GenerationFence)
 		{
 			string filePath = LiquidWalletPersistencePaths.GetWalletStateFilePath(walletDataDir, walletName);

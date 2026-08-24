@@ -350,77 +350,11 @@ public class LiquidWalletFundingDependencyDeriverTests
 
 	private static readonly Lazy<string> ChildAssemblyPath = new(CompileChildAssembly);
 
-	private static string CompileChildAssembly()
-	{
-		var syntaxTree = CSharpSyntaxTree.ParseText(
+	private static string CompileChildAssembly() =>
+		RoslynFreshChildHarness.CompileChildAssembly(
 			ChildProgramSource,
-			new CSharpParseOptions(LanguageVersion.Latest));
-		var referencePaths = new HashSet<string>(StringComparer.Ordinal)
-		{
-			typeof(object).Assembly.Location,
-			typeof(Console).Assembly.Location,
-			typeof(JsonDocument).Assembly.Location,
-			typeof(List<>).Assembly.Location,
-			typeof(System.Buffers.ReadOnlySequence<>).Assembly.Location,
-			typeof(LiquidWalletLoadSave).Assembly.Location,
-			Assembly.Load("System.Runtime").Location,
-		};
-		var references = new List<MetadataReference>();
-		foreach (string referencePath in referencePaths)
-		{
-			references.Add(MetadataReference.CreateFromFile(referencePath));
-		}
-
-		// The child carries the test assembly identity so the landed
-		// InternalsVisibleTo("WalletWasabi.Tests") grant applies. It lives in
-		// its own subdirectory (with a private copy of the production
-		// assembly) so its identity never collides with the real test
-		// assembly on the child process probing path; it is only ever loaded
-		// by path as a child process entry point.
-		var compilation = CSharpCompilation.Create(
-			"WalletWasabi.Tests",
-			[syntaxTree],
-			references,
-			new CSharpCompilationOptions(
-				OutputKind.ConsoleApplication,
-				optimizationLevel: OptimizationLevel.Release));
-		string childDirectory = Path.Combine(
-			AppContext.BaseDirectory,
-			"liquid-funding-dependency-child");
-		Directory.CreateDirectory(childDirectory);
-		File.Copy(
-			typeof(LiquidWalletLoadSave).Assembly.Location,
-			Path.Combine(childDirectory, "WalletWasabi.dll"),
-			overwrite: true);
-		// The production assembly's module initializer patches NBitcoin
-		// networks, so the child probing path needs these assemblies too.
-		foreach (string moduleDependency in new[]
-		{
-			"NBitcoin.dll",
-			"NBitcoin.Secp256k1.dll",
-			"Microsoft.Extensions.Logging.Abstractions.dll",
-		})
-		{
-			File.Copy(
-				Path.Combine(AppContext.BaseDirectory, moduleDependency),
-				Path.Combine(childDirectory, moduleDependency),
-				overwrite: true);
-		}
-		string childPath = Path.Combine(childDirectory, "liquid-funding-dependency-child.dll");
-		using (FileStream stream = File.Create(childPath))
-		{
-			EmitResult emitted = compilation.Emit(stream);
-			Assert.True(
-				emitted.Success,
-				string.Join(
-					"\n",
-					emitted.Diagnostics
-						.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
-						.Select(diagnostic => diagnostic.ToString())));
-		}
-
-		return childPath;
-	}
+			"liquid-funding-dependency-child",
+			"liquid-funding-dependency-child.dll");
 
 	private static string ResolveDotnetHostPath()
 	{
