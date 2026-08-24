@@ -1856,13 +1856,14 @@ public class LiquidOrdinaryWalletPlanWireV1CorpusTests
 		byte[] identityCheck = new byte[] { 0x03, 0x04, 0xfe, 0x01, 0x16, 0xfe, 0x01 };
 #else
 		const int ExpectedIlLength = 121;
-		const string ExpectedIlSha256 = "f3ac7b263e459be48a534132b5a1ddeaa4e43429a44061825fbce3f28ebe4f";
+		const string ExpectedIlSha256 = "f3ac7b263e459be48a534132b5a1ddeaa4e43429a44061825fbce3f28ebe4f74";
 		byte[] identityCheck = new byte[] { 0x03, 0x04, 0x2e };
 #endif
 		try
 		{
 			Assert.Equal(ExpectedIlLength, il.Length);
-			Assert.Equal(ExpectedIlSha256, LowerHex(SHA256.HashData(il)));
+			string actualIlSha256 = LowerHex(SHA256.HashData(il));
+			Assert.True(StringComparer.Ordinal.Equals(ExpectedIlSha256, actualIlSha256), actualIlSha256);
 			int epochCheckOffset = FindUniqueBytePattern(il, nonzeroCall);
 			int identityCheckOffset = FindUniqueBytePattern(il, identityCheck);
 			AssertEncoderEpochBeforeIdentityOffsets(epochCheckOffset, identityCheckOffset);
