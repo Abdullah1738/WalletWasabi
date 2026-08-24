@@ -746,14 +746,12 @@ public class LiquidWalletFactsWireV1UntrustedStructuralResponseTests
 		Type[] targetTypes =
 		[
 			owner,
-			typeof(WalletWasabi.Liquid.Wallet.Ui.LiquidWalletNativeFactsObserver),
 			typeof(LiquidWalletFactsWireV1UntrustedStructuralTransactionView),
 			typeof(LiquidWalletFactsWireV1UntrustedStructuralInputView),
 			typeof(LiquidWalletFactsWireV1UntrustedStructuralOwnedOutputView),
 		];
 		var targetSet = targetTypes.ToHashSet();
 		var ownerSubtree = TypeAndNestedTypes(owner).ToHashSet();
-		ownerSubtree.Add(typeof(WalletWasabi.Liquid.Wallet.Ui.LiquidWalletNativeFactsObserver));
 		ConstructorInfo ownerConstructor = Assert.Single(
 			owner.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
 		Assert.True(ownerConstructor.IsPrivate);
