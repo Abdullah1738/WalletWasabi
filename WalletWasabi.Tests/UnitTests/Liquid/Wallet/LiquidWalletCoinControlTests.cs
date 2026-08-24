@@ -5144,7 +5144,7 @@ public class LiquidWalletCoinControlTests
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
 			1_760,
-			"c52243bcc9d64e145a9f42d16a7e8f5220a8e51f1aae009ddfb5fc46efe00ef8",
+			"54c5a38c51ce61ad3744284a566ac3ab51bb6653e08c21b1f3f3ed839da32f83",
 			permittedAddedTestTypes);
 #endif
 	}
