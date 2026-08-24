@@ -2566,6 +2566,18 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus+<>c",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire.OrdinaryWalletPlanWireV1Corpus+CorpusTree",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests+<>c",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests+<>c__DisplayClass32_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests+<>c__DisplayClass33_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests+<>c__DisplayClass34_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests+<>c__DisplayClass35_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests+<>c__DisplayClass37_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests+<>c__DisplayClass38_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests+<>c__DisplayClass41_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests+<>c__DisplayClass49_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests+<>c__DisplayClass50_0",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletFundingDependencyDeriverTests+<>c__DisplayClass51_0",
 ];
 		string[] addedProductionTypes =
 		[
@@ -2667,6 +2679,9 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireErrorCode",
 			"WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireErrorCodeExtensions",
 			"WalletWasabi.Liquid.Wallet.Wire.LiquidOrdinaryWalletPlanWireLimits",
+			"WalletWasabi.Liquid.Wallet.LiquidWalletFundingDependencyDeriver",
+			"WalletWasabi.Liquid.Wallet.LiquidWalletFundingDependencyDeriver+<>c",
+			"WalletWasabi.Liquid.Wallet.LiquidWalletFundingDependencySelection",
 		];
 #if DEBUG
 		AssertReconstructedTypeManifest(
