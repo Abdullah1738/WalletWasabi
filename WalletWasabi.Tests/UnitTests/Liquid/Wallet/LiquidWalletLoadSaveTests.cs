@@ -474,6 +474,57 @@ public class LiquidWalletLoadSaveTests
 		}
 	}
 
+	[Fact]
+	public void SaveWithExpectedGenerationCarriesGenerationAndRejectsStaleWriterBeforeExport()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		try
+		{
+			string dir = GetWorkDir();
+			LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
+			LiquidWalletLoadSave.Save(dir, "cas", state, 11, key, context);
+			byte[] retained = File.ReadAllBytes(Path.Combine(dir, "cas.lwwal"));
+			using LiquidWalletLoadSave.SaveObservationScope observation = LiquidWalletLoadSave.SaveObservationScope.Begin();
+			InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+				LiquidWalletLoadSave.SaveWithExpectedGeneration(dir, "cas", state, 12, 10, key, context));
+			Assert.Equal("The Liquid wallet persistence generation changed during save.", exception.Message);
+			Assert.Equal(0, observation.ExportWriteEntryCount);
+			Assert.Equal(retained, File.ReadAllBytes(Path.Combine(dir, "cas.lwwal")));
+			LiquidWalletLoadSaveResult saved = LiquidWalletLoadSave.SaveWithExpectedGeneration(dir, "cas", state, 12, 11, key, context);
+			Assert.Null(saved.State);
+			Assert.Equal(12ul, saved.Generation);
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(key);
+			CryptographicOperations.ZeroMemory(context);
+		}
+	}
+
+	[Fact]
+	public void SaveWithExpectedGenerationOverwritesForeignFile()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		byte[] foreignKey = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		try
+		{
+			string dir = GetWorkDir();
+			LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
+			LiquidWalletLoadSave.Save(dir, "foreign", state, 4, foreignKey, context);
+			LiquidWalletLoadSaveResult saved = LiquidWalletLoadSave.SaveWithExpectedGeneration(dir, "foreign", state, 5, 99, key, context);
+			Assert.Equal(5ul, saved.Generation);
+			Assert.Equal(5ul, LiquidWalletLoadSave.Load(dir, "foreign", key, context).Generation);
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(key);
+			CryptographicOperations.ZeroMemory(context);
+			CryptographicOperations.ZeroMemory(foreignKey);
+		}
+	}
+
 	private static string GetWorkDir()
 	{
 		string dir = Common.GetWorkDir();
