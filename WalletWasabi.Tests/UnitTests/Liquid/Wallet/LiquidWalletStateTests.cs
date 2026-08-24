@@ -2746,10 +2746,10 @@ public class LiquidWalletStateTests
 		{
 			manifest.Append(row).Append('\0');
 		}
-		Assert.Equal(
-			expectedBaseSha256,
-			Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(manifest.ToString())))
-				.ToLowerInvariant());
+		string actualBaseSha256 = Convert.ToHexString(
+			SHA256.HashData(Encoding.UTF8.GetBytes(manifest.ToString())))
+			.ToLowerInvariant();
+		Assert.True(StringComparer.Ordinal.Equals(expectedBaseSha256, actualBaseSha256), actualBaseSha256);
 	}
 
 	[Fact]
