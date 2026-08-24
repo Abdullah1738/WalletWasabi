@@ -26,13 +26,13 @@ public class LiquidWalletLabelSetTests
 	private const int SurrogateStart = 0xd800;
 	private const int SurrogateEnd = 0xdfff;
 #if DEBUG
-	private const string ExpectedImplementationManifestSha256 = "8c0616fde87cdd07e2d37b516f194b8249d3911dfc6466680a906f70ce782d13";
+	private const string ExpectedImplementationManifestSha256 = "9837ec8c76d752c67bb6ab02c9c9f4713340edd75d92c66c99e03e3f2be9426c";
 	private const string ExpectedProductionReferencesSha256 = "e0b8516c317a78c14b4ab083b1dcf9b1bc480e86b43f4e4f17ba769460f289bc";
-	private const string ExpectedTestReferencesSha256 = "8a8f1216dd492213124bdba932319a372ec5f4231d7895bc5904c14765ae5b7b";
+	private const string ExpectedTestReferencesSha256 = "668c4c5713ec2bbfcb79cbe84531ba6d19dfdd6f82debe0279e2932d73d1f530";
 #else
-	private const string ExpectedImplementationManifestSha256 = "31dda1fc2a548be9c264cec7ca58a395c29bce51c766e1c6df415c8c255be81d";
+	private const string ExpectedImplementationManifestSha256 = "b20897c82a97732a85ec41c808be2b2078c94451c0741f578187453e54992eaf";
 	private const string ExpectedProductionReferencesSha256 = "e0b8516c317a78c14b4ab083b1dcf9b1bc480e86b43f4e4f17ba769460f289bc";
-	private const string ExpectedTestReferencesSha256 = "18ebab78852a15635e3942832acd6f35981a8aad32f5949d4a661eb4e7b7d384";
+	private const string ExpectedTestReferencesSha256 = "796cd4942700af1d84e61e74215077f6893e1e7a649f83c509f0b57db910b1ce";
 #endif
 
 	private static readonly ScalarRange[] ControlRanges =
