@@ -1856,7 +1856,7 @@ public class LiquidOrdinaryWalletPlanWireV1CorpusTests
 		byte[] identityCheck = new byte[] { 0x03, 0x04, 0xfe, 0x01, 0x16, 0xfe, 0x01 };
 #else
 		const int ExpectedIlLength = 121;
-		const string ExpectedIlSha256 = "f3ac7b263e459be48a534132b5a1ddeaa4e43429a";
+		const string ExpectedIlSha256 = "f3ac7b263e459be48a534132b5a1ddeaa4e43429a44061825fbce3f28ebe4f";
 		byte[] identityCheck = new byte[] { 0x03, 0x04, 0x2e };
 #endif
 		try
