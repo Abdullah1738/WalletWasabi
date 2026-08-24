@@ -2710,7 +2710,7 @@ public class LiquidWalletStateTests
 			typeof(LiquidWalletStateTests).Assembly,
 			"WalletWasabi.Tests",
 			1_736,
-			"74d96a452068575a74462cfd255b8e05acbf7c004c4526839d2eafe6fe9cab09",
+			"9ad9a1631858af7acd1a8e3a7fed92d279b60e96c1f494ccc564cfb8aca80e62",
 			removedTestTypes,
 			addedTestTypes);
 #endif
