@@ -148,27 +148,46 @@ internal static class LiquidWalletLoadSave
 		ulong externalIndexHighWater = requestedExternalIndexHighWater ?? 0;
 		if (File.Exists(filePath))
 		{
-			LiquidWalletLoadSaveResult current = Load(walletDataDir, walletName, key, externalWalletNetworkContext);
-			if (requestedExternalIndexHighWater.HasValue || expectedGeneration.HasValue)
+			// Read the current on-disk high-water to carry it forward. A file that cannot be
+			// decrypted or parsed under this key/context is treated as absent (high-water 0):
+			// Save is an idempotent overwrite and must not fail on a stale or foreign file.
+			// The strict expected-generation / rollback rejections below only apply when the
+			// current state is actually readable.
+			LiquidWalletLoadSaveResult? current = null;
+			try
 			{
-				if (expectedGeneration is ulong expected && current.Generation != expected)
-				{
-					throw new InvalidOperationException("The Liquid wallet persistence generation changed during save.");
-				}
-				if (generation < current.Generation)
-				{
-					throw new InvalidOperationException("The Liquid wallet persistence generation moved backwards.");
-				}
-				if (requestedExternalIndexHighWater is ulong requested && requested < current.ExternalIndexHighWater)
-				{
-					throw new InvalidOperationException("The Liquid external receive-index high-water moved backwards.");
-				}
+				current = Load(walletDataDir, walletName, key, externalWalletNetworkContext);
+			}
+			catch (LiquidWalletReplayProtectionException)
+			{
+			}
+			catch (LiquidWalletPersistenceFormatException)
+			{
 			}
 
-			// A state save never lowers the authenticated external receive-index high-water.
-			// A generic save carries the on-disk value forward unchanged; an allocating save
-			// supplies the advanced value above.
-			externalIndexHighWater = Math.Max(externalIndexHighWater, current.ExternalIndexHighWater);
+			if (current is not null)
+			{
+				if (requestedExternalIndexHighWater.HasValue || expectedGeneration.HasValue)
+				{
+					if (expectedGeneration is ulong expected && current.Generation != expected)
+					{
+						throw new InvalidOperationException("The Liquid wallet persistence generation changed during save.");
+					}
+					if (generation < current.Generation)
+					{
+						throw new InvalidOperationException("The Liquid wallet persistence generation moved backwards.");
+					}
+					if (requestedExternalIndexHighWater is ulong requested && requested < current.ExternalIndexHighWater)
+					{
+						throw new InvalidOperationException("The Liquid external receive-index high-water moved backwards.");
+					}
+				}
+
+				// A state save never lowers the authenticated external receive-index high-water.
+				// A generic save carries the on-disk value forward unchanged; an allocating save
+				// supplies the advanced value above.
+				externalIndexHighWater = Math.Max(externalIndexHighWater, current.ExternalIndexHighWater);
+			}
 		}
 		LiquidWalletPersistenceHandoffResult result =
 			LiquidWalletPersistenceHandoff.Export(
