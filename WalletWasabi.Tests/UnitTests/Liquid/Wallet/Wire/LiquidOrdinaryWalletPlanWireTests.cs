@@ -57,7 +57,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private const string ExpectedDebugModuleInitializerBodySha256 = "23d1ae5ddc95da66864101267cfbd2d82a7942762a4cee19ebb85013b7dcd3c3";
 	private const string ExpectedReleaseModuleInitializerBodySha256 = "23d1ae5ddc95da66864101267cfbd2d82a7942762a4cee19ebb85013b7dcd3c3";
 	private const string ExpectedDebugAmbientClosureSha256 = "7cbab0e3ce7f01621fea42595285e374a7139f7e0e307e1ff95a95f5f7dc6ba6";
-	private const string ExpectedReleaseAmbientClosureSha256 = "f252f5364bd438a717cfa141f6b0623bd2a6d7f6572e391ef5d007dbfc7bd277";
+	private const string ExpectedReleaseAmbientClosureSha256 = "7a1c627d38f9d58359cf1740cfd37d4d20e89e2f1e28a1a8ba30a81fa63db314";
 	private const string ExpectedDebugGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
 	private const string ExpectedReleaseGeneratedSourcesSha256 = "5f9abe4582b34b708d20504a398880e6f8e1922d52f8f8ab3c98d933b9e3c6e8";
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedDebugImportClosureSha256 =
