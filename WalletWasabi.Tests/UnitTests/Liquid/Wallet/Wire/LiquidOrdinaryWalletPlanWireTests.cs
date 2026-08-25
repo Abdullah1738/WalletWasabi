@@ -53,6 +53,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private const string ExpectedReleaseWireClosureSha256 = "6fa08c82d4fa4b1277755d59089bd11b49b0ed3ca42b9cb1a3c117ab0dc3bd13";
 	private const string ExpectedDebugRuntimeDispatchAuthoritySha256 = "486ddbf38f33d2eb2b6f12c09d6acc3244c486c7f3278e930a08a90b56392e38";
 	private const string ExpectedReleaseRuntimeDispatchAuthoritySha256 = "ab36cf9835caeee070b869d617467b149c3729f2926653e07dbe43163ab268f3";
+	private const string ExpectedReleaseRuntimeDispatchAuthorityLinuxX64Sha256 = "77df90cf3aac4ddd2dcbc8ef939a24805e92d8e9677504b02df9d2c2b7ddb0c6";
 	private const string ExpectedDebugAmbientRuntimeDispatchAuthoritySha256 = "b30f09d21d2b3a2f38e3fdc52925906f64d5c325fdd66de80113858ce18edb7e";
 	private const string ExpectedReleaseAmbientRuntimeDispatchAuthoritySha256 = "bab41a25c76545cc2eec7df5725a6761b75668e8e91f7026c050aed7387c06be";
 	private const string ExpectedDebugModuleInitializerBodySha256 = "23d1ae5ddc95da66864101267cfbd2d82a7942762a4cee19ebb85013b7dcd3c3";
@@ -9308,7 +9309,9 @@ public class LiquidOrdinaryWalletPlanWireTests
 #if DEBUG
 			expectedRuntimeDispatchAuthoritySha256 = ExpectedDebugRuntimeDispatchAuthoritySha256;
 #else
-			expectedRuntimeDispatchAuthoritySha256 = ExpectedReleaseRuntimeDispatchAuthoritySha256;
+			expectedRuntimeDispatchAuthoritySha256 = OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
+				? ExpectedReleaseRuntimeDispatchAuthorityLinuxX64Sha256
+				: ExpectedReleaseRuntimeDispatchAuthoritySha256;
 #endif
 		}
 		AssertExactSha256(expectedRuntimeDispatchAuthoritySha256, reviewedDispatchManifest);
