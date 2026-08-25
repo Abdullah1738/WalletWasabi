@@ -2235,6 +2235,9 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c__DisplayClass5_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c__DisplayClass6_0",
+#if !DEBUG
+			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c",
+#endif
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>O",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c",
@@ -2716,8 +2719,8 @@ public class LiquidWalletStateTests
 		AssertReconstructedTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_698,
-			"ffe533e5085faa5408439b058869724651c296b0ee23943f5580ecd3baf4cb94",
+			1_706,
+			"67eeed8443a4078d342410c4935c5e1de719afb09f546d81c7c35e0357c96f0d",
 			[],
 			addedProductionTypes);
 		AssertReconstructedTypeManifest(
