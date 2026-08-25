@@ -832,9 +832,7 @@ public class LiquidWalletFactsWireV1StructuralRequestCodecTests
 			"ToString",
 			"get_Length");
 
-		// NATIVE-WALLET-FACTS-OBSERVATION-FFI-001 authorizes the observer to own the
-		// completed request frame while it marshals that frame to the pinned native entry point.
-		Type[] allowed = [codec, owner, typeof(WalletWasabi.Liquid.WalletFacts.LiquidWalletNativeFactsObserver)];
+		Type[] allowed = [codec, owner];
 		foreach (Type type in owner.Assembly.GetTypes())
 		{
 			foreach (FieldInfo field in type.GetFields(AllDeclared))

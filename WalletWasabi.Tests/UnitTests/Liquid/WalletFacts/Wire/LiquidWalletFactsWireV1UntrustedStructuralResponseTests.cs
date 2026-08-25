@@ -752,12 +752,6 @@ public class LiquidWalletFactsWireV1UntrustedStructuralResponseTests
 		];
 		var targetSet = targetTypes.ToHashSet();
 		var ownerSubtree = TypeAndNestedTypes(owner).ToHashSet();
-		// NATIVE-WALLET-FACTS-OBSERVATION-FFI-001 requires this observer to be the single
-		// authorized consumer of the landed WLFV decoder; no other decode path is allowed.
-		var allowedConsumers = new HashSet<Type>
-		{
-			typeof(WalletWasabi.Liquid.WalletFacts.LiquidWalletNativeFactsObserver),
-		};
 		ConstructorInfo ownerConstructor = Assert.Single(
 			owner.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
 		Assert.True(ownerConstructor.IsPrivate);
@@ -778,7 +772,7 @@ public class LiquidWalletFactsWireV1UntrustedStructuralResponseTests
 		AssertExactDecodeSignature(decoderEntryPoint);
 		Assert.Equal(decoderEntryPoint, constructorCall.Method);
 
-		foreach (Type type in productionTypes.Where(type => !ownerSubtree.Contains(type) && !allowedConsumers.Contains(type)))
+		foreach (Type type in productionTypes.Where(type => !ownerSubtree.Contains(type)))
 		{
 			Assert.False(
 				TypeDefinitionReferencesTargets(type, targetSet),

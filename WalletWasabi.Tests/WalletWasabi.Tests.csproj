@@ -111,11 +111,6 @@
 			<Link>libwasabi_liquid_wlpq_v1.so</Link>
 			<Visible>false</Visible>
 		</None>
-		<None Update="..\WalletWasabi\Liquid\WalletFacts\Native\libwasabi_liquid_wallet_facts_v1.dylib">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-			<Link>libwasabi_liquid_wallet_facts_v1.dylib</Link>
-			<Visible>false</Visible>
-		</None>
 	</ItemGroup>
 
 	<ItemGroup>
