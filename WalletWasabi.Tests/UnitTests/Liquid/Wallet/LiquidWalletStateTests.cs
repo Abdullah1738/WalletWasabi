@@ -2720,8 +2720,8 @@ public class LiquidWalletStateTests
 		AssertReconstructedTypeManifest(
 			typeof(LiquidWalletStateTests).Assembly,
 			"WalletWasabi.Tests",
-			1_736,
-			"9ad9a1631858af7acd1a8e3a7fed92d279b60e96c1f494ccc564cfb8aca80e62",
+			1_728,
+			"286d73ba8ead3ec6b3f0dba27098869c944b4d2bcdd4c84ee0b5279a76099d20",
 			removedTestTypes,
 			addedTestTypes);
 #endif
