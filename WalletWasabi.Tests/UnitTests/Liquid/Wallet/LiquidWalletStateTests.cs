@@ -2708,15 +2708,15 @@ public class LiquidWalletStateTests
 		AssertReconstructedTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_712,
-			"810ab0cb52290b8846bad1a92b55399534d50fe6713974a17175c60ee1f44d08",
+			1_709,
+			"PENDING-DEBUG-PRODUCTION-TYPE-MANIFEST",
 			[],
 			addedProductionTypes);
 		AssertReconstructedTypeManifest(
 			typeof(LiquidWalletStateTests).Assembly,
 			"WalletWasabi.Tests",
-			1_753,
-			"f8456c5753c3b2c7f79deec832d52b2e90636035cbc10a4e5ca6305db28a7e26",
+			1_750,
+			"PENDING-DEBUG-TEST-TYPE-MANIFEST",
 			removedTestTypes,
 			addedTestTypes);
 #else
@@ -2724,14 +2724,14 @@ public class LiquidWalletStateTests
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
 			1_706,
-			"67eeed8443a4078d342410c4935c5e1de719afb09f546d81c7c35e0357c96f0d",
+			"PENDING-RELEASE-PRODUCTION-TYPE-MANIFEST",
 			[],
 			addedProductionTypes);
 		AssertReconstructedTypeManifest(
 			typeof(LiquidWalletStateTests).Assembly,
 			"WalletWasabi.Tests",
-			1_738,
-			"fe35c1fb2b9702ef9ab4dd9a0cdd948ae04a95531e4ad853bde27629e766fad4",
+			1_735,
+			"PENDING-RELEASE-TEST-TYPE-MANIFEST",
 			removedTestTypes,
 			addedTestTypes);
 #endif

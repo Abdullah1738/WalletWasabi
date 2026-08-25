@@ -5144,27 +5144,27 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_773,
-			"f0a8d1d8664ff0cee3a73acbf9241ee64199d4655916f3740d4c0e22a16c87f3",
+			1_770,
+			"PENDING-DEBUG-PRODUCTION-EXACT-TYPE-MANIFEST",
 			permittedAddedProductionTypes);
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
-			1_785,
-			"767918f5bab48593d91ca76d255d1a8cadaf38d8d3780a3ce8459d4e930b69a3",
+			1_782,
+			"PENDING-DEBUG-TEST-EXACT-TYPE-MANIFEST",
 			permittedAddedTestTypes);
 #else
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
 			1_767,
-			"044e4ff31fc95f48b0a1e0785f7a960803634b71e49a9a369547458ba1f037fa",
+			"PENDING-RELEASE-PRODUCTION-EXACT-TYPE-MANIFEST",
 			permittedAddedProductionTypes);
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
 			"WalletWasabi.Tests",
-			1_761,
-			"4f2bad6f1241f87f227cc692987925ddefbc404778cd61b201b4d6bbba33f43d",
+			1_758,
+			"PENDING-RELEASE-TEST-EXACT-TYPE-MANIFEST",
 			permittedAddedTestTypes);
 #endif
 	}
