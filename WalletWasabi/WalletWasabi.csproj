@@ -88,6 +88,13 @@
 			<Link>NativeSigning\libwasabi_liquid_wlpq_v1.so</Link>
 			<Visible>false</Visible>
 		</None>
+		<!-- MANAGED-WALLET-FACTS-FFI-001: pinned macOS wallet-facts cdylib. No Linux
+		     bytes are available in the native target; the binding fails closed there. -->
+		<None Update="Liquid\WalletFacts\Native\libwasabi_liquid_wallet_facts_v1.dylib">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>NativeWalletFacts\libwasabi_liquid_wallet_facts_v1.dylib</Link>
+			<Visible>false</Visible>
+		</None>
 		<None Update="Scheme\Wasabilib.scm">
 		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
