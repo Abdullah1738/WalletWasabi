@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
 using WalletWasabi.Blockchain.Keys;
+using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Liquid.Wallet.Ui;
 
@@ -19,6 +21,7 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 	private readonly object _refreshGate = new();
 	private readonly List<string> _acceptedTransactionIds = [];
 	private readonly Action<string>? _compositionRefreshSink;
+	private readonly ElementsPublicNetworkManifest _manifest;
 	private int _disposed;
 
 	internal LiquidAuthenticatedWalletSession(
@@ -26,6 +29,7 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 		LiquidWalletRuntimeHandoff publicHandoff,
 		KeyManager keyManager,
 		LiquidWalletSignerKeyAdapter signerKeyAdapter,
+		ElementsPublicNetworkManifest manifest,
 		ElementsRpcClient rpcClient,
 		ExtKey authenticatedMaster,
 		LiquidAuthenticatedWalletStateOwner stateOwner,
@@ -38,6 +42,12 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 		PublicHandoff = publicHandoff ?? throw new ArgumentNullException(nameof(publicHandoff));
 		KeyManager = keyManager ?? throw new ArgumentNullException(nameof(keyManager));
 		SignerKeyAdapter = signerKeyAdapter ?? throw new ArgumentNullException(nameof(signerKeyAdapter));
+		ArgumentNullException.ThrowIfNull(manifest);
+		if (!String.Equals(manifest.ManifestId, identity.NetworkManifestId, StringComparison.Ordinal))
+		{
+			throw new ArgumentException("The manifest identity must match the wallet identity.", nameof(manifest));
+		}
+		_manifest = manifest;
 		RpcClient = rpcClient ?? throw new ArgumentNullException(nameof(rpcClient));
 		AuthenticatedMaster = authenticatedMaster ?? throw new ArgumentNullException(nameof(authenticatedMaster));
 		StateOwner = stateOwner ?? throw new ArgumentNullException(nameof(stateOwner));
@@ -53,6 +63,7 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 	internal LiquidWalletRuntimeHandoff PublicHandoff { get; }
 	internal KeyManager KeyManager { get; }
 	internal LiquidWalletSignerKeyAdapter SignerKeyAdapter { get; }
+	internal ElementsPublicNetworkManifest Manifest => _manifest;
 	internal ElementsRpcClient RpcClient { get; }
 	internal LiquidAuthenticatedWalletStateOwner StateOwner { get; }
 	internal ElementsNodeExpectation NodeExpectation => StateOwner.NodeExpectation;
@@ -126,6 +137,68 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 			return _acceptedTransactionIds.ToArray();
 		}
 	}
+
+	internal Task<ElementsExpectationBoundRawTransactionBatch?> FetchPreRefreshRawTransactionsAsync(
+		CancellationToken cancellationToken)
+	{
+		IReadOnlyList<string> transactionIds = GetRecordedAcceptedTransactionIds();
+		if (transactionIds.Count == 0)
+		{
+			return Task.FromResult<ElementsExpectationBoundRawTransactionBatch?>(null);
+		}
+
+		cancellationToken.ThrowIfCancellationRequested();
+		IReadOnlyList<ElementsRawTransactionRequest> requests =
+			BuildPreRefreshRawTransactionRequests(transactionIds);
+		return FetchPreRefreshRawTransactionsCoreAsync(requests, cancellationToken);
+	}
+
+	internal static IReadOnlyList<ElementsRawTransactionRequest> BuildPreRefreshRawTransactionRequests(
+		IReadOnlyList<string> transactionIds)
+	{
+		ArgumentNullException.ThrowIfNull(transactionIds);
+		if (transactionIds.Count is < 1 or > 100)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(transactionIds),
+				"Between one and one hundred transaction identifiers are required.");
+		}
+
+		var distinctTransactionIds = new HashSet<string>(StringComparer.Ordinal);
+		var requests = new ElementsRawTransactionRequest[transactionIds.Count];
+		for (int index = 0; index < transactionIds.Count; index++)
+		{
+			string transactionId = transactionIds[index]
+				?? throw new ArgumentException("Every transaction identifier is required.", nameof(transactionIds));
+			if (transactionId.Length != 64
+				|| transactionId.Any(character => !char.IsAsciiHexDigit(character) || char.IsAsciiLetterUpper(character)))
+			{
+				throw new ArgumentException("A canonical lowercase Liquid transaction identifier is required.", nameof(transactionIds));
+			}
+			if (transactionId.All(character => character == '0'))
+			{
+				throw new ArgumentException("A nonzero Liquid transaction identifier is required.", nameof(transactionIds));
+			}
+			var request = new ElementsRawTransactionRequest(transactionId, BlockHash: null);
+			if (!distinctTransactionIds.Add(request.TransactionId))
+			{
+				throw new ArgumentException("Transaction identifiers must be ordinal-distinct.", nameof(transactionIds));
+			}
+
+			requests[index] = request;
+		}
+
+		return requests;
+	}
+
+	private async Task<ElementsExpectationBoundRawTransactionBatch?> FetchPreRefreshRawTransactionsCoreAsync(
+		IReadOnlyList<ElementsRawTransactionRequest> requests,
+		CancellationToken cancellationToken) =>
+		await StateOwner.GetPreRefreshRawTransactionsAsync(
+			Manifest,
+			RpcClient,
+			requests,
+			cancellationToken).ConfigureAwait(false);
 
 	public ValueTask DisposeAsync()
 	{

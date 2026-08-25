@@ -139,6 +139,7 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable, ILi
 				handoff,
 				km,
 				adapter,
+				manifest,
 				rpcClient,
 				root,
 				stateOwner,

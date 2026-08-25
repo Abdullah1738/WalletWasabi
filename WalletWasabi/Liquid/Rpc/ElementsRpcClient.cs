@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -38,6 +39,7 @@ public sealed class ElementsRpcClient : IDisposable
 	private readonly Uri _endpoint;
 	private readonly ElementsRpcTimeouts _timeouts;
 	private readonly bool _ownsHttpClient;
+	private readonly Action<ElementsNodeExpectation, string, IReadOnlyList<ElementsRawTransactionRequest>, CancellationToken>? _expectationBoundRawTransactionEntryObserver;
 	private readonly SemaphoreSlim _probeLock = new(1, 1);
 	private long _requestSequence;
 
@@ -54,11 +56,20 @@ public sealed class ElementsRpcClient : IDisposable
 	}
 
 	internal ElementsRpcClient(HttpClient httpClient, ElementsRpcTimeouts? timeouts = null)
+		: this(httpClient, timeouts, expectationBoundRawTransactionEntryObserver: null)
+	{
+	}
+
+	internal ElementsRpcClient(
+		HttpClient httpClient,
+		ElementsRpcTimeouts? timeouts,
+		Action<ElementsNodeExpectation, string, IReadOnlyList<ElementsRawTransactionRequest>, CancellationToken>? expectationBoundRawTransactionEntryObserver)
 	{
 		ArgumentNullException.ThrowIfNull(httpClient);
 		_endpoint = RequireEndpoint(httpClient);
 		_timeouts = timeouts is null ? SnapshotTimeouts(httpClient) : timeouts.Validate();
 		_httpClient = httpClient;
+		_expectationBoundRawTransactionEntryObserver = expectationBoundRawTransactionEntryObserver;
 	}
 
 	public static ElementsRpcClient Create(
@@ -1300,10 +1311,25 @@ public sealed class ElementsRpcClient : IDisposable
 			normalizedRequests[index] = normalizedRequest;
 		}
 
+		Exception? observerException = null;
+		try
+		{
+			_expectationBoundRawTransactionEntryObserver?.Invoke(
+				expectation,
+				expectedEffectiveFeeAsset,
+				requests,
+				cancellationToken);
+		}
+		catch (Exception captured)
+		{
+			observerException = captured;
+		}
+
+		ElementsExpectationBoundRawTransactionBatch batch;
 		await _probeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
-			return await GetExpectationBoundRawTransactionsCoreAsync(
+			batch = await GetExpectationBoundRawTransactionsCoreAsync(
 				normalizedExpectation,
 				normalizedEffectiveFeeAsset,
 				normalizedRequests,
@@ -1313,6 +1339,20 @@ public sealed class ElementsRpcClient : IDisposable
 		{
 			_probeLock.Release();
 		}
+
+		if (observerException is not null)
+		{
+			if (observerException is OperationCanceledException)
+			{
+				ExceptionDispatchInfo.Throw(observerException);
+			}
+
+			throw new InvalidOperationException(
+				"The expectation-bound raw-transaction entry observer failed after the real RPC call completed.",
+				observerException);
+		}
+
+		return batch;
 	}
 
 	private async Task<ElementsExpectationBoundRawTransactionBatch> GetExpectationBoundRawTransactionsCoreAsync(

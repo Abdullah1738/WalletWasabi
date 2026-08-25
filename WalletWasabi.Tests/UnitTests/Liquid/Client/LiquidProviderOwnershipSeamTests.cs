@@ -1,8 +1,14 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
@@ -16,6 +22,7 @@ using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Liquid.Transactions;
 using WalletWasabi.Liquid.Wallet;
 using WalletWasabi.Liquid.Wallet.Ui;
+using WalletWasabi.Tests.Helpers;
 using Xunit;
 
 namespace WalletWasabi.Tests.UnitTests.Liquid.Client;
@@ -210,6 +217,371 @@ public sealed class LiquidProviderOwnershipSeamTests
 	}
 
 	[Fact]
+	public async Task PreRefreshRawFetchRejectsNullRequestsBeforeRpcEntryAsync()
+	{
+		using TemporaryDirectory directory = new();
+		string walletDirectory = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
+		string walletFile = Path.Combine(walletDirectory, "alpha.json");
+		KeyManager.CreateNew(out _, "TestPassword", NBitcoin.Network.RegTest, walletFile);
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidTestnet;
+		CreatePersistedLiquidState(walletDirectory, walletFile, "TestPassword", "alpha", manifest);
+		LiquidWalletIdentity identity = LiquidWalletIdentity.Create(
+			"alpha", walletFile, "local", manifest.ManifestId, new LiquidWalletDirectories(walletDirectory));
+		ElementsNodeExpectation bound = ElementsReviewedNodeExpectationSource.Bind(
+			manifest,
+			new LiquidRpcProfile("local", new Uri("http://127.0.0.1:18884"), "/tmp/cookie", "liquidtestnet", manifest.ManifestId, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)));
+		KeyManager keyManager = KeyManager.FromFile(walletFile);
+		ExtKey master = keyManager.GetMasterExtKey("TestPassword");
+		using var httpClient = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:18884") };
+		int rpcEntries = 0;
+		using var rpcClient = new ElementsRpcClient(
+			httpClient,
+			timeouts: null,
+			(expectation, feeAsset, requests, _) => rpcEntries++);
+		using var adapter = new LiquidWalletSignerKeyAdapter(master, _ => null, keyManager.GetNetwork());
+		LiquidAuthenticatedWalletStateOwner owner = LiquidAuthenticatedWalletStateOwner.Open(
+			identity, manifest, bound, walletDirectory, master, adapter, rpcClient);
+
+		await Assert.ThrowsAsync<ArgumentNullException>(() => owner.GetPreRefreshRawTransactionsAsync(
+			manifest,
+			rpcClient,
+			requests: null!,
+			CancellationToken.None));
+		Assert.Equal(0, rpcEntries);
+
+		IReadOnlyList<ElementsRawTransactionRequest> requestsWithNull = [new ElementsRawTransactionRequest(new string('a', 64), null), null!];
+		await Assert.ThrowsAsync<ArgumentException>(() => owner.GetPreRefreshRawTransactionsAsync(
+			manifest,
+			rpcClient,
+			requestsWithNull,
+			CancellationToken.None));
+		Assert.Equal(0, rpcEntries);
+	}
+
+	[Fact]
+	public async Task PreRefreshEntryObserverCannotSuppressRealRpcCallAsync()
+	{
+		const string TransactionId = "1111111111111111111111111111111111111111111111111111111111111111";
+		using TemporaryDirectory directory = new();
+		string walletDirectory = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
+		string walletFile = Path.Combine(walletDirectory, "alpha.json");
+		KeyManager.CreateNew(out _, "TestPassword", NBitcoin.Network.RegTest, walletFile);
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidTestnet;
+		CreatePersistedLiquidState(walletDirectory, walletFile, "TestPassword", "alpha", manifest);
+		LiquidWalletIdentity identity = LiquidWalletIdentity.Create(
+			"alpha", walletFile, "local", manifest.ManifestId, new LiquidWalletDirectories(walletDirectory));
+		ElementsNodeExpectation bound = ElementsReviewedNodeExpectationSource.Bind(
+			manifest,
+			new LiquidRpcProfile("local", new Uri("http://127.0.0.1:18884"), "/tmp/cookie", "liquidtestnet", manifest.ManifestId, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)));
+		KeyManager keyManager = KeyManager.FromFile(walletFile);
+		ExtKey master = keyManager.GetMasterExtKey("TestPassword");
+		using var handler = new PreRefreshRpcHandler(TransactionId);
+		using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:18884/") };
+		using var rpcClient = new ElementsRpcClient(
+			httpClient,
+			timeouts: null,
+			(expectation, feeAsset, requests, _) => throw new InvalidOperationException("Observer failure marker."));
+		using var adapter = new LiquidWalletSignerKeyAdapter(master, _ => null, keyManager.GetNetwork());
+		LiquidAuthenticatedWalletStateOwner owner = LiquidAuthenticatedWalletStateOwner.Open(
+			identity, manifest, bound, walletDirectory, master, adapter, rpcClient);
+		var requests = new[] { new ElementsRawTransactionRequest(TransactionId, null) };
+
+		InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(() => owner.GetPreRefreshRawTransactionsAsync(
+			manifest,
+			rpcClient,
+			requests,
+			CancellationToken.None));
+
+		Assert.Equal("The expectation-bound raw-transaction entry observer failed after the real RPC call completed.", failure.Message);
+		Assert.IsType<InvalidOperationException>(failure.InnerException);
+		Assert.Equal("Observer failure marker.", failure.InnerException!.Message);
+		Assert.Contains("getrawtransaction", handler.Methods);
+		Assert.Equal(12, handler.Methods.Count);
+	}
+
+	[Fact]
+	public async Task PreRefreshEntryObserverOperationCanceledExceptionCannotSuppressRealRpcCallAsync()
+	{
+		const string TransactionId = "1111111111111111111111111111111111111111111111111111111111111111";
+		using TemporaryDirectory directory = new();
+		string walletDirectory = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
+		string walletFile = Path.Combine(walletDirectory, "alpha.json");
+		KeyManager.CreateNew(out _, "TestPassword", NBitcoin.Network.RegTest, walletFile);
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidTestnet;
+		CreatePersistedLiquidState(walletDirectory, walletFile, "TestPassword", "alpha", manifest);
+		LiquidWalletIdentity identity = LiquidWalletIdentity.Create(
+			"alpha", walletFile, "local", manifest.ManifestId, new LiquidWalletDirectories(walletDirectory));
+		ElementsNodeExpectation bound = ElementsReviewedNodeExpectationSource.Bind(
+			manifest,
+			new LiquidRpcProfile("local", new Uri("http://127.0.0.1:18884"), "/tmp/cookie", "liquidtestnet", manifest.ManifestId, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)));
+		KeyManager keyManager = KeyManager.FromFile(walletFile);
+		ExtKey master = keyManager.GetMasterExtKey("TestPassword");
+		using var handler = new PreRefreshRpcHandler(TransactionId);
+		using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:18884/") };
+		using var rpcClient = new ElementsRpcClient(
+			httpClient,
+			timeouts: null,
+			(expectation, feeAsset, requests, _) => throw new OperationCanceledException("Observer cancellation marker."));
+		using var adapter = new LiquidWalletSignerKeyAdapter(master, _ => null, keyManager.GetNetwork());
+		LiquidAuthenticatedWalletStateOwner owner = LiquidAuthenticatedWalletStateOwner.Open(
+			identity, manifest, bound, walletDirectory, master, adapter, rpcClient);
+		var requests = new[] { new ElementsRawTransactionRequest(TransactionId, null) };
+
+		OperationCanceledException failure = await Assert.ThrowsAsync<OperationCanceledException>(() => owner.GetPreRefreshRawTransactionsAsync(
+			manifest,
+			rpcClient,
+			requests,
+			CancellationToken.None));
+
+		Assert.Equal("Observer cancellation marker.", failure.Message);
+		Assert.Contains("getrawtransaction", handler.Methods);
+		Assert.Equal(12, handler.Methods.Count);
+	}
+
+	[Fact]
+	public async Task SessionPreRefreshRawFetchRunsRealRpcFullFenceAndEmptySkipAsync()
+	{
+		const string TransactionId = "1111111111111111111111111111111111111111111111111111111111111111";
+		const string ExpectedFeeAsset = "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49";
+		const string IndependentWrongFeeAsset = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+		using TemporaryDirectory directory = new();
+		string walletDirectory = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
+		string walletFile = Path.Combine(walletDirectory, "alpha.json");
+		KeyManager.CreateNew(out _, "TestPassword", NBitcoin.Network.RegTest, walletFile);
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidTestnet;
+		CreatePersistedLiquidState(walletDirectory, walletFile, "TestPassword", "alpha", manifest);
+		LiquidWalletIdentity identity = LiquidWalletIdentity.Create(
+			"alpha", walletFile, "local", manifest.ManifestId, new LiquidWalletDirectories(walletDirectory));
+		ElementsNodeExpectation bound = ElementsReviewedNodeExpectationSource.Bind(
+			manifest,
+			new LiquidRpcProfile("local", new Uri("http://127.0.0.1:18884"), "/tmp/cookie", "liquidtestnet", manifest.ManifestId, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)));
+		KeyManager keyManager = KeyManager.FromFile(walletFile);
+		ExtKey master = keyManager.GetMasterExtKey("TestPassword");
+		using var handler = new PreRefreshRpcHandler(TransactionId);
+		using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:18884/") };
+		ElementsNodeExpectation? capturedExpectation = null;
+		string? capturedFeeAsset = null;
+		IReadOnlyList<ElementsRawTransactionRequest>? capturedRequests = null;
+		int rpcEntries = 0;
+		using var rpcClient = new ElementsRpcClient(
+			httpClient,
+			timeouts: null,
+			(expectation, feeAsset, requests, _) =>
+			{
+				rpcEntries++;
+				capturedExpectation = expectation;
+				capturedFeeAsset = feeAsset;
+				capturedRequests = requests;
+			});
+		using var adapter = new LiquidWalletSignerKeyAdapter(master, _ => null, keyManager.GetNetwork());
+		LiquidAuthenticatedWalletStateOwner owner = LiquidAuthenticatedWalletStateOwner.Open(
+			identity, manifest, bound, walletDirectory, master, adapter, rpcClient);
+		var handoff = new LiquidWalletRuntimeHandoff(
+			identity.CanonicalWalletId,
+			identity.NetworkManifestId,
+			owner.Balances,
+			owner.SelectableOutputs,
+			owner.History,
+			owner.ReceiveMaterial);
+		await using var session = new LiquidAuthenticatedWalletSession(
+			identity, handoff, keyManager, adapter, manifest, rpcClient, master, owner,
+			owner.Descriptor, owner.LastIndex, walletDirectory);
+
+		using var canceled = new CancellationTokenSource();
+		canceled.Cancel();
+		Task<ElementsExpectationBoundRawTransactionBatch?> emptyFetch = session.FetchPreRefreshRawTransactionsAsync(canceled.Token);
+		Assert.True(emptyFetch.IsCompletedSuccessfully);
+		Assert.Null(await emptyFetch);
+		Assert.Equal(0, rpcEntries);
+		Assert.Empty(handler.Methods);
+
+		session.RecordAcceptedTransactionId(TransactionId);
+		ElementsExpectationBoundRawTransactionBatch? batch =
+			await session.FetchPreRefreshRawTransactionsAsync(CancellationToken.None);
+
+		Assert.NotNull(batch);
+		Assert.Equal(1, batch.TransactionCount);
+		Assert.Same(manifest, session.Manifest);
+		Assert.True(ReferenceEquals(bound, owner.NodeExpectation));
+		Assert.True(ReferenceEquals(owner.NodeExpectation, capturedExpectation));
+		Assert.True(ReferenceEquals(bound, capturedExpectation));
+		Assert.Equal(ExpectedFeeAsset, capturedFeeAsset, StringComparer.Ordinal);
+		Assert.NotEqual(IndependentWrongFeeAsset, capturedFeeAsset, StringComparer.Ordinal);
+		ElementsRawTransactionRequest capturedRequest = Assert.Single(Assert.IsAssignableFrom<IReadOnlyList<ElementsRawTransactionRequest>>(capturedRequests));
+		Assert.Equal(TransactionId, capturedRequest.TransactionId, StringComparer.Ordinal);
+		Assert.Null(capturedRequest.BlockHash);
+		Assert.Equal(1, rpcEntries);
+		Assert.Equal(
+			["getnodegeneration", "getnetworkinfo", "getblockchaininfo", "getblockhash", "getblockhash", "getsidechaininfo", "getnodegeneration", "getnodegeneration", "getsidechaininfo", "getnodegeneration", "getrawtransaction", "getnodegeneration"],
+			handler.Methods);
+	}
+
+	[Fact]
+	public void PreRefreshOwnerConsumerIlUsesRequiredFeeAssetAndOneRealRpcCall()
+	{
+		MethodInfo consumer = typeof(LiquidAuthenticatedWalletStateOwner).GetMethod(
+			"GetPreRefreshRawTransactionsAsync",
+			BindingFlags.Instance | BindingFlags.NonPublic)!;
+		MethodBase[] calls = ReadCalledMethods(consumer).ToArray();
+
+		Assert.Equal(1, calls.Count(method => method.DeclaringType == typeof(ElementsRpcClient)
+			&& method.Name == nameof(ElementsRpcClient.GetExpectationBoundRawTransactionsAsync)));
+		Assert.Equal(2, calls.Count(method => method.DeclaringType == typeof(ElementsPublicNetworkManifest)
+			&& method.Name == "get_RequiredFeeAssetId"));
+		Assert.DoesNotContain(calls, method => method.Name is "get_PeggedAssetId" or "get_PeggedAsset" or "Normalize" or "GetObservedRawTransactionsAsync");
+		Assert.DoesNotContain(calls, method => method.IsConstructor && method.DeclaringType == typeof(ElementsNodeExpectation));
+	}
+
+	[Fact]
+	public void FreshChildLoadsNonzeroSeedAndBuildsIndependentPreRefreshRequests()
+	{
+		const string TransactionId = "1111111111111111111111111111111111111111111111111111111111111111";
+		using TemporaryDirectory directory = new();
+		string walletDirectory = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
+		string walletFile = Path.Combine(walletDirectory, "alpha.json");
+		KeyManager.CreateNew(out _, "TestPassword", NBitcoin.Network.RegTest, walletFile);
+		CreatePersistedLiquidState(walletDirectory, walletFile, "TestPassword", "alpha", ElementsPublicNetworkManifest.LiquidTestnet);
+		KeyManager keyManager = KeyManager.FromFile(walletFile);
+		ExtKey master = keyManager.GetMasterExtKey("TestPassword");
+		ExtKey replayChild = master.Derive(new KeyPath(1108790945U | 0x80000000U));
+		byte[] childMaterial = replayChild.PrivateKey.ToBytes();
+		byte[] salt = SHA256.HashData(Encoding.UTF8.GetBytes(ElementsPublicNetworkManifest.LiquidTestnet.ManifestId + "alpha"));
+		byte[] replayKey = LiquidKeyDomain.DeriveHkdf(childMaterial, salt, "WalletWasabi/Liquid/v1/replay");
+		byte[] context = LiquidKeyDomain.DeriveHkdf(childMaterial, salt, "WalletWasabi/Liquid/v1/context");
+		try
+		{
+			string clientAssembly = typeof(LiquidAuthenticatedRuntimeProvider).Assembly.Location;
+			string childPath = RoslynFreshChildHarness.CompileChildAssembly(
+				""""
+				using System;
+				using System.Collections.Generic;
+				using System.IO;
+				using System.Linq;
+				using System.Net;
+				using System.Net.Http;
+				using System.Text;
+				using System.Text.Json;
+				using System.Threading;
+				using System.Threading.Tasks;
+				using NBitcoin;
+				using WalletWasabi.Blockchain.Keys;
+				using WalletWasabi.Client.Liquid;
+				using WalletWasabi.Liquid.Network;
+				using WalletWasabi.Liquid.Rpc;
+				using WalletWasabi.Liquid.Wallet;
+				using WalletWasabi.Liquid.Wallet.Ui;
+
+				using JsonDocument input = JsonDocument.Parse(Console.In.ReadToEnd());
+				JsonElement root = input.RootElement;
+				byte[] key = Convert.FromHexString(root.GetProperty("key").GetString()!);
+				byte[] context = Convert.FromHexString(root.GetProperty("context").GetString()!);
+				string transactionId = root.GetProperty("transactionId").GetString()!;
+				string walletDirectory = root.GetProperty("walletDirectory").GetString()!;
+				LiquidWalletLoadSaveResult loaded = LiquidWalletLoadSave.Load(walletDirectory, "alpha", key, context);
+				ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidTestnet;
+				var profile = new LiquidRpcProfile("local", new Uri("http://127.0.0.1:18884"), "/tmp/cookie", "liquidtestnet", manifest.ManifestId, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+				ElementsNodeExpectation bound = ElementsReviewedNodeExpectationSource.Bind(manifest, profile);
+				var handler = new Handler(transactionId);
+				using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:18884/") };
+				ElementsNodeExpectation? captured = null;
+				IReadOnlyList<ElementsRawTransactionRequest>? capturedRequests = null;
+				using var rpcClient = new ElementsRpcClient(httpClient, null, (expectation, _, requests, _) => { captured = expectation; capturedRequests = requests; });
+				string walletFile = root.GetProperty("walletFile").GetString()!;
+				KeyManager keyManager = KeyManager.FromFile(walletFile);
+				ExtKey master = keyManager.GetMasterExtKey("TestPassword");
+				using var adapter = new LiquidWalletSignerKeyAdapter(master, _ => null, keyManager.GetNetwork());
+				var identity = LiquidWalletIdentity.Create("alpha", walletFile, "local", manifest.ManifestId, new LiquidWalletDirectories(walletDirectory));
+				LiquidAuthenticatedWalletStateOwner owner = LiquidAuthenticatedWalletStateOwner.Open(identity, manifest, bound, walletDirectory, master, adapter, rpcClient);
+				var handoff = new LiquidWalletRuntimeHandoff(identity.CanonicalWalletId, identity.NetworkManifestId, owner.Balances, owner.SelectableOutputs, owner.History, owner.ReceiveMaterial);
+				var session = new LiquidAuthenticatedWalletSession(identity, handoff, keyManager, adapter, manifest, rpcClient, master, owner, owner.Descriptor, owner.LastIndex, walletDirectory);
+				session.RecordAcceptedTransactionId(transactionId);
+				ElementsExpectationBoundRawTransactionBatch? batch = session.FetchPreRefreshRawTransactionsAsync(CancellationToken.None).GetAwaiter().GetResult();
+				var request = capturedRequests!.Single();
+				Console.Write(JsonSerializer.Serialize(new {
+					token = "PRE_REFRESH_CHILD_V1",
+					revision = loaded.Revision,
+					generation = loaded.Generation,
+					transactionId = request.TransactionId,
+					nullBlockHash = request.BlockHash is null,
+					boundToOwner = ReferenceEquals(bound, owner.NodeExpectation),
+					ownerToRpcEntry = ReferenceEquals(owner.NodeExpectation, captured),
+					boundToRpcEntry = ReferenceEquals(bound, captured),
+					batchOk = batch is not null && batch.TransactionCount == 1,
+					methods = handler.Methods.ToArray()
+				}));
+
+				sealed class Handler(string txid) : HttpMessageHandler
+				{
+					const string Startup = "abababababababababababababababababababababababababababababababab";
+					const string Best = "0101010101010101010101010101010101010101010101010101010101010101";
+					const string Genesis = "a771da8e52ee6ad581ed1e9a99825e5b3b7992225534eaa2ae23244fe26ab1c1";
+					const string Fee = "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49";
+					internal List<string> Methods { get; } = [];
+					protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+					{
+						using JsonDocument requestJson = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+						string method = requestJson.RootElement.GetProperty("method").GetString()!;
+						string id = requestJson.RootElement.GetProperty("id").GetString()!;
+						string parameters = requestJson.RootElement.GetProperty("params").GetRawText();
+						Methods.Add(method);
+						string result = method switch {
+							"getnodegeneration" => $$"""{"startup_id":"{{Startup}}","chainstate_revision":9,"blocks":42,"bestblockhash":"{{Best}}"}""",
+							"getnetworkinfo" => """{"version":230303,"protocolversion":70016,"subversion":"/Elements Core:23.3.3/","localrelay":true,"networkactive":true,"warnings":""}""",
+							"getblockchaininfo" => $$"""{"chain":"liquidtestnet","blocks":42,"headers":42,"bestblockhash":"{{Best}}","initialblockdownload":false,"pruned":false,"trim_headers":false,"warnings":""}""",
+							"getblockhash" when parameters == "[0]" => JsonSerializer.Serialize(Genesis),
+							"getblockhash" => JsonSerializer.Serialize(Best),
+							"getsidechaininfo" when Methods.Count == 9 => $$"""{"pegged_asset":"{{Fee}}","fee_asset":"{{Fee}}"}""",
+							"getsidechaininfo" => $$"""{"fedpegscript":"51","pegged_asset":"{{Fee}}","parent_blockhash":"0000000000000000000000000000000000000000000000000000000000000000","pegin_confirmation_depth":8,"enforce_pak":false}""",
+							"getrawtransaction" when parameters == $"[\"{txid}\",false]" => JsonSerializer.Serialize("010203"),
+							_ => throw new InvalidOperationException()
+						};
+						return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent($"{{\"result\":{result},\"error\":null,\"id\":\"{id}\"}}", Encoding.UTF8, "application/json"), RequestMessage = request };
+					}
+				}
+				"""",
+				"pre-refresh-owner-child",
+				"PreRefreshOwnerChild.dll",
+				[
+					clientAssembly,
+					typeof(Enumerable).Assembly.Location,
+					typeof(HttpClient).Assembly.Location,
+					typeof(Uri).Assembly.Location,
+					typeof(HttpStatusCode).Assembly.Location,
+					typeof(ExtKey).Assembly.Location,
+					typeof(LiquidWalletRuntimeHandoff).Assembly.Location,
+				]);
+			File.Copy(clientAssembly, Path.Combine(Path.GetDirectoryName(childPath)!, "WalletWasabi.Client.dll"), overwrite: true);
+			using JsonDocument output = RoslynFreshChildHarness.RunChild(childPath, new Dictionary<string, string>(StringComparer.Ordinal)
+			{
+				["walletDirectory"] = walletDirectory,
+				["walletFile"] = walletFile,
+				["key"] = Convert.ToHexString(replayKey),
+				["context"] = Convert.ToHexString(context),
+				["transactionId"] = TransactionId,
+			});
+			Assert.Equal("PRE_REFRESH_CHILD_V1", output.RootElement.GetProperty("token").GetString());
+			Assert.Equal(1UL, output.RootElement.GetProperty("revision").GetUInt64());
+			Assert.Equal(1UL, output.RootElement.GetProperty("generation").GetUInt64());
+			Assert.Equal(TransactionId, output.RootElement.GetProperty("transactionId").GetString(), StringComparer.Ordinal);
+			Assert.True(output.RootElement.GetProperty("nullBlockHash").GetBoolean());
+			Assert.True(output.RootElement.GetProperty("boundToOwner").GetBoolean());
+			Assert.True(output.RootElement.GetProperty("ownerToRpcEntry").GetBoolean());
+			Assert.True(output.RootElement.GetProperty("boundToRpcEntry").GetBoolean());
+			Assert.True(output.RootElement.GetProperty("batchOk").GetBoolean());
+			Assert.Equal(
+				new[] { "getnodegeneration", "getnetworkinfo", "getblockchaininfo", "getblockhash", "getblockhash", "getsidechaininfo", "getnodegeneration", "getnodegeneration", "getsidechaininfo", "getnodegeneration", "getrawtransaction", "getnodegeneration" },
+				output.RootElement.GetProperty("methods").EnumerateArray().Select(method => method.GetString()!).ToArray());
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(context);
+			CryptographicOperations.ZeroMemory(replayKey);
+			CryptographicOperations.ZeroMemory(salt);
+			CryptographicOperations.ZeroMemory(childMaterial);
+		}
+	}
+
+	[Fact]
 	public async System.Threading.Tasks.Task ProviderConsumesLeaseAndRejectsDuplicatePublishedIdentityAsync()
 	{
 		using TemporaryDirectory directory = new();
@@ -260,9 +632,15 @@ public sealed class LiquidProviderOwnershipSeamTests
 
 	private sealed record PersistedLiquidState(LiquidWalletState State);
 
-	private static PersistedLiquidState CreatePersistedLiquidState(string walletDirectory, string walletFile, string password, string walletName)
+	private static PersistedLiquidState CreatePersistedLiquidState(
+		string walletDirectory,
+		string walletFile,
+		string password,
+		string walletName,
+		ElementsPublicNetworkManifest? manifest = null)
 	{
-		const string manifestId = "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b";
+		manifest ??= ElementsPublicNetworkManifest.LiquidMainnet;
+		string manifestId = manifest.ManifestId;
 		KeyManager keyManager = KeyManager.FromFile(walletFile);
 		ExtKey master = keyManager.GetMasterExtKey(password);
 		ExtKey replayChild = master.Derive(new KeyPath(1108790945U | 0x80000000U));
@@ -275,7 +653,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 		{
 			// Seed a real nonzero-revision state: apply one owned pegged-asset output at
 			// revision 0 -> 1, persist it, then issue one index (high-water becomes 1).
-			LiquidAssetId peggedAsset = LiquidAssetId.ParseRpcHex(ElementsPublicNetworkManifest.LiquidMainnet.PeggedAssetId);
+			LiquidAssetId peggedAsset = LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId);
 			LiquidSpendKeyReference externalKey = LiquidSpendKeyReference.Create(
 				Convert.FromHexString("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
 				LiquidKeyBranch.External,
@@ -318,6 +696,89 @@ public sealed class LiquidProviderOwnershipSeamTests
 	}
 
 	private static string ReadPassword(LiquidPasswordAuthorizationLease lease) => new(lease.Password);
+
+	private static IEnumerable<MethodBase> ReadCalledMethods(MethodBase method)
+	{
+		byte[] il = method.GetMethodBody()!.GetILAsByteArray()!;
+		for (int offset = 0; offset < il.Length;)
+		{
+			byte first = il[offset++];
+			OpCode opCode = first == 0xfe ? MultiByteOpCodes[il[offset++]] : SingleByteOpCodes[first];
+			if (opCode.OperandType == OperandType.InlineMethod)
+			{
+				int token = BitConverter.ToInt32(il, offset);
+				yield return method.Module.ResolveMethod(token)!;
+			}
+			offset += OperandSize(opCode.OperandType, il, offset);
+		}
+	}
+
+	private static int OperandSize(OperandType operandType, byte[] il, int offset) => operandType switch
+	{
+		OperandType.InlineNone => 0,
+		OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+		OperandType.InlineVar => 2,
+		OperandType.InlineI or OperandType.InlineBrTarget or OperandType.InlineField or OperandType.InlineMethod or OperandType.InlineSig or OperandType.InlineString or OperandType.InlineTok or OperandType.InlineType or OperandType.ShortInlineR => 4,
+		OperandType.InlineI8 or OperandType.InlineR => 8,
+		OperandType.InlineSwitch => 4 + (BitConverter.ToInt32(il, offset) * 4),
+		_ => throw new InvalidOperationException($"Unsupported IL operand type {operandType}."),
+	};
+
+	private static readonly OpCode[] SingleByteOpCodes = BuildOpCodeTable(multiByte: false);
+	private static readonly OpCode[] MultiByteOpCodes = BuildOpCodeTable(multiByte: true);
+
+	private static OpCode[] BuildOpCodeTable(bool multiByte)
+	{
+		var table = new OpCode[256];
+		foreach (FieldInfo field in typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static))
+		{
+			OpCode opCode = (OpCode)field.GetValue(null)!;
+			ushort value = unchecked((ushort)opCode.Value);
+			if ((value > 0xff) == multiByte)
+			{
+				table[value & 0xff] = opCode;
+			}
+		}
+		return table;
+	}
+
+	private sealed class PreRefreshRpcHandler(string transactionId) : HttpMessageHandler
+	{
+		private const string StartupId = "abababababababababababababababababababababababababababababababab";
+		private const string BestBlockHash = "0101010101010101010101010101010101010101010101010101010101010101";
+		private const string GenesisBlockHash = "a771da8e52ee6ad581ed1e9a99825e5b3b7992225534eaa2ae23244fe26ab1c1";
+		private const string FeeAsset = "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49";
+
+		internal List<string> Methods { get; } = [];
+
+		protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+		{
+			string body = await request.Content!.ReadAsStringAsync(cancellationToken);
+			using JsonDocument document = JsonDocument.Parse(body);
+			string method = document.RootElement.GetProperty("method").GetString()!;
+			string id = document.RootElement.GetProperty("id").GetString()!;
+			string parameters = document.RootElement.GetProperty("params").GetRawText();
+			Methods.Add(method);
+			string result = method switch
+			{
+				"getnodegeneration" => $$"""{"startup_id":"{{StartupId}}","chainstate_revision":9,"blocks":42,"bestblockhash":"{{BestBlockHash}}"}""",
+				"getnetworkinfo" => """{"version":230303,"protocolversion":70016,"subversion":"/Elements Core:23.3.3/","localrelay":true,"networkactive":true,"warnings":""}""",
+				"getblockchaininfo" => $$"""{"chain":"liquidtestnet","blocks":42,"headers":42,"bestblockhash":"{{BestBlockHash}}","initialblockdownload":false,"pruned":false,"trim_headers":false,"warnings":""}""",
+				"getblockhash" when parameters == "[0]" => JsonSerializer.Serialize(GenesisBlockHash),
+				"getblockhash" => JsonSerializer.Serialize(BestBlockHash),
+				"getsidechaininfo" when Methods.Count == 9 => $$"""{"pegged_asset":"{{FeeAsset}}","fee_asset":"{{FeeAsset}}"}""",
+				"getsidechaininfo" => $$"""{"fedpegscript":"51","pegged_asset":"{{FeeAsset}}","parent_blockhash":"0000000000000000000000000000000000000000000000000000000000000000","pegin_confirmation_depth":8,"enforce_pak":false}""",
+				"getrawtransaction" when parameters == $"[\"{transactionId}\",false]" => JsonSerializer.Serialize("010203"),
+				_ => throw new InvalidOperationException($"Unexpected RPC method '{method}'."),
+			};
+			var response = new HttpResponseMessage(HttpStatusCode.OK)
+			{
+				Content = new StringContent($"{{\"result\":{result},\"error\":null,\"id\":\"{id}\"}}", Encoding.UTF8, "application/json"),
+				RequestMessage = request,
+			};
+			return response;
+		}
+	}
 
 	private sealed class TemporaryDirectory : IDisposable
 	{
