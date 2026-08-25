@@ -46,8 +46,13 @@ namespace WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire;
 public class LiquidOrdinaryWalletPlanWireTests
 {
 	private const string LinuxX64TargetFramework = "net10.0/linux-x64";
-	private const string ExpectedDebugWireSurfaceSha256 = "fc58193325d4e920020d9b24e8f3caf9ca8a6da2275b7680a56d463e4e7e9de6";
-	private const string ExpectedReleaseWireSurfaceSha256 = "f3ec365b48503af03c8a2549f9fd1f240104c9b1b3d2fe3bcaeaf8995741232d";
+#if DEBUG
+	private static readonly (string MacOsArm64, string LinuxX64) ExpectedWireSurfaceSha256 =
+		("fc58193325d4e920020d9b24e8f3caf9ca8a6da2275b7680a56d463e4e7e9de6", "PENDING-LINUX-X64-DEBUG-WIRE-SURFACE");
+#else
+	private static readonly (string MacOsArm64, string LinuxX64) ExpectedWireSurfaceSha256 =
+		("f3ec365b48503af03c8a2549f9fd1f240104c9b1b3d2fe3bcaeaf8995741232d", "bc39a6928f33a58dfd252d5c62ff23716dd82fe0561265b22eff72dc03f94202");
+#endif
 	private const string ExpectedDebugWireClosureSha256 = "014cf01f4bda42f8c36a7dd41cae78e5d464ad716f598256d0ff5642493a2c54";
 	private const string ExpectedReleaseWireClosureSha256 = "6fa08c82d4fa4b1277755d59089bd11b49b0ed3ca42b9cb1a3c117ab0dc3bd13";
 	private const string ExpectedDebugRuntimeDispatchAuthoritySha256 = "486ddbf38f33d2eb2b6f12c09d6acc3244c486c7f3278e930a08a90b56392e38";
@@ -1501,11 +1506,14 @@ public class LiquidOrdinaryWalletPlanWireTests
 		string surfaceManifest = string.Join(
 			'\n',
 			exactTypes.SelectMany(GetTypeSurfaceManifest).Order(StringComparer.Ordinal)) + "\n";
-#if DEBUG
-		string expectedSurfaceSha256 = ExpectedDebugWireSurfaceSha256;
-#else
-		string expectedSurfaceSha256 = ExpectedReleaseWireSurfaceSha256;
-#endif
+		(string MacOsArm64, string LinuxX64) expectedWireSurfacePair = ExpectedWireSurfaceSha256;
+		string expectedSurfaceSha256 =
+			OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64
+				? expectedWireSurfacePair.MacOsArm64
+				: OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
+					? expectedWireSurfacePair.LinuxX64
+					: throw new InvalidOperationException(
+						$"Unsupported wire surface platform: {RuntimeInformation.OSDescription}/{RuntimeInformation.OSArchitecture}");
 		string actualSurfaceSha256 = Convert.ToHexString(
 			SHA256.HashData(Encoding.UTF8.GetBytes(surfaceManifest))).ToLowerInvariant();
 		Assert.True(
