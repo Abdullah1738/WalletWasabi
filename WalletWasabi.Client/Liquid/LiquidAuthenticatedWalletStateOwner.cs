@@ -24,7 +24,8 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 		LiquidWalletReceiveDerivation receiveDerivation,
 		byte[] blindingPublicKey,
 		string walletName,
-		ElementsPublicNetworkManifest manifest)
+		ElementsPublicNetworkManifest manifest,
+		ElementsNodeExpectation nodeExpectation)
 	{
 		_allocation = allocation ?? throw new ArgumentNullException(nameof(allocation));
 		StateRevision = allocation.StateRevision;
@@ -35,6 +36,7 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 		Balances = LiquidWalletUiFacade.CaptureAllocationBalances(walletName, manifest, allocation);
 		SelectableOutputs = LiquidWalletUiFacade.CaptureSelectableOutputs(walletName, manifest, allocation);
 		History = LiquidWalletUiFacade.CaptureAllocationHistory(walletName, manifest, allocation);
+		NodeExpectation = nodeExpectation ?? throw new ArgumentNullException(nameof(nodeExpectation));
 	}
 
 	internal LiquidWalletExternalIndexAllocation Allocation => _allocation;
@@ -46,10 +48,12 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 	internal LiquidWalletUiSnapshot Balances { get; }
 	internal LiquidWalletUiSelectableOutputsSnapshot SelectableOutputs { get; }
 	internal LiquidWalletUiHistorySnapshot History { get; }
+	internal ElementsNodeExpectation NodeExpectation { get; }
 
 	internal static LiquidAuthenticatedWalletStateOwner Open(
 		LiquidWalletIdentity identity,
 		ElementsPublicNetworkManifest manifest,
+		ElementsNodeExpectation nodeExpectation,
 		string walletDataDirectory,
 		ExtKey authenticatedMaster,
 		LiquidWalletSignerKeyAdapter signerKeyAdapter,
@@ -57,14 +61,12 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 	{
 		ArgumentNullException.ThrowIfNull(identity);
 		ArgumentNullException.ThrowIfNull(manifest);
+		ArgumentNullException.ThrowIfNull(nodeExpectation);
 		ArgumentException.ThrowIfNullOrEmpty(walletDataDirectory);
 		ArgumentNullException.ThrowIfNull(authenticatedMaster);
 		ArgumentNullException.ThrowIfNull(signerKeyAdapter);
 		ArgumentNullException.ThrowIfNull(rpcClient);
-		if (!StringComparer.Ordinal.Equals(identity.NetworkManifestId, manifest.ManifestId))
-		{
-			throw new InvalidOperationException("The Liquid wallet state owner manifest does not match the wallet identity.");
-		}
+		ElementsReviewedNodeExpectationSource.ValidateOwnerExpectation(identity, manifest, nodeExpectation);
 
 		byte[] masterPrivateKey = authenticatedMaster.PrivateKey.ToBytes();
 		byte[] slip77Master = Array.Empty<byte>();
@@ -105,7 +107,8 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 				receive,
 				blindingPublicKey,
 				identity.CanonicalWalletId,
-				manifest);
+				manifest,
+				nodeExpectation);
 		}
 		finally
 		{

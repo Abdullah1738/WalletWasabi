@@ -10,6 +10,7 @@ using WalletWasabi.Liquid.Amounts;
 using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Network;
+using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Liquid.Transactions;
 using WalletWasabi.Liquid.Wallet;
 using WalletWasabi.Liquid.Wallet.Ui;
@@ -105,6 +106,9 @@ public sealed class LiquidProviderOwnershipSeamTests
 		using LiquidPasswordAuthorizationLease lease = LiquidPasswordAuthorizationLease.Create("TestPassword");
 		LiquidAuthenticatedWalletSession session = await provider.OpenAsync(identity, lease, default);
 		LiquidWalletRuntimeHandoff handoff = Assert.IsType<LiquidWalletRuntimeHandoff>(published);
+		Assert.Same(session.StateOwner.NodeExpectation, session.NodeExpectation);
+		Assert.Equal(ElementsPublicNetworkManifest.LiquidMainnet.ChainRpcName, session.NodeExpectation.Chain);
+		Assert.Equal(100, session.NodeExpectation.PeginConfirmationDepth);
 		LiquidWalletUiReceiveMaterial receiveMaterial = Assert.IsType<LiquidWalletUiReceiveMaterial>(handoff.ReceiveMaterial);
 		LiquidWalletUiSnapshot balances = Assert.IsType<LiquidWalletUiSnapshot>(handoff.Balances);
 		LiquidWalletUiSelectableOutputsSnapshot selectableOutputs = Assert.IsType<LiquidWalletUiSelectableOutputsSnapshot>(handoff.SelectableOutputs);
@@ -258,7 +262,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 		File.WriteAllText(cookieFile, "user:password\n");
 		string profileFile = Path.Combine(profileDirectory, profileName + ".json");
 		File.WriteAllText(profileFile, $$"""
-			{"schema":"walletwasabi-liquid-rpc-profile/v1","name":"{{profileName}}","endpoint":"http://127.0.0.1:18884","cookieFile":"{{cookieFile}}","network":"liquid","manifest":"{{manifest}}","connectTimeoutMs":1000,"requestTimeoutMs":1000}
+			{"schema":"walletwasabi-liquid-rpc-profile/v1","name":"{{profileName}}","endpoint":"http://127.0.0.1:18884","cookieFile":"{{cookieFile}}","network":"liquidv1","manifest":"{{manifest}}","connectTimeoutMs":1000,"requestTimeoutMs":1000}
 			""");
 		if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
 		{

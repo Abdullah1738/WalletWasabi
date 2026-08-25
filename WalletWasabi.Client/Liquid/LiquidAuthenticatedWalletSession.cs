@@ -55,6 +55,7 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 	internal LiquidWalletSignerKeyAdapter SignerKeyAdapter { get; }
 	internal ElementsRpcClient RpcClient { get; }
 	internal LiquidAuthenticatedWalletStateOwner StateOwner { get; }
+	internal ElementsNodeExpectation NodeExpectation => StateOwner.NodeExpectation;
 
 	/// <summary>
 	/// The retained authenticated master key (internal-only). The per-call execution scope

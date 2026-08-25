@@ -65,12 +65,18 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable, ILi
 		try
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			ValidateIdentity(identity);
 			LiquidRpcProfile profile = _rpcProfileSource.LoadValidated(identity.RuntimeProfileName);
 			if (!StringComparer.Ordinal.Equals(profile.Manifest, identity.NetworkManifestId))
 			{
-				throw new InvalidDataException("The RPC profile manifest does not match the wallet identity.");
+				throw new InvalidDataException("The RPC profile violates 'profile_manifest'.");
 			}
+			ValidateIdentity(identity);
+			ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.GetByManifestId(identity.NetworkManifestId);
+			if (!StringComparer.Ordinal.Equals(profile.Network, manifest.ChainRpcName))
+			{
+				throw new InvalidDataException("The RPC profile violates 'profile_network'.");
+			}
+			ElementsNodeExpectation nodeExpectation = ElementsReviewedNodeExpectationSource.Bind(manifest, profile);
 
 			KeyManager km = KeyManager.FromFile(identity.CanonicalWalletFilePath);
 			ExtKey root;
@@ -90,10 +96,10 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable, ILi
 				new ElementsRpcTimeouts(profile.ConnectTimeout, profile.RequestTimeout, profile.RequestTimeout));
 			Func<string, (int Account, int Change, int Index)?> outpointLocator = BuildOutpointLocator(identity, root);
 			LiquidWalletSignerKeyAdapter adapter = new(root, outpointLocator, km.GetNetwork());
-			ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.GetByManifestId(identity.NetworkManifestId);
 			LiquidAuthenticatedWalletStateOwner stateOwner = LiquidAuthenticatedWalletStateOwner.Open(
 				identity,
 				manifest,
+				nodeExpectation,
 				_walletDirectories.WalletDirectory,
 				root,
 				adapter,
