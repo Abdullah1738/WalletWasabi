@@ -71,7 +71,7 @@ public class LiquidOrdinaryWalletPlanWireTests
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedDebugCompilerInputAuthoritySha256 =
 		("da5b7ef1f9eff243aad41d63ab08b8c9ae4a4410800d563f1d6b9858971617de", "PENDING-LINUX-X64-DEBUG-COMPILER-INPUT-AUTHORITY-V2");
 	private static readonly (string MacOsArm64, string LinuxX64) ExpectedReleaseCompilerInputAuthoritySha256 =
-		("2e25c641ea4d5e10916416dd5ae8480f022489ba968ef26fceb32d8e1b2322c3", "PENDING-LINUX-X64-RELEASE-COMPILER-INPUT-AUTHORITY-V2");
+		("2e25c641ea4d5e10916416dd5ae8480f022489ba968ef26fceb32d8e1b2322c3", "96e341e3c32cbd51e5672f199e26113fe49c80a02da15e90ab01a35dc18eb3e7");
 	private const string ExpectedMacOsArm64ToolchainDependencyAuthoritySha256 =
 		"88bfea23ae70331b8d61db9c0eebe35a1f0a3e93faf3ea5eece47f340ef7d7fb";
 	private const string ExpectedLinuxX64ToolchainDependencyAuthoritySha256 =
