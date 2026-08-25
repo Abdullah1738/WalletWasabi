@@ -43,18 +43,22 @@ using LockedPackageAuthority = (string Type, string? Requested, string ResolvedV
 
 namespace WalletWasabi.Tests.UnitTests.Liquid.Wallet.Wire;
 
+internal static class LinuxX64WireAuthorityPins
+{
+	internal const string ReleaseWireSurfaceSha256 = "bc39a6928f33a58dfd252d5c62ff23716dd82fe0561265b22eff72dc03f94202";
+	internal const string ReleaseWireClosureSha256 = "4743dc5c8c17b5a8a9599097dc0cbd01ed634bf0ffb1a31c40762362951a06da";
+	internal const string ReleaseRuntimeDispatchAuthoritySha256 = "77df90cf3aac4ddd2dcbc8ef939a24805e92d8e9677504b02df9d2c2b7ddb0c6";
+}
+
 public class LiquidOrdinaryWalletPlanWireTests
 {
 	private const string LinuxX64TargetFramework = "net10.0/linux-x64";
 	private const string ExpectedDebugWireSurfaceSha256 = "fc58193325d4e920020d9b24e8f3caf9ca8a6da2275b7680a56d463e4e7e9de6";
 	private const string ExpectedReleaseWireSurfaceSha256 = "f3ec365b48503af03c8a2549f9fd1f240104c9b1b3d2fe3bcaeaf8995741232d";
-	private const string ExpectedReleaseWireSurfaceLinuxX64Sha256 = "bc39a6928f33a58dfd252d5c62ff23716dd82fe0561265b22eff72dc03f94202";
 	private const string ExpectedDebugWireClosureSha256 = "014cf01f4bda42f8c36a7dd41cae78e5d464ad716f598256d0ff5642493a2c54";
 	private const string ExpectedReleaseWireClosureSha256 = "6fa08c82d4fa4b1277755d59089bd11b49b0ed3ca42b9cb1a3c117ab0dc3bd13";
-	private const string ExpectedReleaseWireClosureLinuxX64Sha256 = "4743dc5c8c17b5a8a9599097dc0cbd01ed634bf0ffb1a31c40762362951a06da";
 	private const string ExpectedDebugRuntimeDispatchAuthoritySha256 = "486ddbf38f33d2eb2b6f12c09d6acc3244c486c7f3278e930a08a90b56392e38";
 	private const string ExpectedReleaseRuntimeDispatchAuthoritySha256 = "ab36cf9835caeee070b869d617467b149c3729f2926653e07dbe43163ab268f3";
-	private const string ExpectedReleaseRuntimeDispatchAuthorityLinuxX64Sha256 = "77df90cf3aac4ddd2dcbc8ef939a24805e92d8e9677504b02df9d2c2b7ddb0c6";
 	private const string ExpectedDebugAmbientRuntimeDispatchAuthoritySha256 = "b30f09d21d2b3a2f38e3fdc52925906f64d5c325fdd66de80113858ce18edb7e";
 	private const string ExpectedReleaseAmbientRuntimeDispatchAuthoritySha256 = "bab41a25c76545cc2eec7df5725a6761b75668e8e91f7026c050aed7387c06be";
 	private const string ExpectedDebugModuleInitializerBodySha256 = "23d1ae5ddc95da66864101267cfbd2d82a7942762a4cee19ebb85013b7dcd3c3";
@@ -1505,12 +1509,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 			'\n',
 			exactTypes.SelectMany(GetTypeSurfaceManifest).Order(StringComparer.Ordinal)) + "\n";
 #if DEBUG
-		string expectedSurfaceSha256 = ExpectedDebugWireSurfaceSha256;
+		const string macOsWireSurface = ExpectedDebugWireSurfaceSha256;
 #else
-		string expectedSurfaceSha256 = OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
-			? ExpectedReleaseWireSurfaceLinuxX64Sha256
-			: ExpectedReleaseWireSurfaceSha256;
+		const string macOsWireSurface = ExpectedReleaseWireSurfaceSha256;
 #endif
+		string expectedSurfaceSha256 = OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
+			? LinuxX64WireAuthorityPins.ReleaseWireSurfaceSha256
+			: macOsWireSurface;
 		string actualSurfaceSha256 = Convert.ToHexString(
 			SHA256.HashData(Encoding.UTF8.GetBytes(surfaceManifest))).ToLowerInvariant();
 		Assert.True(
@@ -1540,12 +1545,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 		Assert.All(wireRoots, root => Assert.Contains(root, wireClosure));
 		string wireClosureManifest = BuildMethodClosureManifest(wireClosure);
 #if DEBUG
-		string expectedWireClosureSha256 = ExpectedDebugWireClosureSha256;
+		const string macOsWireClosure = ExpectedDebugWireClosureSha256;
 #else
-		string expectedWireClosureSha256 = OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
-			? ExpectedReleaseWireClosureLinuxX64Sha256
-			: ExpectedReleaseWireClosureSha256;
+		const string macOsWireClosure = ExpectedReleaseWireClosureSha256;
 #endif
+		string expectedWireClosureSha256 = OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
+			? LinuxX64WireAuthorityPins.ReleaseWireClosureSha256
+			: macOsWireClosure;
 		string actualWireClosureSha256 = Convert.ToHexString(
 			SHA256.HashData(Encoding.UTF8.GetBytes(wireClosureManifest))).ToLowerInvariant();
 		Assert.True(
@@ -9310,12 +9316,13 @@ public class LiquidOrdinaryWalletPlanWireTests
 		if (expectedRuntimeDispatchAuthoritySha256 is null)
 		{
 #if DEBUG
-			expectedRuntimeDispatchAuthoritySha256 = ExpectedDebugRuntimeDispatchAuthoritySha256;
+			const string macOsDispatchAuthority = ExpectedDebugRuntimeDispatchAuthoritySha256;
 #else
-			expectedRuntimeDispatchAuthoritySha256 = OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
-				? ExpectedReleaseRuntimeDispatchAuthorityLinuxX64Sha256
-				: ExpectedReleaseRuntimeDispatchAuthoritySha256;
+			const string macOsDispatchAuthority = ExpectedReleaseRuntimeDispatchAuthoritySha256;
 #endif
+			expectedRuntimeDispatchAuthoritySha256 = OperatingSystem.IsLinux() && RuntimeInformation.OSArchitecture == Architecture.X64
+				? LinuxX64WireAuthorityPins.ReleaseRuntimeDispatchAuthoritySha256
+				: macOsDispatchAuthority;
 		}
 		AssertExactSha256(expectedRuntimeDispatchAuthoritySha256, reviewedDispatchManifest);
 		return closure.Values.OrderBy(MethodIdentity, StringComparer.Ordinal).ToArray();
