@@ -4786,7 +4786,6 @@ public class LiquidWalletCoinControlTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.LiquidRpcProfileSourceTests+<>c__DisplayClass1_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.LiquidRpcProfileSourceTests+TemporaryDirectory",
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests",
-			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c",
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c__DisplayClass9_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>O",
