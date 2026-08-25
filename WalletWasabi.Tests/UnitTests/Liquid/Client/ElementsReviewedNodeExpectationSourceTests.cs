@@ -115,7 +115,12 @@ public sealed class ElementsReviewedNodeExpectationSourceTests
 			[clientAssembly, typeof(Uri).Assembly.Location]);
 		File.Copy(clientAssembly, Path.Combine(Path.GetDirectoryName(childPath)!, "WalletWasabi.Client.dll"), overwrite: true);
 
-		using JsonDocument output = RoslynFreshChildHarness.RunChild(childPath, new { manifest = ElementsPublicNetworkManifest.LiquidTestnet.ManifestId });
+		using JsonDocument output = RoslynFreshChildHarness.RunChild(
+			childPath,
+			new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal)
+			{
+				["manifest"] = ElementsPublicNetworkManifest.LiquidTestnet.ManifestId,
+			});
 		Assert.Equal("BOUND_V1", output.RootElement.GetProperty("token").GetString());
 		Assert.Equal(10, output.RootElement.GetProperty("fields").GetInt32());
 		Assert.Equal("liquidtestnet", output.RootElement.GetProperty("chain").GetString());
