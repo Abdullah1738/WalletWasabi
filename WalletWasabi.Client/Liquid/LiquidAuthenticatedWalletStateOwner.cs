@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using NBitcoin;
 using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Network;
@@ -49,6 +52,28 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 	internal LiquidWalletUiSelectableOutputsSnapshot SelectableOutputs { get; }
 	internal LiquidWalletUiHistorySnapshot History { get; }
 	internal ElementsNodeExpectation NodeExpectation { get; }
+
+	internal Task<ElementsExpectationBoundRawTransactionBatch> GetPreRefreshRawTransactionsAsync(
+		ElementsPublicNetworkManifest manifest,
+		ElementsRpcClient rpcClient,
+		IReadOnlyList<ElementsRawTransactionRequest> requests,
+		CancellationToken cancellationToken,
+		Func<ElementsNodeExpectation, string, IReadOnlyList<ElementsRawTransactionRequest>, CancellationToken, Task<ElementsExpectationBoundRawTransactionBatch>>? rawFetch = null)
+	{
+		ArgumentNullException.ThrowIfNull(manifest);
+		ArgumentNullException.ThrowIfNull(rpcClient);
+		ArgumentNullException.ThrowIfNull(requests);
+		if (rawFetch is null)
+		{
+			return rpcClient.GetExpectationBoundRawTransactionsAsync(
+				NodeExpectation,
+				manifest.RequiredFeeAssetId,
+				requests,
+				cancellationToken);
+		}
+
+		return rawFetch(NodeExpectation, manifest.RequiredFeeAssetId, requests, cancellationToken);
+	}
 
 	internal static LiquidAuthenticatedWalletStateOwner Open(
 		LiquidWalletIdentity identity,

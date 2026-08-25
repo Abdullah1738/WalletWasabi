@@ -91,6 +91,53 @@ public sealed class ElementsReviewedNodeExpectationSourceTests
 		Assert.Equal(2, source.Split("new(\n", StringSplitOptions.None).Length - 1);
 	}
 
+	[Theory]
+	[InlineData("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", "liquidv1")]
+	[InlineData("e4e7ec03e19ce5f83fd04c586788b724d88052b65ef2480cc93bcd50324f6b20", "liquidtestnet")]
+	public void CatalogShapeHasExactOrdinalManifestNetworkPairs(string manifestId, string network)
+	{
+		ElementsReviewedNodeExpectationSource.AssertCatalogShape();
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.GetByManifestId(manifestId);
+
+		ElementsNodeExpectation expectation = ElementsReviewedNodeExpectationSource.Bind(manifest, Profile(manifestId, network));
+
+		Assert.Equal(manifestId, manifest.ManifestId);
+		Assert.Equal(network, manifest.ChainRpcName);
+		Assert.Equal(network, expectation.Chain);
+	}
+
+	[Theory]
+	[InlineData(true, 99)]
+	[InlineData(false, 7)]
+	public void OwnerValidationRejectsDepthNotInReviewedCatalog(bool mainnet, int wrongDepth)
+	{
+		ElementsPublicNetworkManifest manifest = mainnet
+			? ElementsPublicNetworkManifest.LiquidMainnet
+			: ElementsPublicNetworkManifest.LiquidTestnet;
+		ElementsNodeExpectation bound = ElementsReviewedNodeExpectationSource.Bind(
+			manifest,
+			Profile(manifest.ManifestId, manifest.ChainRpcName));
+		ElementsNodeExpectation wrong = bound with { PeginConfirmationDepth = wrongDepth };
+		string directory = Path.Combine(Path.GetTempPath(), "owner-depth-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(directory);
+		try
+		{
+			string walletFile = Path.Combine(directory, "wallet.json");
+			File.WriteAllText(walletFile, "{}");
+			LiquidWalletIdentity identity = LiquidWalletIdentity.Create(
+				"wallet", walletFile, "local", manifest.ManifestId, new LiquidWalletDirectories(directory));
+
+			InvalidOperationException exception = Assert.Throws<InvalidOperationException>(() =>
+				ElementsReviewedNodeExpectationSource.ValidateOwnerExpectation(identity, manifest, wrong));
+
+			Assert.Contains("pegin_confirmation_depth", exception.Message, StringComparison.Ordinal);
+		}
+		finally
+		{
+			Directory.Delete(directory, recursive: true);
+		}
+	}
+
 	[Fact]
 	public void FreshChildBindsReviewedManifestWithoutObservationInput()
 	{

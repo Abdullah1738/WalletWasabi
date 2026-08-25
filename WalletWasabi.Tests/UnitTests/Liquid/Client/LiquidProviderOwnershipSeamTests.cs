@@ -3,6 +3,8 @@ using System.IO;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using NBitcoin;
 using WalletWasabi.Blockchain.Keys;
 using WalletWasabi.Client.Liquid;
@@ -161,6 +163,50 @@ public sealed class LiquidProviderOwnershipSeamTests
 		Assert.Single(history.Rows);
 		Assert.Equal(identity.CanonicalWalletId, balances.WalletName);
 		Assert.Equal(identity.NetworkManifestId, balances.NetworkManifestId);
+	}
+
+	[Fact]
+	public async Task PreRefreshRawFetchCarriesExactBoundExpectationAndRequiredFeeAssetAsync()
+	{
+		using TemporaryDirectory directory = new();
+		string walletDirectory = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
+		string walletFile = Path.Combine(walletDirectory, "alpha.json");
+		KeyManager.CreateNew(out _, "TestPassword", NBitcoin.Network.RegTest, walletFile);
+		CreatePersistedLiquidState(walletDirectory, walletFile, "TestPassword", "alpha");
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidMainnet;
+		LiquidWalletIdentity identity = LiquidWalletIdentity.Create("alpha", walletFile, "local", manifest.ManifestId, new LiquidWalletDirectories(walletDirectory));
+		ElementsNodeExpectation bound = ElementsReviewedNodeExpectationSource.Bind(
+			manifest,
+			new LiquidRpcProfile("local", new Uri("http://127.0.0.1:18884"), "/tmp/cookie", manifest.ChainRpcName, manifest.ManifestId, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)));
+		KeyManager keyManager = KeyManager.FromFile(walletFile);
+		ExtKey master = keyManager.GetMasterExtKey("TestPassword");
+		using var httpClient = new System.Net.Http.HttpClient { BaseAddress = new Uri("http://127.0.0.1:18884") };
+		using var rpcClient = new ElementsRpcClient(httpClient);
+		using var adapter = new LiquidWalletSignerKeyAdapter(master, _ => null, keyManager.GetNetwork());
+		LiquidAuthenticatedWalletStateOwner owner = LiquidAuthenticatedWalletStateOwner.Open(
+			identity, manifest, bound, walletDirectory, master, adapter, rpcClient);
+		var requests = new[] { new ElementsRawTransactionRequest(new string('a', 64), null) };
+		ElementsNodeExpectation? capturedExpectation = null;
+		string? capturedFeeAsset = null;
+
+		await Assert.ThrowsAsync<OperationCanceledException>(() => owner.GetPreRefreshRawTransactionsAsync(
+			manifest,
+			rpcClient,
+			requests,
+			CancellationToken.None,
+			(expectation, feeAsset, capturedRequests, cancellationToken) =>
+			{
+				capturedExpectation = expectation;
+				capturedFeeAsset = feeAsset;
+				Assert.Same(requests, capturedRequests);
+				return Task.FromException<ElementsExpectationBoundRawTransactionBatch>(new OperationCanceledException());
+			}));
+
+		Assert.True(ReferenceEquals(bound, owner.NodeExpectation));
+		Assert.True(ReferenceEquals(owner.NodeExpectation, capturedExpectation));
+		Assert.Equal(manifest.RequiredFeeAssetId, capturedFeeAsset, StringComparer.Ordinal);
+		const string independentWrongFeeAsset = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+		Assert.NotEqual(independentWrongFeeAsset, capturedFeeAsset, StringComparer.Ordinal);
 	}
 
 	[Fact]

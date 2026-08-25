@@ -80,18 +80,22 @@ internal static class ElementsReviewedNodeExpectationSource
 
 	internal static void AssertCatalogShape()
 	{
-		string[] admittedManifestIds =
+		ElementsPublicNetworkManifest[] admittedManifests =
 		[
-			ElementsPublicNetworkManifest.LiquidMainnet.ManifestId,
-			ElementsPublicNetworkManifest.LiquidTestnet.ManifestId,
+			ElementsPublicNetworkManifest.LiquidMainnet,
+			ElementsPublicNetworkManifest.LiquidTestnet,
 		];
-		RequireInvariant(ReviewedCatalog.Length == admittedManifestIds.Length, "catalog_count");
+		RequireInvariant(ReviewedCatalog.Length == admittedManifests.Length, "catalog_count");
 		RequireInvariant(ReviewedCatalog.Select(row => row.ManifestId).Distinct(StringComparer.Ordinal).Count() == ReviewedCatalog.Length, "duplicate_descriptor_manifest");
-		foreach (string manifestId in admittedManifestIds)
+		foreach (ElementsPublicNetworkManifest manifest in admittedManifests)
 		{
-			RequireInvariant(ReviewedCatalog.Count(row => StringComparer.Ordinal.Equals(row.ManifestId, manifestId)) == 1, "catalog_manifest_cardinality");
+			ElementsReviewedNodeExpectationDescriptor[] rows = ReviewedCatalog
+				.Where(row => StringComparer.Ordinal.Equals(row.ManifestId, manifest.ManifestId))
+				.ToArray();
+			RequireInvariant(rows.Length == 1, "catalog_manifest_cardinality");
+			RequireInvariant(StringComparer.Ordinal.Equals(rows[0].Network, manifest.ChainRpcName), "descriptor_network");
 		}
-		RequireInvariant(ReviewedCatalog.All(row => admittedManifestIds.Contains(row.ManifestId, StringComparer.Ordinal)), "extra_descriptor_manifest");
+		RequireInvariant(ReviewedCatalog.All(row => admittedManifests.Any(manifest => StringComparer.Ordinal.Equals(row.ManifestId, manifest.ManifestId))), "extra_descriptor_manifest");
 	}
 
 	internal static void ValidateOwnerExpectation(
@@ -102,15 +106,18 @@ internal static class ElementsReviewedNodeExpectationSource
 		ArgumentNullException.ThrowIfNull(identity);
 		ArgumentNullException.ThrowIfNull(manifest);
 		ArgumentNullException.ThrowIfNull(expectation);
+		AssertCatalogShape();
 		RequireInvariant(StringComparer.Ordinal.Equals(identity.NetworkManifestId, manifest.ManifestId), "descriptor_manifest");
+		ElementsReviewedNodeExpectationDescriptor[] rows = ReviewedCatalog
+			.Where(row => StringComparer.Ordinal.Equals(row.ManifestId, identity.NetworkManifestId))
+			.ToArray();
+		RequireInvariant(rows.Length == 1, "catalog_manifest_cardinality");
+		ElementsReviewedNodeExpectationDescriptor reviewedDescriptor = rows[0];
+		RequireInvariant(StringComparer.Ordinal.Equals(reviewedDescriptor.ManifestId, manifest.ManifestId), "descriptor_manifest");
+		RequireInvariant(StringComparer.Ordinal.Equals(reviewedDescriptor.Network, manifest.ChainRpcName), "descriptor_network");
 		ElementsNodeExpectation normalized = expectation.Normalize();
 		RequireInvariant(normalized == expectation, "normalization");
-		var descriptor = new ElementsReviewedNodeExpectationDescriptor(
-			manifest.ManifestId,
-			manifest.ChainRpcName,
-			expectation.FedpegScript,
-			expectation.PeginConfirmationDepth);
-		ValidateExpectation(expectation, manifest, descriptor);
+		ValidateExpectation(expectation, manifest, reviewedDescriptor);
 	}
 
 	private static void ValidateExpectation(
