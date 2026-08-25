@@ -2233,13 +2233,8 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.LiquidRpcProfileSourceTests+<>c__DisplayClass1_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.LiquidRpcProfileSourceTests+TemporaryDirectory",
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests",
-#if DEBUG
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c__DisplayClass5_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c__DisplayClass6_0",
-#else
-			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c",
-			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c__DisplayClass9_0",
-#endif
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>O",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c",
@@ -2706,8 +2701,8 @@ public class LiquidWalletStateTests
 		AssertReconstructedTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_707,
-			"34d9bcdcd558761a7930cb5670aa28ea4f24b80bc457b73807dd40f7e3e14b94",
+			1_701,
+			"d91b5a157c078b9d64aba897215030847eaff0076534d1df34217bcdd37c32e8",
 			[],
 			addedProductionTypes);
 		AssertReconstructedTypeManifest(
@@ -2721,8 +2716,8 @@ public class LiquidWalletStateTests
 		AssertReconstructedTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_706,
-			"67eeed8443a4078d342410c4935c5e1de719afb09f546d81c7c35e0357c96f0d",
+			1_698,
+			"ffe533e5085faa5408439b058869724651c296b0ee23943f5580ecd3baf4cb94",
 			[],
 			addedProductionTypes);
 		AssertReconstructedTypeManifest(

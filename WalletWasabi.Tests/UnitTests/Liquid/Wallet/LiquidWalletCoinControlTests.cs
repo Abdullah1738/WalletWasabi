@@ -4786,13 +4786,8 @@ public class LiquidWalletCoinControlTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.LiquidRpcProfileSourceTests+<>c__DisplayClass1_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.LiquidRpcProfileSourceTests+TemporaryDirectory",
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests",
-#if DEBUG
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c__DisplayClass5_0",
 			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c__DisplayClass6_0",
-#else
-			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c",
-			"WalletWasabi.Tests.UnitTests.Liquid.Client.ElementsReviewedNodeExpectationSourceTests+<>c__DisplayClass9_0",
-#endif
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>O",
 			"WalletWasabi.Tests.UnitTests.Liquid.Rpc.ElementsExpectationBoundBroadcastTests+<>c",
@@ -5142,8 +5137,8 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_768,
-			"ff23e0b57cfebb8eb1b118b0b2dac97f55da2ea9403ae185d185b8260e961d1b",
+			1_762,
+			"4f11700e9acd5d6ec6695f4e456d0c97c83e476b4eb60a015f7cff28975f3050",
 			permittedAddedProductionTypes);
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
@@ -5155,8 +5150,8 @@ public class LiquidWalletCoinControlTests
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletState).Assembly,
 			"WalletWasabi",
-			1_767,
-			"044e4ff31fc95f48b0a1e0785f7a960803634b71e49a9a369547458ba1f037fa",
+			1_759,
+			"03d8f541e26b3cf1709eba6cc9cc86f81d8174f1e4e81d585c02a967c19e6b35",
 			permittedAddedProductionTypes);
 		AssertExactAssemblyTypeManifest(
 			typeof(LiquidWalletCoinControlTests).Assembly,
