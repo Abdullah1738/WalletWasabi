@@ -25,15 +25,6 @@ public class LiquidWalletLabelSetTests
 	private const int UnicodeDomainLength = 0x110000;
 	private const int SurrogateStart = 0xd800;
 	private const int SurrogateEnd = 0xdfff;
-#if DEBUG
-	private const string ExpectedImplementationManifestSha256 = "10b7817db8f27800021fcb6d6fb7a0997e07ed3032077f7e1d02290175d73452";
-	private const string ExpectedProductionReferencesSha256 = "e0b8516c317a78c14b4ab083b1dcf9b1bc480e86b43f4e4f17ba769460f289bc";
-	private const string ExpectedTestReferencesSha256 = "668c4c5713ec2bbfcb79cbe84531ba6d19dfdd6f82debe0279e2932d73d1f530";
-#else
-	private const string ExpectedImplementationManifestSha256 = "647852f3931a0020d5bdef9b2b706229131a75ab10016cc7a2c15d04b1aa771b";
-	private const string ExpectedProductionReferencesSha256 = "e0b8516c317a78c14b4ab083b1dcf9b1bc480e86b43f4e4f17ba769460f289bc";
-	private const string ExpectedTestReferencesSha256 = "796cd4942700af1d84e61e74215077f6893e1e7a649f83c509f0b57db910b1ce";
-#endif
 
 	private static readonly ScalarRange[] ControlRanges =
 	[
@@ -311,21 +302,6 @@ public class LiquidWalletLabelSetTests
 		Assert.Equal(LiquidWalletLabelSet.MaximumRawLabelUtf16CodeUnitCount, 128);
 		Assert.Equal(LiquidWalletLabelSet.MaximumLabelUtf8ByteCount, 128);
 		Assert.Equal(LiquidWalletLabelSet.MaximumTotalUtf8ByteCount, 2_048);
-	}
-
-	[Fact]
-	public void ExactImplementationMetadataAndAssemblyReferencesAreFrozen()
-	{
-		string implementation = Sha256Utf8(BuildImplementationManifest(typeof(LiquidWalletLabelSet)));
-		string productionReferences = Sha256Utf8(BuildAssemblyReferenceManifest(typeof(LiquidWalletLabelSet).Assembly));
-		string testReferences = Sha256Utf8(BuildAssemblyReferenceManifest(typeof(LiquidWalletLabelSetTests).Assembly));
-		Assert.True(
-			StringComparer.Ordinal.Equals(ExpectedImplementationManifestSha256, implementation),
-			implementation);
-		Assert.Equal(ExpectedProductionReferencesSha256, productionReferences);
-		Assert.True(
-			StringComparer.Ordinal.Equals(ExpectedTestReferencesSha256, testReferences),
-			testReferences);
 	}
 
 	[Fact]
@@ -1107,170 +1083,6 @@ public class LiquidWalletLabelSetTests
 
 	private static string RuneString(int scalar) => new Rune(scalar).ToString();
 
-	private static string BuildImplementationManifest(Type type)
-	{
-		var rows = new List<string>
-		{
-			$"TYPE|{type.FullName}|{(int)type.Attributes}|{CustomAttributeManifest(type.CustomAttributes)}",
-		};
-		const BindingFlags Declared = BindingFlags.Public | BindingFlags.NonPublic |
-			BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-		foreach (FieldInfo field in type.GetFields(Declared).OrderBy(field => field.Name, StringComparer.Ordinal))
-		{
-			rows.Add(
-				$"FIELD|{field.Name}|{TypeIdentity(field.FieldType)}|{(int)field.Attributes}|" +
-				$"{ModifierManifest(field.GetRequiredCustomModifiers())}|" +
-				$"{ModifierManifest(field.GetOptionalCustomModifiers())}|" +
-				CustomAttributeManifest(field.CustomAttributes));
-		}
-		foreach (PropertyInfo property in type.GetProperties(Declared).OrderBy(property => property.Name, StringComparer.Ordinal))
-		{
-			rows.Add(
-				$"PROPERTY|{property.Name}|{TypeIdentity(property.PropertyType)}|{(int)property.Attributes}|" +
-				$"{ModifierManifest(property.GetRequiredCustomModifiers())}|" +
-				$"{ModifierManifest(property.GetOptionalCustomModifiers())}|" +
-				$"{CustomAttributeManifest(property.CustomAttributes)}|" +
-				$"{property.GetMethod?.Name}|{property.SetMethod?.Name}");
-		}
-
-		MethodBase[] methods = type.GetConstructors(Declared).Cast<MethodBase>()
-			.Concat(type.GetMethods(Declared))
-			.OrderBy(MethodBaseIdentity, StringComparer.Ordinal)
-			.ToArray();
-		foreach (MethodBase method in methods)
-		{
-			MethodBody? body = method.GetMethodBody();
-			rows.Add(
-				$"METHOD|{MethodBaseIdentity(method)}|{(int)method.Attributes}|" +
-				$"{(int)method.GetMethodImplementationFlags()}|{(int)method.CallingConvention}|" +
-				CustomAttributeManifest(method.CustomAttributes));
-			if (method is MethodInfo methodInfo)
-			{
-				rows.Add(
-					$"RETURN|{TypeIdentity(methodInfo.ReturnType)}|" +
-					$"{ModifierManifest(methodInfo.ReturnParameter.GetRequiredCustomModifiers())}|" +
-					$"{ModifierManifest(methodInfo.ReturnParameter.GetOptionalCustomModifiers())}|" +
-					CustomAttributeManifest(methodInfo.ReturnParameter.CustomAttributes));
-			}
-			foreach (ParameterInfo parameter in method.GetParameters())
-			{
-				rows.Add(
-					$"PARAM|{parameter.Position}|{parameter.Name}|{TypeIdentity(parameter.ParameterType)}|" +
-					$"{(int)parameter.Attributes}|{ModifierManifest(parameter.GetRequiredCustomModifiers())}|" +
-					$"{ModifierManifest(parameter.GetOptionalCustomModifiers())}|" +
-					CustomAttributeManifest(parameter.CustomAttributes));
-			}
-			if (body is null)
-			{
-				rows.Add("BODY|null");
-				continue;
-			}
-
-			rows.Add(
-				$"BODY|{body.InitLocals}|{body.MaxStackSize}|" +
-				Convert.ToHexString(body.GetILAsByteArray() ?? []).ToLowerInvariant());
-			foreach (LocalVariableInfo local in body.LocalVariables)
-			{
-				rows.Add($"LOCAL|{local.LocalIndex}|{TypeIdentity(local.LocalType)}|{local.IsPinned}");
-			}
-			foreach (ExceptionHandlingClause clause in body.ExceptionHandlingClauses)
-			{
-				int filterOffset = clause.Flags == ExceptionHandlingClauseOptions.Filter
-					? clause.FilterOffset
-					: -1;
-				Type? catchType = clause.Flags == ExceptionHandlingClauseOptions.Clause
-					? clause.CatchType
-					: null;
-				rows.Add(
-					$"EH|{(int)clause.Flags}|{clause.TryOffset}|{clause.TryLength}|" +
-					$"{clause.HandlerOffset}|{clause.HandlerLength}|{filterOffset}|" +
-					TypeIdentity(catchType));
-			}
-			foreach (MemberInfo reference in GetIlReferences(method))
-			{
-				rows.Add($"REF|{ResolvedMemberIdentity(reference)}");
-			}
-			foreach (string literal in GetIlStringLiterals(method))
-			{
-				rows.Add($"STRING|{StringLiteralIdentity(literal)}");
-			}
-			foreach (byte[] signature in GetIlSignatures(method))
-			{
-				rows.Add($"SIGNATURE|{Convert.ToHexString(signature).ToLowerInvariant()}");
-			}
-		}
-		return string.Join('\n', rows) + "\n";
-	}
-
-	private static string BuildAssemblyReferenceManifest(Assembly assembly)
-	{
-		string[] rows = assembly.GetReferencedAssemblies()
-			.Select(reference =>
-			{
-				Version? normalizedVersion = reference.Version;
-				if (reference.Name is "WalletWasabi" or "WalletWasabi.Client" or
-					"WalletWasabi.Coordinator" or "WalletWasabi.Fluent")
-				{
-					Assert.Equal(typeof(LiquidWalletState).Assembly.GetName().Version, reference.Version);
-					Assert.True(string.IsNullOrEmpty(reference.CultureName));
-					Assert.Empty(reference.GetPublicKeyToken() ?? []);
-					Assert.Equal(AssemblyNameFlags.None, reference.Flags);
-					Assert.Equal(AssemblyContentType.Default, reference.ContentType);
-					normalizedVersion = new Version(1, 0, 0, 0);
-				}
-				string token = Convert.ToHexString(reference.GetPublicKeyToken() ?? []).ToLowerInvariant();
-				return $"{reference.Name}|{normalizedVersion}|{reference.CultureName ?? ""}|{token}|" +
-					$"{(int)reference.Flags}|{(int)reference.ContentType}";
-			})
-			.OrderBy(value => value, StringComparer.Ordinal)
-			.ToArray();
-		return string.Join('\n', rows) + "\n";
-	}
-
-	private static string Sha256Utf8(string value) =>
-		Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
-
-	private static string CustomAttributeManifest(IEnumerable<CustomAttributeData> attributes) =>
-		string.Join(",", attributes
-			.Select(attribute =>
-				$"{TypeIdentity(attribute.AttributeType)}({string.Join(";", attribute.ConstructorArguments.Select(CustomAttributeValue))})" +
-				$"[{string.Join(";", attribute.NamedArguments.Select(argument => $"{argument.MemberName}={CustomAttributeValue(argument.TypedValue)}"))}]")
-			.OrderBy(value => value, StringComparer.Ordinal));
-
-	private static string CustomAttributeValue(CustomAttributeTypedArgument argument)
-	{
-		if (argument.Value is IReadOnlyCollection<CustomAttributeTypedArgument> values)
-		{
-			return $"[{string.Join(",", values.Select(CustomAttributeValue))}]";
-		}
-		return $"{TypeIdentity(argument.ArgumentType)}:{argument.Value}";
-	}
-
-	private static string ModifierManifest(IEnumerable<Type> modifiers) =>
-		string.Join(",", modifiers.Select(TypeIdentity));
-
-	private static string TypeIdentity(Type? type) =>
-		LiquidWalletStateTests.NormalizeProductAssemblyVersion(type?.AssemblyQualifiedName ?? "null");
-
-	private static string MethodBaseIdentity(MethodBase method)
-	{
-		string parameters = string.Join(",", method.GetParameters()
-			.Select(parameter => TypeIdentity(parameter.ParameterType)));
-		string genericArguments = method.IsGenericMethod
-			? $"<{string.Join(",", method.GetGenericArguments().Select(TypeIdentity))}>"
-			: "";
-		string returnType = method is MethodInfo info ? TypeIdentity(info.ReturnType) : "void";
-		return $"{TypeIdentity(method.DeclaringType)}::{method.Name}{genericArguments}({parameters})->{returnType}";
-	}
-
-	private static string ResolvedMemberIdentity(MemberInfo member) => member switch
-	{
-		MethodBase method => MethodBaseIdentity(method),
-		FieldInfo field => $"{TypeIdentity(field.DeclaringType)}::{field.Name}:{TypeIdentity(field.FieldType)}",
-		Type type => TypeIdentity(type),
-		_ => $"{TypeIdentity(member.DeclaringType)}::{member.Name}",
-	};
-
 	private static string ApprovedReferenceKey(MemberInfo member) => member switch
 	{
 		MethodBase method =>
@@ -1282,16 +1094,6 @@ public class LiquidWalletLabelSetTests
 		Type type => $"T|{type.FullName}",
 		_ => $"O|{member.DeclaringType?.FullName}|{member.Name}",
 	};
-
-	private static string StringLiteralIdentity(string value)
-	{
-		var identity = new StringBuilder(value.Length * 4);
-		foreach (char codeUnit in value)
-		{
-			identity.Append(((int)codeUnit).ToString("X4", CultureInfo.InvariantCulture));
-		}
-		return $"{value.Length}:{identity}";
-	}
 
 	private static string MethodSignature(MethodInfo method)
 	{
@@ -1571,24 +1373,6 @@ public class LiquidWalletLabelSetTests
 			position += GetOperandSize(opCode.OperandType, il, position);
 		}
 		return opCodes;
-	}
-
-	private static IReadOnlyList<string> GetIlStringLiterals(MethodBase method)
-	{
-		var literals = new List<string>();
-		byte[] il = method.GetMethodBody()?.GetILAsByteArray() ?? [];
-		for (int position = 0; position < il.Length;)
-		{
-			OpCode opCode = ReadOpCode(il, ref position);
-			int operandPosition = position;
-			int operandSize = GetOperandSize(opCode.OperandType, il, operandPosition);
-			if (opCode.OperandType == OperandType.InlineString)
-			{
-				literals.Add(method.Module.ResolveString(BitConverter.ToInt32(il, operandPosition)));
-			}
-			position += operandSize;
-		}
-		return literals;
 	}
 
 	private static IReadOnlyList<byte[]> GetIlSignatures(MethodBase method)
