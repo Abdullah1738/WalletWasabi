@@ -87,6 +87,12 @@
 		<None Update="TestData\Liquid\WalletFactsWireV1\nonlinkable-reference\**\*">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
+		<!-- MANAGED-WALLET-FACTS-FFI-001: the native-produced observation ground-truth fixture
+		     (WLFQ requests, WLFV expected responses, descriptor, SLIP-77, pinned entropy pair,
+		     decoded field rows) the production observation binding tests drive. -->
+		<None Update="TestData\Liquid\WalletFactsWireV1\native-observe\**\*">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
 		<None Update="TestData\Liquid\OrdinaryWalletPlanWireV1\nonlinkable-reference\**\*">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>

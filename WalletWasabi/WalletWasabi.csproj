@@ -88,6 +88,21 @@
 			<Link>NativeSigning\libwasabi_liquid_wlpq_v1.so</Link>
 			<Visible>false</Visible>
 		</None>
+		<!-- MANAGED-WALLET-FACTS-FFI-001: the pinned-commit production native wallet-facts
+		     cdylib, copied into the NativeWalletFacts/ subdirectory next to the assembly so the
+		     binding's explicit NativeLibrary.Load path resolves it without colliding with the
+		     NativeSigning/ cdylib family or any test-flat cdylib. The bytes are SHA-256-pinned
+		     per platform in Liquid/Wallet/Ui/LiquidWalletNativeFactsBinding.cs. -->
+		<None Update="Liquid\Wallet\Ui\Native\libwasabi_liquid_wallet_facts_v1.dylib">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>NativeWalletFacts\libwasabi_liquid_wallet_facts_v1.dylib</Link>
+			<Visible>false</Visible>
+		</None>
+		<None Update="Liquid\Wallet\Ui\Native\libwasabi_liquid_wallet_facts_v1.so">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>NativeWalletFacts\libwasabi_liquid_wallet_facts_v1.so</Link>
+			<Visible>false</Visible>
+		</None>
 		<None Update="Scheme\Wasabilib.scm">
 		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>

@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using WalletWasabi.Liquid.WalletFacts.Wire;
+using WalletWasabi.Liquid.Wallet.Ui;
 using Xunit;
 using LiquidWalletFactsWireV1UntrustedStructuralInputView = WalletWasabi.Liquid.WalletFacts.Wire.LiquidWalletFactsWireV1UntrustedStructuralResponse.LiquidWalletFactsWireV1UntrustedStructuralInputView;
 using LiquidWalletFactsWireV1UntrustedStructuralOwnedOutputView = WalletWasabi.Liquid.WalletFacts.Wire.LiquidWalletFactsWireV1UntrustedStructuralResponse.LiquidWalletFactsWireV1UntrustedStructuralOwnedOutputView;
@@ -774,6 +775,13 @@ public class LiquidWalletFactsWireV1UntrustedStructuralResponseTests
 
 		foreach (Type type in productionTypes.Where(type => !ownerSubtree.Contains(type)))
 		{
+			// The quarantine's allowed inbound-reference set holds exactly the response subtree
+			// (ownerSubtree, filtered above) plus the one named external consumer: the MANAGED-
+			// WALLET-FACTS-FFI-001 observer, which names the response type via the decode call.
+			if (type == typeof(LiquidWalletNativeFactsObserver))
+			{
+				continue;
+			}
 			Assert.False(
 				TypeDefinitionReferencesTargets(type, targetSet),
 				$"Production type outside the response subtree references a quarantined type: {type.FullName}");

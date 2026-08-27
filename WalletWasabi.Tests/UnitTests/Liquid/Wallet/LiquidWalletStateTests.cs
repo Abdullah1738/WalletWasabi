@@ -1483,6 +1483,8 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletSyncBatchPlannerTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Sync.LiquidWalletSyncSessionTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletHistoryPresentationTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletNativeFactsBindingTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletNativeFactsObserverTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletNativeSignerTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletNativeSigningBindingTransactionIdTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui.LiquidWalletRuntimeHandoffTests",
