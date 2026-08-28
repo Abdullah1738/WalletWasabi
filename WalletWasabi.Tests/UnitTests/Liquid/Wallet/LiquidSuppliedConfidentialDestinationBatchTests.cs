@@ -33,10 +33,10 @@ public class LiquidSuppliedConfidentialDestinationBatchTests
 
 #if DEBUG
 	private const string ExpectedImplementationManifestSha256 =
-		"cf2c8e9f6c51d49d28f3989dab96abac802e641b29864fae0053fa92803cac40";
+		"dc9677629bbad1dea36e2b72c01d4c8d5428695881b97142ccb10b305c08947f";
 #else
 	private const string ExpectedImplementationManifestSha256 =
-		"cf8c8f5f279b08ddaecfef3b04b45cbd97a52ca50331edcfff57fbe13fcb8667";
+		"4121f7098ea7cf7b873a208a40f8031e272a3c42fa845db1ee42f6de2c46f918";
 #endif
 
 	[Theory]

@@ -68,9 +68,8 @@ public sealed class LiquidWalletProviderOpenReservationTests
 		Assert.False(unpublishedCandidate.IsDisposed);
 		Assert.Throws<ObjectDisposedException>(() => provider.AcquireOperation(identity.CanonicalWalletId));
 		await Assert.ThrowsAsync<ObjectDisposedException>(() => OpenAsync(provider, identity, "TestPassword"));
-		bool? candidateWasDisposedWhenProviderCompleted = null;
-		_ = firstDisposal.ContinueWith(
-			_ => candidateWasDisposedWhenProviderCompleted = unpublishedCandidate.IsDisposed,
+		Task<bool> candidateDisposedAtProviderCompletion = firstDisposal.ContinueWith(
+			_ => unpublishedCandidate.IsDisposed,
 			CancellationToken.None,
 			TaskContinuationOptions.ExecuteSynchronously,
 			TaskScheduler.Default);
@@ -80,7 +79,7 @@ public sealed class LiquidWalletProviderOpenReservationTests
 		await Task.WhenAll(firstDisposal, secondDisposal);
 
 		Assert.True(unpublishedCandidate.IsDisposed);
-		Assert.True(candidateWasDisposedWhenProviderCompleted);
+		Assert.True(await candidateDisposedAtProviderCompletion);
 		Assert.Null(provider.CurrentHandoff);
 		Assert.Null(provider.TryGetOpenSession(identity.CanonicalWalletId));
 		Assert.Equal(1, callbackCount);
