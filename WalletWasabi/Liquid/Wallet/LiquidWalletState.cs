@@ -225,6 +225,32 @@ internal sealed class LiquidWalletState
 	public int UnspentOutputCount => _unspentOutputs.Count;
 	public int AppliedTransactionCount => _history.Count;
 
+	internal bool ContainsAppliedTransaction(LiquidTransactionId transactionId)
+	{
+		ArgumentNullException.ThrowIfNull(transactionId);
+		return _appliedTransactionIds.Contains(transactionId);
+	}
+
+	/// <summary>
+	/// Returns the delta already recorded for an applied transaction, or null when
+	/// the transaction has not been applied. Used to decide whether a repeated
+	/// observation is an exact idempotent replay or an inconsistent duplicate.
+	/// </summary>
+	internal LiquidWalletTransactionDelta? GetAppliedDelta(LiquidTransactionId transactionId)
+	{
+		ArgumentNullException.ThrowIfNull(transactionId);
+		for (int historyIndex = 0; historyIndex < _history.Count; historyIndex++)
+		{
+			AppliedDelta applied = _history[historyIndex];
+			if (applied.Delta.TransactionId == transactionId)
+			{
+				return applied.Delta;
+			}
+		}
+
+		return null;
+	}
+
 	public static LiquidWalletState Empty(LiquidAssetId peggedAssetId)
 	{
 		ArgumentNullException.ThrowIfNull(peggedAssetId);

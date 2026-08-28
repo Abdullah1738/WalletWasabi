@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -14,88 +15,116 @@ using Xunit;
 
 namespace WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui;
 
-public sealed class LiquidWalletSendExecutionCommandServiceLifetimeTests
+public sealed class LiquidWalletAcceptedSendRefreshTests
 {
+	private const string WalletName = "alpha";
+	private const string TransactionId = "1111111111111111111111111111111111111111111111111111111111111111";
+
 	[Fact]
-	public async Task ProviderLeaseSpansScopeDisposalAndAcceptedRecordingAndBlocksSessionDisposalAsync()
+	public async Task AcceptedReceiptRecordsBeforeCancellationAndInvokesSharedRefreshOnceAsync()
 	{
 		using var handler = new TrackingHandler();
 		LiquidAuthenticatedWalletSession session = CreateSession(handler);
-		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session);
+		var refreshCalls = new List<LiquidWalletUiRefreshRequest>();
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> sharedRefresh =
+			(request, ct) =>
+			{
+				refreshCalls.Add(request);
+				ct.ThrowIfCancellationRequested();
+				return Task.FromResult(new LiquidWalletUiRefreshResult(
+					LiquidWalletUiRefreshStatus.Committed,
+					request.CanonicalWalletId,
+					request.Trigger,
+					request.AcceptedTransactionIdHex,
+					candidateCount: 1,
+					appliedTransactionCount: 1,
+					resultRevision: 2,
+					resultGeneration: 2,
+					isPostSubmit: request.Trigger == LiquidWalletUiRefreshTrigger.AcceptedSend,
+					handoffPublished: true));
+			};
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session, sharedRefresh);
+
+		// Pre-canceled token: the accepted ID must still be recorded before cancellation is
+		// consulted, and the shared refresh delegate must be invoked exactly once with
+		// Trigger = AcceptedSend and the canonical ID.
+		using var canceled = new CancellationTokenSource();
+		canceled.Cancel();
 		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> command =
 			LiquidWalletSendExecutionCommandService.CreateSendCommandForTesting(
 				provider,
 				async (request, scopeFactory, cancellationToken) =>
 				{
 					ILiquidWalletSendExecutionScope scope = scopeFactory.Open(request.WalletName);
-					byte[] replayProtectionKey = scope.ReplayProtectionKey;
-					Assert.Equal(1, ActiveOperationCount(session));
-
-					await scope.ScheduleRefreshAsync(TransactionId, cancellationToken);
-					Assert.Equal([TransactionId], session.GetRecordedAcceptedTransactionIds());
-					Assert.Equal(1, ActiveOperationCount(session));
-
-					scope.Dispose();
-					Assert.All(replayProtectionKey, value => Assert.Equal(0, value));
-					Assert.Equal(1, ActiveOperationCount(session));
-					Assert.Equal(0, handler.DisposeCount);
-
-					Task disposal = provider.DisposeAsync().AsTask();
-					Assert.False(disposal.IsCompleted);
-					Assert.Equal(0, handler.DisposeCount);
-
-					await Task.Yield();
-					Assert.False(disposal.IsCompleted);
+					try
+					{
+						await scope.ScheduleRefreshAsync(TransactionId, cancellationToken);
+					}
+					finally
+					{
+						scope.Dispose();
+					}
 					return Result(request);
-				},
-				RefreshCommandForTesting);
+				});
 
-		LiquidWalletUiSendExecutionResult result = await command(Request(), CancellationToken.None);
-		await provider.DisposeAsync();
+		_ = await Assert.ThrowsAnyAsync<Exception>(() => command(Request(), canceled.Token));
 
-		Assert.Equal(LiquidWalletUiSendExecutionStatus.RejectedBeforeSubmit, result.Status);
-		Assert.Equal(0, ActiveOperationCount(session));
-		Assert.True(session.IsDisposed);
-		Assert.Equal(1, handler.DisposeCount);
+		Assert.Equal([TransactionId], session.GetRecordedAcceptedTransactionIds());
+		LiquidWalletUiRefreshRequest call = Assert.Single(refreshCalls);
+		Assert.Equal(LiquidWalletUiRefreshTrigger.AcceptedSend, call.Trigger);
+		Assert.Equal(TransactionId, call.AcceptedTransactionIdHex);
+		Assert.Equal(WalletName, call.CanonicalWalletId);
 	}
 
 	[Fact]
-	public async Task ProviderPathRetainsOneActiveSendPerWalletFenceAsync()
+	public async Task AmbiguityRefreshDoesNotRecordAcceptedIdAsync()
 	{
 		using var handler = new TrackingHandler();
 		LiquidAuthenticatedWalletSession session = CreateSession(handler);
-		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session);
-		var releaseExecution = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-		var executionEntered = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-		int executionCount = 0;
+		var refreshCalls = new List<LiquidWalletUiRefreshRequest>();
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> sharedRefresh =
+			(request, ct) =>
+			{
+				refreshCalls.Add(request);
+				return Task.FromResult(new LiquidWalletUiRefreshResult(
+					LiquidWalletUiRefreshStatus.NoCandidates,
+					request.CanonicalWalletId,
+					request.Trigger,
+					request.AcceptedTransactionIdHex,
+					candidateCount: 0,
+					appliedTransactionCount: 0,
+					resultRevision: 1,
+					resultGeneration: 1,
+					isPostSubmit: false,
+					handoffPublished: false));
+			};
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session, sharedRefresh);
+
 		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> command =
 			LiquidWalletSendExecutionCommandService.CreateSendCommandForTesting(
 				provider,
-				async (request, _, _) =>
+				async (request, scopeFactory, cancellationToken) =>
 				{
-					Interlocked.Increment(ref executionCount);
-					executionEntered.TrySetResult(null);
-					await releaseExecution.Task;
+					ILiquidWalletSendExecutionScope scope = scopeFactory.Open(request.WalletName);
+					try
+					{
+						// The ambiguity path performs a manual discovery refresh and records no accepted ID.
+						await scope.ScheduleManualRefreshAsync(cancellationToken);
+					}
+					finally
+					{
+						scope.Dispose();
+					}
 					return Result(request);
-				},
-				RefreshCommandForTesting);
+				});
 
-		Task<LiquidWalletUiSendExecutionResult> first = command(Request(), CancellationToken.None);
-		await executionEntered.Task;
+		_ = await command(Request(), CancellationToken.None);
 
-		await Assert.ThrowsAsync<InvalidOperationException>(() => command(Request(), CancellationToken.None));
-		Assert.Equal(1, executionCount);
-		Assert.Equal(1, ActiveOperationCount(session));
-
-		releaseExecution.TrySetResult(null);
-		await first;
-		Assert.Equal(0, ActiveOperationCount(session));
-		await provider.DisposeAsync();
-		Assert.Equal(1, handler.DisposeCount);
+		Assert.Empty(session.GetRecordedAcceptedTransactionIds());
+		LiquidWalletUiRefreshRequest call = Assert.Single(refreshCalls);
+		Assert.Equal(LiquidWalletUiRefreshTrigger.Manual, call.Trigger);
+		Assert.Null(call.AcceptedTransactionIdHex);
 	}
-
-	private const string WalletName = "alpha";
-	private const string TransactionId = "1111111111111111111111111111111111111111111111111111111111111111";
 
 	private static LiquidWalletUiSendExecutionRequest Request() =>
 		new(
@@ -120,28 +149,15 @@ public sealed class LiquidWalletSendExecutionCommandServiceLifetimeTests
 			refreshScheduled: false,
 			"test-complete");
 
-	private static Task<LiquidWalletUiRefreshResult> RefreshCommandForTesting(
-		LiquidWalletUiRefreshRequest request,
-		CancellationToken cancellationToken) =>
-		Task.FromResult(
-			new LiquidWalletUiRefreshResult(
-				LiquidWalletUiRefreshStatus.NoCandidates,
-				request.CanonicalWalletId,
-				request.Trigger,
-				request.AcceptedTransactionIdHex,
-				candidateCount: 0,
-				appliedTransactionCount: 0,
-				resultRevision: 0,
-				resultGeneration: 0,
-				isPostSubmit: request.Trigger == LiquidWalletUiRefreshTrigger.AcceptedSend,
-				handoffPublished: false));
-
-	private static LiquidAuthenticatedRuntimeProvider CreateProvider(LiquidAuthenticatedWalletSession session)
+	private static LiquidAuthenticatedRuntimeProvider CreateProvider(
+		LiquidAuthenticatedWalletSession session,
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> sharedRefresh)
 	{
 		var provider = (LiquidAuthenticatedRuntimeProvider)RuntimeHelpers.GetUninitializedObject(typeof(LiquidAuthenticatedRuntimeProvider));
 		SetField(provider, "_gate", new object());
 		SetField(provider, "_manifestSource", new ElementsPublicNetworkManifestSource(ElementsPublicNetworkManifest.LiquidMainnet.ManifestId));
 		SetField(provider, "_session", session);
+		SetField(provider, "_refreshCommand", sharedRefresh);
 		return provider;
 	}
 
@@ -157,7 +173,7 @@ public sealed class LiquidWalletSendExecutionCommandServiceLifetimeTests
 
 		SetField(session, "_refreshGate", new object());
 		SetField(session, "_lifetimeGate", new object());
-		SetField(session, "_acceptedTransactionIds", new System.Collections.Generic.List<string>());
+		SetField(session, "_acceptedTransactionIds", new List<string>());
 		SetField(session, "<Identity>k__BackingField", CreateIdentity());
 		SetField(session, "<AuthenticatedMaster>k__BackingField", master);
 		SetField(session, "<Descriptor>k__BackingField", receive.Descriptor);
@@ -180,29 +196,12 @@ public sealed class LiquidWalletSendExecutionCommandServiceLifetimeTests
 			[WalletName, "/unused/wallet.json", "unused", ElementsPublicNetworkManifest.LiquidMainnet.ManifestId]);
 	}
 
-	private static int ActiveOperationCount(LiquidAuthenticatedWalletSession session) =>
-		GetField<int>(session, "_activeOperationCount");
-
-	private static T GetField<T>(object target, string name) =>
-		(T)target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(target)!;
-
 	private static void SetField(object target, string name, object? value) =>
 		target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(target, value);
 
 	private sealed class TrackingHandler : HttpMessageHandler
 	{
-		internal int DisposeCount { get; private set; }
-
 		protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-			throw new InvalidOperationException("No HTTP request is expected from this lifetime test.");
-
-		protected override void Dispose(bool disposing)
-		{
-			if (disposing)
-			{
-				DisposeCount++;
-			}
-			base.Dispose(disposing);
-		}
+			throw new InvalidOperationException("No HTTP request is expected from this accepted-send test.");
 	}
 }

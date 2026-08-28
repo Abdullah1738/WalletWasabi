@@ -93,11 +93,21 @@ internal interface ILiquidWalletSendExecutionScope : IDisposable
 		CancellationToken cancellationToken);
 
 	/// <summary>
-	/// The application-owned state-refresh handoff: consumes the internal scan/fetch derivation
-	/// for the accepted transaction. It schedules or performs the landed fetch/sync path; it
-	/// does not claim immediate confirmation.
+	/// The application-owned accepted-send state-refresh handoff: records the matching
+	/// node-accepted canonical transaction id and invokes the exact shared refresh command once
+	/// with <see cref="LiquidWalletUiRefreshTrigger.AcceptedSend"/>. The accepted id is recorded
+	/// before cancellation is consulted, so caller cancellation can never erase knowledge of a
+	/// proven accepted transaction. It does not claim immediate confirmation.
 	/// </summary>
 	Task ScheduleRefreshAsync(
 		string canonicalTransactionIdHex,
 		CancellationToken cancellationToken);
+
+	/// <summary>
+	/// The application-owned manual/ambiguity state-refresh handoff: invokes the exact shared
+	/// refresh command once with <see cref="LiquidWalletUiRefreshTrigger.Manual"/> and no accepted
+	/// id, so bounded node discovery may find a transaction whose submission outcome is ambiguous.
+	/// It records no accepted id and never transforms ambiguity into acceptance.
+	/// </summary>
+	Task ScheduleManualRefreshAsync(CancellationToken cancellationToken);
 }

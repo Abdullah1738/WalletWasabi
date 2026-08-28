@@ -89,12 +89,27 @@ internal sealed class LiquidWalletSyncSession
 
 		LiquidWalletState state = _baseState;
 		ulong expectedRevision = BaseRevision;
+		int skippedTransactionCount = 0;
 		IReadOnlyList<LiquidWalletTransactionObservation> transactions = observations.GetTransactions();
 		for (int index = 0; index < transactions.Count; index++)
 		{
 			LiquidWalletTransactionObservation observation = transactions[index];
 			LiquidTransactionId transactionId = LiquidTransactionId.ParseConsensusBytes(
 				observation.GetTransactionIdConsensusBytes());
+
+			if (state.GetAppliedDelta(transactionId) is LiquidWalletTransactionDelta appliedDelta)
+			{
+				LiquidOutPoint[] replaySpent = ComputeSpentOutPoints(observation);
+				LiquidOwnedOutput[] replayCreated = ProjectCreatedOutputs(observation);
+				if (IsIdenticalReplay(appliedDelta, replaySpent, replayCreated))
+				{
+					// Exact idempotent replay of an already-applied transaction:
+					// skip it without advancing the revision. Any deviation falls
+					// through to Apply, whose double-apply guard fails closed.
+					skippedTransactionCount++;
+					continue;
+				}
+			}
 
 			LiquidOutPoint[] spentOutPoints = ComputeSpentOutPoints(observation);
 			LiquidOwnedOutput[] createdOutputs = ProjectCreatedOutputs(observation);
@@ -106,11 +121,20 @@ internal sealed class LiquidWalletSyncSession
 			expectedRevision = state.Revision;
 		}
 
-		int appliedTransactionCount = transactions.Count;
+		int appliedTransactionCount = checked(transactions.Count - skippedTransactionCount);
+		int skippedConfirmationCount = 0;
 		for (int index = 0; index < copiedConfirmations.Length; index++)
 		{
 			LiquidWalletSyncConfirmation row = copiedConfirmations[index];
 			EnsureBoundToObservedTip(row.Confirmation);
+			if (row.Kind == LiquidWalletSyncConfirmationKind.Confirm
+				&& state.TryGetConfirmation(row.TransactionId, out LiquidConfirmation? currentConfirmation)
+				&& currentConfirmation == row.Confirmation)
+			{
+				skippedConfirmationCount++;
+				continue;
+			}
+
 			state = row.Kind switch
 			{
 				LiquidWalletSyncConfirmationKind.Confirm => state.Confirm(
@@ -133,10 +157,43 @@ internal sealed class LiquidWalletSyncSession
 			BaseRevision,
 			state.Revision,
 			appliedTransactionCount,
-			copiedConfirmations.Length);
+			copiedConfirmations.Length - skippedConfirmationCount);
 	}
 
 	public override string ToString() => nameof(LiquidWalletSyncSession);
+
+	private static bool IsIdenticalReplay(
+		LiquidWalletTransactionDelta appliedDelta,
+		LiquidOutPoint[] replaySpent,
+		LiquidOwnedOutput[] replayCreated)
+	{
+		IReadOnlyList<LiquidOutPoint> appliedSpent = appliedDelta.GetSpentOutPoints();
+		IReadOnlyList<LiquidOwnedOutput> appliedCreated = appliedDelta.GetCreatedOutputs();
+		if (appliedSpent.Count != replaySpent.Length || appliedCreated.Count != replayCreated.Length)
+		{
+			return false;
+		}
+
+		var spentSet = new HashSet<LiquidOutPoint>(appliedSpent);
+		foreach (LiquidOutPoint outPoint in replaySpent)
+		{
+			if (!spentSet.Contains(outPoint))
+			{
+				return false;
+			}
+		}
+
+		var createdSet = new HashSet<LiquidOwnedOutput>(appliedCreated);
+		foreach (LiquidOwnedOutput output in replayCreated)
+		{
+			if (!createdSet.Contains(output))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
 
 	private LiquidOutPoint[] ComputeSpentOutPoints(LiquidWalletTransactionObservation observation)
 	{
@@ -163,15 +220,6 @@ internal sealed class LiquidWalletSyncSession
 			LiquidOwnedOutputObservation ownedOutput = ownedOutputs[index];
 			LiquidAssetId assetId = LiquidAssetId.ParseConsensusBytes(
 				ownedOutput.GetAssetIdConsensusBytes());
-			if (!StringComparer.Ordinal.Equals(assetId.CanonicalRpcHex, PeggedAsset) &&
-				!StringComparer.Ordinal.Equals(
-					assetId.CanonicalRpcHex,
-					_baseState.PeggedAssetId.CanonicalRpcHex))
-			{
-				throw new InvalidOperationException(
-					"A Liquid wallet sync observation output belongs to a different pegged-asset context.");
-			}
-
 			LiquidOutPoint outPoint = LiquidOutPoint.CreateSpendable(
 				LiquidTransactionId.ParseConsensusBytes(ownedOutput.GetTransactionIdConsensusBytes()),
 				ownedOutput.OutputIndex);

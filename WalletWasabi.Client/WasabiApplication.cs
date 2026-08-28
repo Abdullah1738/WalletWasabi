@@ -30,6 +30,8 @@ public class WasabiApplication
 	public LiquidWalletRuntimeHandoff? LiquidWalletRuntime => _liquidComposition?.PublicHandoff;
 	public Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> LiquidWalletSendCommand =>
 		RequireLiquidComposition().SendCommand;
+	public Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> LiquidWalletRefreshCommand =>
+		RequireLiquidComposition().RefreshCommand;
 	private static Guid InstanceGuid { get; } = Guid.NewGuid();
 
 	public WasabiApplication(WasabiAppBuilder wasabiAppBuilder)

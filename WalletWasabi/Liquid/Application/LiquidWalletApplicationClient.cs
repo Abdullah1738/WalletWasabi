@@ -16,6 +16,7 @@ public sealed class LiquidWalletApplicationClient : IAsyncDisposable
 	private readonly LiquidWalletApplicationOptions _options;
 	private readonly LiquidWalletDirectories _walletDirectories;
 	private readonly LiquidAuthenticatedRuntimeProvider _runtimeProvider;
+	private readonly Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> _refreshCommand;
 	private readonly Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> _sendCommand;
 	private int _isDisposed;
 
@@ -23,11 +24,13 @@ public sealed class LiquidWalletApplicationClient : IAsyncDisposable
 		LiquidWalletApplicationOptions options,
 		LiquidWalletDirectories walletDirectories,
 		LiquidAuthenticatedRuntimeProvider runtimeProvider,
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> refreshCommand,
 		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> sendCommand)
 	{
 		_options = options;
 		_walletDirectories = walletDirectories;
 		_runtimeProvider = runtimeProvider;
+		_refreshCommand = refreshCommand;
 		_sendCommand = sendCommand;
 	}
 
@@ -35,6 +38,8 @@ public sealed class LiquidWalletApplicationClient : IAsyncDisposable
 	internal LiquidAuthenticatedRuntimeProvider RuntimeProvider => _runtimeProvider;
 
 	public LiquidWalletRuntimeHandoff? CurrentHandoff => _runtimeProvider.CurrentHandoff;
+
+	public Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> RefreshCommand => _refreshCommand;
 
 	public Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> SendCommand => _sendCommand;
 
@@ -65,12 +70,15 @@ public sealed class LiquidWalletApplicationClient : IAsyncDisposable
 				walletDirectories,
 				manifestSource,
 				sendRefreshSink: null);
+			Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> refreshCommand =
+				runtimeProvider.RefreshCommand;
 			Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> sendCommand =
 				LiquidWalletSendExecutionCommandService.CreateSendCommand(runtimeProvider);
 			return new LiquidWalletApplicationClient(
 				canonicalOptions,
 				walletDirectories,
 				runtimeProvider,
+				refreshCommand,
 				sendCommand);
 		}
 		catch (Exception originalException)

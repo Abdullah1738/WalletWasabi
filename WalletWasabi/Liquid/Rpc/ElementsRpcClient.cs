@@ -1577,6 +1577,459 @@ public sealed class ElementsRpcClient : IDisposable
 		}
 	}
 
+	/// <summary>
+	/// ORDINARY-WALLET-REFRESH-SUCCESSOR-001 (V3 section 6): one aggregate refresh acquisition that
+	/// holds <c>_probeLock</c> from the first through the final exact generation observation with no
+	/// retries. Accepted IDs are newest-first with the supplied accepted-send ID forced first and
+	/// ordinal dedupe; mempool IDs are ordinal-sorted; at most six recent block heights are processed
+	/// newest-first preserving node transaction order; the selected candidate cap is 64. Every selected
+	/// candidate gets one typed verbose lookup (canonical txid, optional block hash, every input row)
+	/// with coinbase/previous-txid exclusivity and first-occurrence dependency dedupe. The global
+	/// candidate-plus-dependency set is capped at 100 before any raw fetch, and the landed 4 MiB/64 MiB
+	/// raw-byte bounds apply. Any missing, malformed, or conflicting metadata/raw bytes, and any
+	/// generation change after status, fee, mempool, every block hash, every block, every verbose
+	/// lookup, every raw fetch, and the final status, fails the whole acquisition. No managed
+	/// transaction parser, no consensus claim, no wallet mutation.
+	/// </summary>
+	internal async Task<ElementsWalletRefreshObservation> GetWalletRefreshObservationAsync(
+		ElementsNodeExpectation expectation,
+		string expectedEffectiveFeeAsset,
+		IReadOnlyList<string> acceptedTransactionIds,
+		string? suppliedAcceptedTransactionId,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(expectation);
+		ArgumentNullException.ThrowIfNull(acceptedTransactionIds);
+		ElementsNodeExpectation normalizedExpectation = expectation.Normalize();
+		LiquidAssetId normalizedEffectiveFeeAsset =
+			LiquidAssetId.ParseRpcHex(expectedEffectiveFeeAsset, nameof(expectedEffectiveFeeAsset));
+
+		await _probeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			return await GetWalletRefreshObservationCoreAsync(
+				normalizedExpectation,
+				normalizedEffectiveFeeAsset,
+				acceptedTransactionIds,
+				suppliedAcceptedTransactionId,
+				cancellationToken).ConfigureAwait(false);
+		}
+		finally
+		{
+			_probeLock.Release();
+		}
+	}
+
+	private async Task<ElementsWalletRefreshObservation> GetWalletRefreshObservationCoreAsync(
+		ElementsNodeExpectation expectation,
+		LiquidAssetId expectedEffectiveFeeAsset,
+		IReadOnlyList<string> acceptedTransactionIds,
+		string? suppliedAcceptedTransactionId,
+		CancellationToken cancellationToken)
+	{
+		const string acquisition = "wallet refresh observation";
+		ElementsNodeGenerationObservation generation =
+			await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+
+		ElementsNodeStatus nodeStatus = await GetNodeStatusCoreAsync(cancellationToken).ConfigureAwait(false);
+		await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
+
+		ElementsFeeAssetGenerationObservation feeObservation =
+			await GetFeeAssetGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+		if (feeObservation.GenerationBefore != generation || feeObservation.GenerationAfter != generation)
+		{
+			throw InvalidResult(acquisition, "node generation changed during the fee observation");
+		}
+		await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
+
+		if (!StringComparer.Ordinal.Equals(nodeStatus.PeggedAsset, feeObservation.PeggedAsset)
+			|| !StringComparer.Ordinal.Equals(
+				feeObservation.EffectiveFeeAsset,
+				expectedEffectiveFeeAsset.CanonicalRpcHex))
+		{
+			throw new ElementsNodeMismatchException(["fee_asset"]);
+		}
+		if (nodeStatus.Blocks != generation.Blocks
+			|| !StringComparer.Ordinal.Equals(nodeStatus.BestBlockHash, generation.BestBlockHash))
+		{
+			throw InvalidResult(acquisition, "node status did not match the generation fence");
+		}
+		nodeStatus.EnsureMatches(expectation);
+
+		// Deterministic candidate ordering: accepted newest-first with the supplied accepted-send ID
+		// forced first (ordinal dedupe), then ordinal-sorted mempool, then recent blocks newest-first
+		// preserving node transaction order. The aggregate selected cap is 64.
+		var selectedIds = new List<string>(MaxRefreshSelectedCandidates);
+		var selectedSet = new HashSet<string>(StringComparer.Ordinal);
+		var blockHashByCandidate = new Dictionary<string, string>(StringComparer.Ordinal);
+		var blockHeightByCandidate = new Dictionary<string, uint>(StringComparer.Ordinal);
+
+		var orderedAccepted = NormalizeAcceptedIds(acceptedTransactionIds, suppliedAcceptedTransactionId);
+		foreach (string id in orderedAccepted)
+		{
+			if (selectedIds.Count >= MaxRefreshSelectedCandidates)
+			{
+				break;
+			}
+			if (selectedSet.Add(id))
+			{
+				selectedIds.Add(id);
+			}
+		}
+
+		JsonElement mempool = await CallAsync("getrawmempool", [], cancellationToken).ConfigureAwait(false);
+		await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
+		var mempoolIds = ParseStringIdArray(mempool, "getrawmempool");
+		mempoolIds.Sort(StringComparer.Ordinal);
+		foreach (string id in mempoolIds)
+		{
+			if (selectedIds.Count >= MaxRefreshSelectedCandidates)
+			{
+				break;
+			}
+			if (selectedSet.Add(id))
+			{
+				selectedIds.Add(id);
+			}
+		}
+
+		int lowestHeight = Math.Max(0, nodeStatus.Blocks - (MaxRefreshRecentBlockCount - 1));
+		for (int height = nodeStatus.Blocks; height >= lowestHeight && selectedIds.Count < MaxRefreshSelectedCandidates; height--)
+		{
+			string blockHash = await CallHex32Async("getblockhash", [height], cancellationToken).ConfigureAwait(false);
+			await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
+
+			JsonElement blockTransactions = await CallAsync("getblock", [blockHash, 1], cancellationToken).ConfigureAwait(false);
+			await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
+			var blockIds = ParseTypedBlockTransactionIds(blockTransactions, "getblock");
+			foreach (string id in blockIds)
+			{
+				blockHashByCandidate.TryAdd(id, blockHash);
+				blockHeightByCandidate.TryAdd(id, (uint)height);
+				if (selectedIds.Count >= MaxRefreshSelectedCandidates)
+				{
+					break;
+				}
+				if (selectedSet.Add(id))
+				{
+					selectedIds.Add(id);
+				}
+			}
+		}
+
+		// One typed verbose lookup per selected candidate with coinbase/previous-txid exclusivity and
+		// first-occurrence dependency dedupe. Conflicting block metadata is terminal.
+		var candidates = new ElementsWalletRefreshCandidate[selectedIds.Count];
+		var distinctDependencies = new HashSet<string>(StringComparer.Ordinal);
+		for (int index = 0; index < selectedIds.Count; index++)
+		{
+			string candidateId = selectedIds[index];
+			JsonElement verbose = await CallAsync(
+				"getrawtransaction",
+				[candidateId, true],
+				cancellationToken).ConfigureAwait(false);
+			await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
+
+			candidates[index] = ParseVerboseCandidate(
+				verbose,
+				candidateId,
+				blockHashByCandidate,
+				blockHeightByCandidate,
+				distinctDependencies);
+		}
+
+		// Global candidate+dependency cap before any raw fetch. Exceeding it is terminal, never a
+		// reason to silently omit a dependency.
+		int globalRawCount = selectedSet.Count + distinctDependencies.Count;
+		if (globalRawCount > MaxRawTransactionCount)
+		{
+			throw InvalidResult(
+				acquisition,
+				"the candidate-plus-dependency transaction limit was exceeded");
+		}
+
+		// Complete raw fetch of every selected candidate and every required distinct dependency under
+		// the landed per-transaction 4 MiB and aggregate 64 MiB bounds.
+		var rawTransactions = new List<ElementsWalletRefreshRawTransaction>(globalRawCount);
+		long aggregateBytes = 0;
+		try
+		{
+			foreach (string id in selectedIds)
+			{
+				blockHashByCandidate.TryGetValue(id, out string? blockHash);
+				byte[] bytes = await FetchRefreshRawTransactionAsync(
+					id,
+					blockHash,
+					generation,
+					acquisition,
+					cancellationToken).ConfigureAwait(false);
+				aggregateBytes = checked(aggregateBytes + bytes.Length);
+				if (aggregateBytes > MaxRawTransactionBatchBytes)
+				{
+					throw InvalidResult(acquisition, "the aggregate raw transaction byte limit was exceeded");
+				}
+				rawTransactions.Add(new ElementsWalletRefreshRawTransaction(id, bytes));
+			}
+			foreach (string id in distinctDependencies.OrderBy(static d => d, StringComparer.Ordinal))
+			{
+				byte[] bytes = await FetchRefreshRawTransactionAsync(
+					id,
+					null,
+					generation,
+					acquisition,
+					cancellationToken).ConfigureAwait(false);
+				aggregateBytes = checked(aggregateBytes + bytes.Length);
+				if (aggregateBytes > MaxRawTransactionBatchBytes)
+				{
+					throw InvalidResult(acquisition, "the aggregate raw transaction byte limit was exceeded");
+				}
+				rawTransactions.Add(new ElementsWalletRefreshRawTransaction(id, bytes));
+			}
+		}
+		catch
+		{
+			foreach (ElementsWalletRefreshRawTransaction rawTransaction in rawTransactions)
+			{
+				rawTransaction.Dispose();
+			}
+			throw;
+		}
+
+		ElementsNodeStatus finalStatus = await GetNodeStatusCoreAsync(cancellationToken).ConfigureAwait(false);
+		ElementsNodeGenerationObservation finalGeneration =
+			await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+		if (finalGeneration != generation
+			|| finalStatus.Blocks != generation.Blocks
+			|| !StringComparer.Ordinal.Equals(finalStatus.BestBlockHash, generation.BestBlockHash))
+		{
+			throw InvalidResult(acquisition, "node generation changed during the final observation");
+		}
+		finalStatus.EnsureMatches(expectation);
+
+		return new ElementsWalletRefreshObservation(
+			new ElementsExpectationBoundNodeObservation(
+				expectation,
+				expectedEffectiveFeeAsset.CanonicalRpcHex,
+				nodeStatus,
+				generation),
+			candidates,
+			[.. rawTransactions]);
+	}
+
+	private async Task<byte[]> FetchRefreshRawTransactionAsync(
+		string transactionId,
+		string? blockHash,
+		ElementsNodeGenerationObservation generation,
+		string acquisition,
+		CancellationToken cancellationToken)
+	{
+		var request = new ElementsRawTransactionRequest(transactionId, blockHash);
+		byte[] bytes = await GetRawTransactionBytesCoreAsync(request, cancellationToken).ConfigureAwait(false);
+		await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
+		return bytes;
+	}
+
+	private async Task EnsureRefreshGenerationAsync(
+		ElementsNodeGenerationObservation generation,
+		string acquisition,
+		CancellationToken cancellationToken)
+	{
+		ElementsNodeGenerationObservation current =
+			await GetNodeGenerationObservationCoreAsync(cancellationToken).ConfigureAwait(false);
+		if (current != generation)
+		{
+			throw InvalidResult(acquisition, "node generation changed during the acquisition");
+		}
+	}
+
+	private static List<string> NormalizeAcceptedIds(
+		IReadOnlyList<string> acceptedTransactionIds,
+		string? suppliedAcceptedTransactionId)
+	{
+		var normalized = new List<string>(acceptedTransactionIds.Count + 1);
+		var seen = new HashSet<string>(StringComparer.Ordinal);
+		if (suppliedAcceptedTransactionId is not null)
+		{
+			string supplied = NormalizeRefreshId(suppliedAcceptedTransactionId, nameof(suppliedAcceptedTransactionId));
+			normalized.Add(supplied);
+			seen.Add(supplied);
+		}
+		foreach (string id in acceptedTransactionIds)
+		{
+			string canonical = NormalizeRefreshId(id, nameof(acceptedTransactionIds));
+			if (seen.Add(canonical))
+			{
+				normalized.Add(canonical);
+			}
+		}
+		return normalized;
+	}
+
+	private static string NormalizeRefreshId(string value, string parameterName)
+	{
+		try
+		{
+			Transactions.LiquidTransactionId id = Transactions.LiquidTransactionId.ParseRpcHex(value, parameterName);
+			if (id.IsZero)
+			{
+				throw new ArgumentException("A nonzero Liquid transaction identifier is required.", parameterName);
+			}
+			return id.CanonicalRpcHex;
+		}
+		catch (FormatException exception)
+		{
+			throw new ArgumentException("A canonical Liquid transaction identifier is required.", parameterName, exception);
+		}
+	}
+
+	private static List<string> ParseTypedBlockTransactionIds(JsonElement result, string method)
+	{
+		RequireObject(result, method);
+		JsonElement transactions = RequiredProperty(result, "tx", method);
+		return ParseStringIdArray(transactions, method);
+	}
+
+	private static List<string> ParseStringIdArray(JsonElement result, string method)
+	{
+		if (result.ValueKind != JsonValueKind.Array)
+		{
+			throw InvalidResult(method, "an array of transaction identifiers is required");
+		}
+		var ids = new List<string>();
+		foreach (JsonElement item in result.EnumerateArray())
+		{
+			if (item.ValueKind != JsonValueKind.String || item.GetString() is not { } text)
+			{
+				throw InvalidResult(method, "a canonical transaction identifier is required");
+			}
+			try
+			{
+				ids.Add(ElementsNodeStatus.RequireHex32(text, method));
+			}
+			catch (ArgumentException)
+			{
+				throw InvalidResult(method, "a canonical nonzero lowercase 32-byte transaction identifier is required");
+			}
+		}
+		return ids;
+	}
+
+	private static ElementsWalletRefreshCandidate ParseVerboseCandidate(
+		JsonElement verbose,
+		string expectedTransactionId,
+		Dictionary<string, string> blockHashByCandidate,
+		Dictionary<string, uint> blockHeightByCandidate,
+		HashSet<string> distinctDependencies)
+	{
+		const string method = "getrawtransaction";
+		RequireObject(verbose, method);
+
+		string txid = RequiredProperty(verbose, "txid", method) is { ValueKind: JsonValueKind.String } txidProperty
+			&& txidProperty.GetString() is { } txidText
+				? RequireCanonicalRefreshId(txidText, method)
+				: throw InvalidResult(method, "field 'txid' must be a canonical transaction identifier");
+		if (!StringComparer.Ordinal.Equals(txid, expectedTransactionId))
+		{
+			throw InvalidResult(method, "the verbose transaction id does not match the requested candidate");
+		}
+
+		string? verboseBlockHash = null;
+		foreach (JsonProperty property in verbose.EnumerateObject())
+		{
+			if (StringComparer.Ordinal.Equals(property.Name, "blockhash"))
+			{
+				if (property.Value.ValueKind != JsonValueKind.String || property.Value.GetString() is not { } hashText)
+				{
+					throw InvalidResult(method, "field 'blockhash' must be a canonical block hash");
+				}
+				verboseBlockHash = RequireCanonicalRefreshId(hashText, method);
+			}
+		}
+
+		blockHashByCandidate.TryGetValue(expectedTransactionId, out string? discoveredBlockHash);
+		blockHeightByCandidate.TryGetValue(expectedTransactionId, out uint discoveredHeight);
+		if (discoveredBlockHash is not null
+			&& verboseBlockHash is not null
+			&& !StringComparer.Ordinal.Equals(discoveredBlockHash, verboseBlockHash))
+		{
+			throw InvalidResult(method, "the verbose block hash conflicts with discovered block metadata");
+		}
+		string? effectiveBlockHash = discoveredBlockHash ?? verboseBlockHash;
+		uint? effectiveHeight = discoveredBlockHash is not null ? discoveredHeight : null;
+
+		JsonElement vin = RequiredProperty(verbose, "vin", method);
+		if (vin.ValueKind != JsonValueKind.Array)
+		{
+			throw InvalidResult(method, "field 'vin' must be an array");
+		}
+
+		var inputs = new List<ElementsWalletRefreshInput>();
+		var previousIds = new List<string>();
+		var seenPrevious = new HashSet<string>(StringComparer.Ordinal);
+		foreach (JsonElement input in vin.EnumerateArray())
+		{
+			RequireObject(input, method);
+			bool hasCoinbase = false;
+			string? previousId = null;
+			foreach (JsonProperty property in input.EnumerateObject())
+			{
+				if (StringComparer.Ordinal.Equals(property.Name, "coinbase"))
+				{
+					hasCoinbase = true;
+				}
+				else if (StringComparer.Ordinal.Equals(property.Name, "txid"))
+				{
+					if (property.Value.ValueKind != JsonValueKind.String || property.Value.GetString() is not { } inputTxid)
+					{
+						throw InvalidResult(method, "an input 'txid' must be a canonical transaction identifier");
+					}
+					previousId = RequireCanonicalRefreshId(inputTxid, method);
+				}
+			}
+
+			if (hasCoinbase == (previousId is not null))
+			{
+				throw InvalidResult(method, "an input must carry exactly one of 'coinbase' or a previous 'txid'");
+			}
+
+			if (hasCoinbase)
+			{
+				inputs.Add(new ElementsWalletRefreshInput(null));
+			}
+			else
+			{
+				inputs.Add(new ElementsWalletRefreshInput(previousId));
+				if (seenPrevious.Add(previousId!))
+				{
+					previousIds.Add(previousId!);
+					if (!StringComparer.Ordinal.Equals(previousId, expectedTransactionId))
+					{
+						distinctDependencies.Add(previousId!);
+					}
+				}
+			}
+		}
+
+		return new ElementsWalletRefreshCandidate(
+			expectedTransactionId,
+			effectiveBlockHash,
+			effectiveHeight,
+			[.. inputs],
+			[.. previousIds]);
+	}
+
+	private static string RequireCanonicalRefreshId(string value, string method)
+	{
+		try
+		{
+			return ElementsNodeStatus.RequireHex32(value, method);
+		}
+		catch (ArgumentException)
+		{
+			throw InvalidResult(method, "a canonical nonzero lowercase 32-byte identifier is required");
+		}
+	}
+
 	public void Dispose()
 	{
 		_probeLock.Dispose();
@@ -1874,6 +2327,9 @@ public sealed class ElementsRpcClient : IDisposable
 	private const int MaxRawTransactionCount = 100;
 	private const int MaxRawTransactionHexBytes = MaxRawTransactionBytes * 2;
 	private const int MaxRawTransactionRpcResponseBytes = MaxRawTransactionHexBytes + 1024;
+
+	private const int MaxRefreshSelectedCandidates = 64;
+	private const int MaxRefreshRecentBlockCount = 6;
 
 	private sealed record RpcRequest(string Jsonrpc, string Id, string Method, object[] Params);
 

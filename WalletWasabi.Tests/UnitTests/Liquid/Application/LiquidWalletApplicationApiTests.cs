@@ -33,6 +33,7 @@ public sealed class LiquidWalletApplicationApiTests
 		Assert.NotNull(facade.GetMethod(nameof(LiquidWalletApplicationClient.OpenAsync), BindingFlags.Public | BindingFlags.Instance));
 		Assert.NotNull(facade.GetMethod(nameof(LiquidWalletApplicationClient.CloseAsync), BindingFlags.Public | BindingFlags.Instance));
 		Assert.NotNull(facade.GetProperty(nameof(LiquidWalletApplicationClient.CurrentHandoff)));
+		Assert.NotNull(facade.GetProperty(nameof(LiquidWalletApplicationClient.RefreshCommand)));
 		Assert.NotNull(facade.GetProperty(nameof(LiquidWalletApplicationClient.SendCommand)));
 		Assert.Null(facade.GetMethod("SendAsync", BindingFlags.Public | BindingFlags.Instance));
 
@@ -74,6 +75,41 @@ public sealed class LiquidWalletApplicationApiTests
 	}
 
 	[Fact]
+	public void RefreshDtosExposeOnlyFrozenFieldsAndValidateTriggerShape()
+	{
+		Assert.Equal(
+			[
+				nameof(LiquidWalletUiRefreshRequest.AcceptedTransactionIdHex),
+				nameof(LiquidWalletUiRefreshRequest.CanonicalWalletId),
+				nameof(LiquidWalletUiRefreshRequest.Trigger),
+			],
+			typeof(LiquidWalletUiRefreshRequest).GetProperties().Select(property => property.Name).Order().ToArray());
+		Assert.Equal(
+			[
+				nameof(LiquidWalletUiRefreshResult.AcceptedTransactionIdHex),
+				nameof(LiquidWalletUiRefreshResult.AppliedTransactionCount),
+				nameof(LiquidWalletUiRefreshResult.CandidateCount),
+				nameof(LiquidWalletUiRefreshResult.CanonicalWalletId),
+				nameof(LiquidWalletUiRefreshResult.HandoffPublished),
+				nameof(LiquidWalletUiRefreshResult.IsPostSubmit),
+				nameof(LiquidWalletUiRefreshResult.ResultGeneration),
+				nameof(LiquidWalletUiRefreshResult.ResultRevision),
+				nameof(LiquidWalletUiRefreshResult.Status),
+				nameof(LiquidWalletUiRefreshResult.Trigger),
+			],
+			typeof(LiquidWalletUiRefreshResult).GetProperties().Select(property => property.Name).Order().ToArray());
+
+		LiquidWalletUiRefreshRequest manual = new("alpha", LiquidWalletUiRefreshTrigger.Manual, null);
+		LiquidWalletUiRefreshRequest accepted = new("alpha", LiquidWalletUiRefreshTrigger.AcceptedSend, new string('1', 64));
+		Assert.Null(manual.AcceptedTransactionIdHex);
+		Assert.Equal(new string('1', 64), accepted.AcceptedTransactionIdHex);
+		Assert.Throws<ArgumentException>(() => new LiquidWalletUiRefreshRequest("alpha", LiquidWalletUiRefreshTrigger.Manual, new string('1', 64)));
+		Assert.Throws<ArgumentException>(() => new LiquidWalletUiRefreshRequest("alpha", LiquidWalletUiRefreshTrigger.AcceptedSend, null));
+		Assert.Throws<ArgumentException>(() => new LiquidWalletUiRefreshRequest(" alpha", LiquidWalletUiRefreshTrigger.Manual, null));
+		Assert.Throws<ArgumentException>(() => new LiquidWalletUiRefreshRequest("alpha", LiquidWalletUiRefreshTrigger.AcceptedSend, new string('0', 64)));
+	}
+
+	[Fact]
 	public async Task CompositionAndApplicationForwardExactStableFacadeCommandAsync()
 	{
 		await using LiquidWalletApplicationClient client = CreateClient();
@@ -103,6 +139,11 @@ public sealed class LiquidWalletApplicationApiTests
 		LiquidAuthenticatedRuntimeProvider provider = client.RuntimeProvider;
 
 		Assert.Same(provider, client.RuntimeProvider);
+		Assert.Same(client.RefreshCommand, client.RefreshCommand);
+		Assert.Same(provider.RefreshCommand, client.RefreshCommand);
+		Assert.Same(provider, client.RefreshCommand.Target!.GetType()
+			.GetField("_runtimeProvider", BindingFlags.Instance | BindingFlags.NonPublic)!
+			.GetValue(client.RefreshCommand.Target));
 		Assert.Same(client.SendCommand, client.SendCommand);
 		Assert.Same(provider, client.SendCommand.Target!.GetType()
 			.GetField("_runtimeProvider", BindingFlags.Instance | BindingFlags.NonPublic)!

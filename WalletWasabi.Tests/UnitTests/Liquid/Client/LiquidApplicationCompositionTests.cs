@@ -28,6 +28,7 @@ public sealed class LiquidApplicationCompositionTests
 
 		Assert.Same(applicationClient, composition.ApplicationClient);
 		Assert.Same(applicationClient.SendCommand, composition.SendCommand);
+		Assert.Same(applicationClient.RefreshCommand, composition.RefreshCommand);
 		Assert.Null(composition.PublicHandoff);
 
 		await composition.DisposeAsync();

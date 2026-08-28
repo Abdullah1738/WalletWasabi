@@ -270,7 +270,7 @@ public class LiquidWalletSyncSessionTests
 	}
 
 	[Fact]
-	public void CommitRejectsCrossAssetCreatedOutput()
+	public void CommitAcceptsNativeOwnedIssuedAssetWithPeggedContext()
 	{
 		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
 		LiquidWalletSyncSession session = Open(state);
@@ -278,7 +278,39 @@ public class LiquidWalletSyncSessionTests
 		LiquidWalletObservationBatch batch = Batch(
 			Observation(receiveId, [OwnedOutput(receiveId, 0, OtherPeggedAsset, 10)]));
 
-		AssertBaseStateUntouched(state, () => session.Commit(batch, []));
+		LiquidWalletSyncResult result = session.Commit(batch, []);
+
+		Assert.Equal(1, result.AppliedTransactionCount);
+		Assert.Equal(10, result.State.QueryAssetBalance(result.ResultRevision, OtherPeggedAsset).AtomicUnits);
+	}
+
+	[Fact]
+	public void CommitSkipsIdenticalAlreadyAppliedTransactionIdempotently()
+	{
+		// Repeated bounded discovery can surface the exact same observation the
+		// wallet already applied. Recommitting that identical replay is an
+		// idempotent skip: nothing is re-applied, no revision advances, and the
+		// resulting state is the unchanged base state.
+		LiquidTransactionId receiveId = Tx('a');
+		LiquidOwnedOutput received = Output(receiveId, 0, PeggedAsset, 100);
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(receiveId, [], [received]));
+		LiquidWalletSyncSession session = Open(state);
+		LiquidWalletObservationBatch batch = Batch(
+			Observation(
+				receiveId,
+				[OwnedOutput(receiveId, 0, PeggedAsset, 100)],
+				inputs: [LiquidOutPoint.CreateSpendable(Tx('9'), 0)]));
+
+		LiquidWalletSyncResult result = session.Commit(batch, []);
+
+		Assert.Equal(1ul, result.BaseRevision);
+		Assert.Equal(1ul, result.ResultRevision);
+		Assert.Equal(0, result.AppliedTransactionCount);
+		Assert.Same(state, result.State);
+		Assert.Equal(1, result.State.UnspentOutputCount);
+		Assert.True(result.State.ContainsUnspent(received.OutPoint));
+		Assert.Equal(100, result.State.QueryAssetBalance(1, PeggedAsset).AtomicUnits);
 	}
 
 	[Fact]
@@ -296,6 +328,33 @@ public class LiquidWalletSyncSessionTests
 
 		AssertBaseStateUntouched(state, () =>
 			session.Commit(LiquidWalletObservationBatch.Create([]), rows));
+	}
+
+	[Fact]
+	public void CommitSkipsIdenticalConfirmationReplayWithoutAdvancingRevision()
+	{
+		LiquidTransactionId receiveId = Tx('a');
+		LiquidConfirmation recorded = LiquidConfirmation.Create(ConfirmedBlockHashHex, 7);
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(receiveId, [], [Output(receiveId, 0, PeggedAsset, 100)]))
+			.Confirm(1, receiveId, recorded);
+		LiquidWalletSyncSession session = Open(state);
+		LiquidWalletSyncConfirmation[] rows =
+		[
+			LiquidWalletSyncConfirmation.Create(
+				LiquidWalletSyncConfirmationKind.Confirm,
+				receiveId,
+				recorded),
+		];
+
+		LiquidWalletSyncResult result = session.Commit(
+			LiquidWalletObservationBatch.Create([]),
+			rows);
+
+		Assert.Same(state, result.State);
+		Assert.Equal(state.Revision, result.ResultRevision);
+		Assert.Equal(0, result.AppliedTransactionCount);
+		Assert.Equal(0, result.ConfirmationCount);
 	}
 
 	[Fact]
@@ -448,9 +507,12 @@ public class LiquidWalletSyncSessionTests
 
 	// Required evidence row 6: single-writer advancement. Two sessions are
 	// opened against the same base state; once the first commit advances the
-	// wallet, a session opened against the advanced state that replays the
-	// same transaction fails on the existing double-apply guard, proving
-	// single-writer advancement.
+	// wallet, a second session bound to the advanced state that replays the
+	// already-applied transaction is handled deterministically: an exact
+	// identical replay is skipped idempotently (covered by
+	// CommitSkipsIdenticalAlreadyAppliedTransactionIdempotently), while a
+	// conflicting replay with different created data still fails on the
+	// existing double-apply guard, proving single-writer advancement.
 	[Fact]
 	public void SecondSessionCommitAfterFirstSucceedsFailsOnRevisionMismatch()
 	{
@@ -469,9 +531,15 @@ public class LiquidWalletSyncSessionTests
 		Assert.Equal(1ul, result.ResultRevision);
 
 		// A second session bound to the advanced state that replays the same
-		// transaction is rejected: it is already applied.
+		// transaction identifier with conflicting created data is rejected by
+		// the double-apply guard before any partial state escapes.
 		LiquidWalletSyncSession second = Open(result.State);
-		AssertBaseStateUntouched(result.State, () => second.Commit(batch, []));
+		LiquidWalletObservationBatch conflicting = Batch(
+			Observation(
+				receiveId,
+				[OwnedOutput(receiveId, 1, PeggedAsset, 7)],
+				inputs: [LiquidOutPoint.CreateSpendable(Tx('9'), 0)]));
+		AssertBaseStateUntouched(result.State, () => second.Commit(conflicting, []));
 		Assert.Equal(0ul, state.Revision);
 		Assert.Equal(0, state.UnspentOutputCount);
 		Assert.Equal(1ul, result.State.Revision);

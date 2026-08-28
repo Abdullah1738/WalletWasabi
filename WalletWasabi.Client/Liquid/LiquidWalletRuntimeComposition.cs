@@ -20,6 +20,7 @@ internal sealed class LiquidWalletRuntimeComposition : IAsyncDisposable
 	internal LiquidWalletApplicationClient ApplicationClient { get; }
 	internal LiquidWalletRuntimeHandoff? PublicHandoff => ApplicationClient.CurrentHandoff;
 	internal Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> SendCommand => ApplicationClient.SendCommand;
+	internal Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> RefreshCommand => ApplicationClient.RefreshCommand;
 	internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
 	public ValueTask DisposeAsync()

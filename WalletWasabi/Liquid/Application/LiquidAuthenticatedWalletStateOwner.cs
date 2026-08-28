@@ -21,6 +21,8 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 	private const string Slip77Info = "WalletWasabi/Liquid/v1/slip77";
 
 	private readonly LiquidWalletExternalIndexAllocation _allocation;
+	private readonly string _walletName;
+	private readonly ElementsPublicNetworkManifest _manifest;
 
 	private LiquidAuthenticatedWalletStateOwner(
 		LiquidWalletExternalIndexAllocation allocation,
@@ -29,13 +31,34 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 		string walletName,
 		ElementsPublicNetworkManifest manifest,
 		ElementsNodeExpectation nodeExpectation)
+		: this(
+			allocation,
+			receiveDerivation?.Descriptor ?? throw new ArgumentNullException(nameof(receiveDerivation)),
+			receiveDerivation.LastIndex,
+			new LiquidWalletUiReceiveMaterial(receiveDerivation.ScriptPubKey, blindingPublicKey),
+			walletName,
+			manifest,
+			nodeExpectation)
+	{
+	}
+
+	private LiquidAuthenticatedWalletStateOwner(
+		LiquidWalletExternalIndexAllocation allocation,
+		string descriptor,
+		ulong lastIndex,
+		LiquidWalletUiReceiveMaterial receiveMaterial,
+		string walletName,
+		ElementsPublicNetworkManifest manifest,
+		ElementsNodeExpectation nodeExpectation)
 	{
 		_allocation = allocation ?? throw new ArgumentNullException(nameof(allocation));
+		_walletName = walletName ?? throw new ArgumentNullException(nameof(walletName));
+		_manifest = manifest ?? throw new ArgumentNullException(nameof(manifest));
 		StateRevision = allocation.StateRevision;
 		PersistenceGeneration = allocation.PersistedGeneration;
-		Descriptor = receiveDerivation.Descriptor;
-		LastIndex = receiveDerivation.LastIndex;
-		ReceiveMaterial = new LiquidWalletUiReceiveMaterial(receiveDerivation.ScriptPubKey, blindingPublicKey);
+		Descriptor = descriptor ?? throw new ArgumentNullException(nameof(descriptor));
+		LastIndex = lastIndex;
+		ReceiveMaterial = receiveMaterial ?? throw new ArgumentNullException(nameof(receiveMaterial));
 		Balances = LiquidWalletUiFacade.CaptureAllocationBalances(walletName, manifest, allocation);
 		SelectableOutputs = LiquidWalletUiFacade.CaptureSelectableOutputs(walletName, manifest, allocation);
 		History = LiquidWalletUiFacade.CaptureAllocationHistory(walletName, manifest, allocation);
@@ -52,6 +75,59 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 	internal LiquidWalletUiSelectableOutputsSnapshot SelectableOutputs { get; }
 	internal LiquidWalletUiHistorySnapshot History { get; }
 	internal ElementsNodeExpectation NodeExpectation { get; }
+
+	/// <summary>The immutable wallet state this owner projects from (internal-only).</summary>
+	internal LiquidWalletState State => _allocation.State;
+
+	/// <summary>The persisted external receive-index high-water carried by this owner.</summary>
+	internal ulong ExternalIndexHighWater => _allocation.PersistedExternalIndexHighWater;
+
+	/// <summary>
+	/// Purely projects a complete replacement owner from a committed
+	/// <paramref name="committedState"/> and its persisted <paramref name="nextGeneration"/>.
+	/// The captured owner is never mutated; receive derivation material, descriptor, last-index,
+	/// and the external-index high-water are preserved (refresh allocates no receive index).
+	/// All projection/validation happens here, before any persistence. No key or RPC authority
+	/// is consulted or exposed.
+	/// </summary>
+	internal LiquidAuthenticatedWalletStateOwner CreateReplacement(
+		LiquidWalletState committedState,
+		ulong nextGeneration)
+	{
+		ArgumentNullException.ThrowIfNull(committedState);
+		if (committedState.Revision < StateRevision)
+		{
+			throw new InvalidOperationException("A replacement owner cannot regress the committed state revision.");
+		}
+		if (nextGeneration <= PersistenceGeneration)
+		{
+			throw new InvalidOperationException("A replacement owner requires a persistence generation that advances.");
+		}
+		if (!StringComparer.Ordinal.Equals(
+			committedState.PeggedAssetId.CanonicalRpcHex,
+			_manifest.PeggedAssetId))
+		{
+			throw new InvalidOperationException("A replacement owner requires a committed state bound to the owner's pegged asset.");
+		}
+
+		// Re-project through a replacement allocation that preserves the allocated receive
+		// index and the persisted external-index high-water while binding the committed
+		// state, its revision, and the next persistence generation.
+		var replacementAllocation = new LiquidWalletExternalIndexAllocation(
+			_allocation.Index,
+			committedState.Revision,
+			nextGeneration,
+			_allocation.PersistedExternalIndexHighWater,
+			committedState);
+		return new LiquidAuthenticatedWalletStateOwner(
+			replacementAllocation,
+			Descriptor,
+			LastIndex,
+			ReceiveMaterial,
+			_walletName,
+			_manifest,
+			NodeExpectation);
+	}
 
 	internal Task<ElementsExpectationBoundRawTransactionBatch> GetPreRefreshRawTransactionsAsync(
 		ElementsPublicNetworkManifest manifest,

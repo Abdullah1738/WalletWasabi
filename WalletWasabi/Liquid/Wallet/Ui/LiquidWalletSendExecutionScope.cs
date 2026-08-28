@@ -19,6 +19,7 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 {
 	private readonly Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<ElementsExpectationBoundRawTransactionBatch>> _acquireFundingSource;
 	private readonly Func<string, CancellationToken, Task> _scheduleRefresh;
+	private readonly Func<CancellationToken, Task> _scheduleManualRefresh;
 	private int _disposed;
 
 	internal LiquidWalletSendExecutionScope(
@@ -33,7 +34,8 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 		string expectedEffectiveFeeAsset,
 		string walletDataDirectory,
 		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<ElementsExpectationBoundRawTransactionBatch>> acquireFundingSource,
-		Func<string, CancellationToken, Task> scheduleRefresh)
+		Func<string, CancellationToken, Task> scheduleRefresh,
+		Func<CancellationToken, Task> scheduleManualRefresh)
 	{
 		ArgumentNullException.ThrowIfNull(replayProtectionKey);
 		ArgumentNullException.ThrowIfNull(externalWalletNetworkContext);
@@ -46,6 +48,7 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 		ArgumentException.ThrowIfNullOrEmpty(walletDataDirectory);
 		ArgumentNullException.ThrowIfNull(acquireFundingSource);
 		ArgumentNullException.ThrowIfNull(scheduleRefresh);
+		ArgumentNullException.ThrowIfNull(scheduleManualRefresh);
 		if (sourceEpoch.Length != 32)
 		{
 			throw new ArgumentException("A Liquid send execution source epoch must be exactly 32 bytes.", nameof(sourceEpoch));
@@ -64,6 +67,7 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 		WalletDataDirectory = walletDataDirectory;
 		_acquireFundingSource = acquireFundingSource;
 		_scheduleRefresh = scheduleRefresh;
+		_scheduleManualRefresh = scheduleManualRefresh;
 
 		// The scope owns the call-scoped signer: construct it here and dispose it in
 		// Dispose after the owned byte arrays are zeroized (V2 section 3 / amendment 6).
@@ -105,6 +109,12 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 		ArgumentException.ThrowIfNullOrEmpty(canonicalTransactionIdHex);
 		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 		return _scheduleRefresh(canonicalTransactionIdHex, cancellationToken);
+	}
+
+	public Task ScheduleManualRefreshAsync(CancellationToken cancellationToken)
+	{
+		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+		return _scheduleManualRefresh(cancellationToken);
 	}
 
 	/// <summary>

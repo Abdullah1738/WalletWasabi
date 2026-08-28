@@ -32,6 +32,7 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 	private readonly LiquidWalletDirectories _walletDirectories;
 	private readonly ElementsPublicNetworkManifestSource _manifestSource;
 	private readonly Action<string>? _sendRefreshSink;
+	private readonly Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> _refreshCommand;
 	private readonly Func<LiquidAuthenticatedWalletSession, CancellationToken, Task>? _beforePublicationAsync;
 	private readonly object _gate = new();
 	private LiquidAuthenticatedWalletSession? _session;
@@ -52,6 +53,7 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 		_walletDirectories = walletDirectories ?? throw new ArgumentNullException(nameof(walletDirectories));
 		_manifestSource = manifestSource ?? throw new ArgumentNullException(nameof(manifestSource));
 		_sendRefreshSink = sendRefreshSink;
+		_refreshCommand = LiquidWalletRefreshCommandService.CreateRefreshCommand(this);
 		_beforePublicationAsync = beforePublicationAsync;
 	}
 
@@ -307,7 +309,7 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 				_detachedClose = closeToComplete;
 				closeTask = closeToComplete.DisposeTask;
 				sessionToDispose = session;
-				if (ReferenceEquals(_currentHandoff, session.PublicHandoff))
+				if (ReferenceEquals(_currentHandoff, session.PublicHandoffOrNull))
 				{
 					_currentHandoff = null;
 				}
@@ -353,6 +355,40 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 		}
 	}
 
+	/// <summary>
+	/// The provider's nonthrowing refresh-publication sink. Publishes <paramref name="alreadyInstalledHandoff"/>
+	/// as the current public handoff only when <paramref name="session"/> is still the exact published session
+	/// and <paramref name="alreadyInstalledHandoff"/> is that session's current snapshot handoff. When the
+	/// session was detached/closed or the handoff is not the session's live pair, publication is a no-op and
+	/// this returns <see langword="false"/>; it never republishes a closing wallet and never throws after a
+	/// successful save. Runs entirely under the provider gate; it never awaits and never invokes callbacks.
+	/// </summary>
+	internal bool TryPublishRefresh(
+		LiquidAuthenticatedWalletSession session,
+		LiquidWalletRuntimeHandoff alreadyInstalledHandoff)
+	{
+		if (session is null || alreadyInstalledHandoff is null)
+		{
+			return false;
+		}
+
+		lock (_gate)
+		{
+			if (!ReferenceEquals(_session, session))
+			{
+				return false;
+			}
+
+			if (!ReferenceEquals(session.PublicHandoff, alreadyInstalledHandoff))
+			{
+				return false;
+			}
+
+			_currentHandoff = alreadyInstalledHandoff;
+			return true;
+		}
+	}
+
 	public ValueTask DisposeAsync()
 	{
 		TaskCompletionSource<object?> completion;
@@ -375,7 +411,7 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 			session = _session;
 			_session = null;
 			drainTask = session?.BeginCloseUnderProviderGate() ?? Task.CompletedTask;
-			if (session is not null && ReferenceEquals(_currentHandoff, session.PublicHandoff))
+			if (session is not null && ReferenceEquals(_currentHandoff, session.PublicHandoffOrNull))
 			{
 				_currentHandoff = null;
 			}
@@ -573,6 +609,9 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 		canonicalWalletId + "\0" + networkManifestId;
 
 	internal string ManifestId => _manifestSource.ManifestId;
+
+	internal Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> RefreshCommand =>
+		_refreshCommand;
 
 	private sealed record DetachedClose(string RegistryKey)
 	{

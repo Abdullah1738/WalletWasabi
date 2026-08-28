@@ -33,6 +33,7 @@ public sealed class LiquidWalletSendExecutionCommandService
 
 	private readonly LiquidAuthenticatedRuntimeProvider _runtimeProvider;
 	private readonly ElementsPublicNetworkManifest _manifest;
+	private readonly Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> _refreshCommand;
 	private readonly Dictionary<string, byte> _activeExecutions = new(StringComparer.Ordinal);
 	private readonly object _fenceGate = new();
 	private readonly LiquidWalletSendExecutor _executor;
@@ -45,6 +46,7 @@ public sealed class LiquidWalletSendExecutionCommandService
 	private LiquidWalletSendExecutionCommandService(
 		LiquidAuthenticatedRuntimeProvider runtimeProvider,
 		ElementsPublicNetworkManifest manifest,
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>>? refreshCommand = null,
 		Func<
 			LiquidWalletUiSendExecutionRequest,
 			ILiquidWalletSendExecutionScopeFactory,
@@ -59,6 +61,9 @@ public sealed class LiquidWalletSendExecutionCommandService
 				"The authenticated Liquid runtime provider must match the send manifest.",
 				nameof(manifest));
 		}
+		// The accepted-send path must invoke the exact shared refresh delegate the facade exposes.
+		// Default to the provider's own instance so production composition shares one reference.
+		_refreshCommand = refreshCommand ?? runtimeProvider.RefreshCommand;
 		_executor = new LiquidWalletSendExecutor(manifest);
 		_execute = execute ?? _executor.ExecuteAsync;
 	}
@@ -85,13 +90,14 @@ public sealed class LiquidWalletSendExecutionCommandService
 				LiquidWalletUiSendExecutionRequest,
 				ILiquidWalletSendExecutionScopeFactory,
 				CancellationToken,
-				Task<LiquidWalletUiSendExecutionResult>> execute)
+				Task<LiquidWalletUiSendExecutionResult>> execute,
+			Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>>? refreshCommand = null)
 	{
 		ArgumentNullException.ThrowIfNull(runtimeProvider);
 		ArgumentNullException.ThrowIfNull(execute);
 		ElementsPublicNetworkManifest manifest =
 			ElementsPublicNetworkManifest.GetByManifestId(runtimeProvider.ManifestId);
-		LiquidWalletSendExecutionCommandService service = new(runtimeProvider, manifest, execute);
+		LiquidWalletSendExecutionCommandService service = new(runtimeProvider, manifest, refreshCommand, execute);
 		return service.ExecuteAsync;
 	}
 
@@ -123,7 +129,8 @@ public sealed class LiquidWalletSendExecutionCommandService
 		{
 			ILiquidWalletSendExecutionScopeFactory scopeFactory = new ProviderScopeFactory(
 				operationLease.Session,
-				_manifest);
+				_manifest,
+				_refreshCommand);
 			return await _execute(request, scopeFactory, cancellationToken)
 				.ConfigureAwait(false);
 		}
@@ -147,13 +154,16 @@ public sealed class LiquidWalletSendExecutionCommandService
 	{
 		private readonly LiquidAuthenticatedWalletSession _session;
 		private readonly ElementsPublicNetworkManifest _manifest;
+		private readonly Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> _refreshCommand;
 
 		internal ProviderScopeFactory(
 			LiquidAuthenticatedWalletSession session,
-			ElementsPublicNetworkManifest manifest)
+			ElementsPublicNetworkManifest manifest,
+			Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> refreshCommand)
 		{
 			_session = session;
 			_manifest = manifest;
+			_refreshCommand = refreshCommand ?? throw new ArgumentNullException(nameof(refreshCommand));
 		}
 
 		public ILiquidWalletSendExecutionScope Open(string walletName)
@@ -207,6 +217,7 @@ public sealed class LiquidWalletSendExecutionCommandService
 			ulong lastIndex = session.LastIndex;
 			ElementsRpcClient rpcClient = session.RpcClient;
 			string walletDataDirectory = session.WalletDataDirectory;
+			string canonicalWalletId = session.Identity.CanonicalWalletId;
 			Action<string> recordAcceptedTxid = session.RecordAcceptedTransactionId;
 
 			return new LiquidWalletSendExecutionScope(
@@ -221,7 +232,44 @@ public sealed class LiquidWalletSendExecutionCommandService
 				_manifest.PeggedAssetId,
 				walletDataDirectory,
 				(request, ct) => AcquireFundingSourceAsync(rpcClient, _manifest.PeggedAssetId, request, ct),
-				(canonicalTransactionIdHex, ct) => ScheduleRefreshAsync(recordAcceptedTxid, canonicalTransactionIdHex, ct));
+				(canonicalTransactionIdHex, ct) => ScheduleAcceptedRefreshAsync(recordAcceptedTxid, canonicalWalletId, canonicalTransactionIdHex, ct),
+				ct => ScheduleManualRefreshAsync(canonicalWalletId, ct));
+		}
+
+		private async Task ScheduleAcceptedRefreshAsync(
+			Action<string> recordAcceptedTransactionId,
+			string canonicalWalletId,
+			string canonicalTransactionIdHex,
+			CancellationToken cancellationToken)
+		{
+			// Mandatory ordering (brief section 4): once node acceptance is proven, the accepted
+			// canonical id is recorded BEFORE cancellation is consulted, so caller cancellation can
+			// never erase knowledge of the accepted transaction. Then the exact shared refresh
+			// delegate is invoked once with Trigger = AcceptedSend and awaited; never queued,
+			// fire-and-forget, merged, or retried.
+			LiquidTransactionId acceptedId = LiquidTransactionId.ParseRpcHex(canonicalTransactionIdHex);
+			recordAcceptedTransactionId(acceptedId.CanonicalRpcHex);
+
+			var request = new LiquidWalletUiRefreshRequest(
+				canonicalWalletId,
+				LiquidWalletUiRefreshTrigger.AcceptedSend,
+				acceptedId.CanonicalRpcHex);
+			_ = await _refreshCommand(request, cancellationToken).ConfigureAwait(false);
+		}
+
+		private async Task ScheduleManualRefreshAsync(
+			string canonicalWalletId,
+			CancellationToken cancellationToken)
+		{
+			// Submission ambiguity is not proven acceptance: invoke the same shared refresh delegate
+			// as Manual with no accepted id so bounded node discovery may find the transaction. No
+			// accepted id is recorded, ambiguity never becomes acceptance, and no second broadcast
+			// is ever issued.
+			var request = new LiquidWalletUiRefreshRequest(
+				canonicalWalletId,
+				LiquidWalletUiRefreshTrigger.Manual,
+				acceptedTransactionIdHex: null);
+			_ = await _refreshCommand(request, cancellationToken).ConfigureAwait(false);
 		}
 
 		private static async Task<ElementsExpectationBoundRawTransactionBatch> AcquireFundingSourceAsync(
@@ -269,25 +317,6 @@ public sealed class LiquidWalletSendExecutionCommandService
 				expectedEffectiveFeeAsset,
 				requests,
 				cancellationToken).ConfigureAwait(false);
-		}
-
-		private static Task ScheduleRefreshAsync(
-			Action<string> recordAcceptedTransactionId,
-			string canonicalTransactionIdHex,
-			CancellationToken cancellationToken)
-		{
-			cancellationToken.ThrowIfCancellationRequested();
-
-			// The command service owns the landed scan-intent scheduling: it derives the
-			// bounded fetch intent from the accepted canonical id and records the txid against
-			// the session's refresh sink, which durably records it for the next scan cycle.
-			LiquidTransactionId acceptedId = LiquidTransactionId.ParseRpcHex(canonicalTransactionIdHex);
-			LiquidWalletScanIntent scanIntent = LiquidWalletScanIntent.Create(acceptedId, blockHash: null);
-			LiquidWalletScanIntentDerivation derivation = LiquidWalletScanIntentDeriver.Derive([scanIntent]);
-			_ = derivation;
-
-			recordAcceptedTransactionId(acceptedId.CanonicalRpcHex);
-			return Task.CompletedTask;
 		}
 
 		// HKDF-SHA256, 32-byte output, UTF-8 info. Local to this assembly: the Client's

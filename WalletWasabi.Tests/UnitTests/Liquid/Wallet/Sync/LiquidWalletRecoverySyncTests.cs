@@ -447,12 +447,10 @@ public class LiquidWalletRecoverySyncTests
 			LiquidWalletRecoverySyncPlan.Reconcile(snapshot, null!));
 	}
 
-	// Required evidence row 4: revision contention. Two RestoreAndSync calls against
-	// the same snapshot where the caller commits the first result's state through a
-	// second session: the stale-session EnsureRevision guard fires, exactly as in
-	// the SYNC-001 concurrency row.
+	// Required evidence row 4: an exact replay is idempotent, while a conflicting
+	// replay remains fail-closed.
 	[Fact]
-	public void SecondRestoreAndSyncAfterFirstAdvancesFailsOnRevisionContention()
+	public void SecondRestoreAndSyncAfterFirstAdvancesSkipsIdenticalReplay()
 	{
 		LiquidWalletReplaySnapshot snapshot = LiquidWalletReplaySnapshot.Create(PeggedAsset, 0, [], []);
 		LiquidTransactionId receiveId = Tx('a');
@@ -473,18 +471,38 @@ public class LiquidWalletRecoverySyncTests
 		Assert.Equal(1ul, first.ResultRevision);
 
 		// A second recovery against the same snapshot replays the same transaction
-		// through a fresh session bound to the already-advanced state; the existing
-		// double-apply guard rejects it before any partial state escapes.
+		// through a fresh session bound to the already-advanced state. The exact
+		// replay is skipped idempotently without advancing the revision.
 		LiquidWalletSyncSession second = LiquidWalletSyncSession.Open(
 			first.State,
 			Observation(),
 			PeggedAssetHex);
-		ulong advancedRevision = first.State.Revision;
-		int advancedUnspent = first.State.UnspentOutputCount;
-		Assert.Throws<InvalidOperationException>(() => second.Commit(batch, []));
-		Assert.Equal(advancedRevision, first.State.Revision);
-		Assert.Equal(advancedUnspent, first.State.UnspentOutputCount);
+		LiquidWalletSyncResult replay = second.Commit(batch, []);
+		Assert.Equal(1ul, replay.BaseRevision);
+		Assert.Equal(first.ResultRevision, replay.ResultRevision);
+		Assert.Equal(0, replay.AppliedTransactionCount);
+		Assert.Same(first.State, replay.State);
+		Assert.Equal(1, replay.State.UnspentOutputCount);
 		// The caller's snapshot is unchanged throughout.
+		Assert.Equal(0ul, snapshot.Revision);
+		Assert.Empty(snapshot.GetDeltas());
+		Assert.Empty(snapshot.GetConfirmations());
+
+		// The same transaction identifier with conflicting created data remains
+		// rejected before any partial state escapes.
+		LiquidWalletSyncSession conflictingSession = LiquidWalletSyncSession.Open(
+			first.State,
+			Observation(),
+			PeggedAssetHex);
+		LiquidWalletObservationBatch conflicting = Batch(
+			Observation(
+				receiveId,
+				[OwnedOutput(receiveId, 1, PeggedAsset, 7)],
+				inputs: [LiquidOutPoint.CreateSpendable(Tx('9'), 0)]));
+		Assert.Throws<InvalidOperationException>(() => conflictingSession.Commit(conflicting, []));
+		Assert.Same(first.State, replay.State);
+		Assert.Equal(1ul, first.State.Revision);
+		Assert.Equal(1, first.State.UnspentOutputCount);
 		Assert.Equal(0ul, snapshot.Revision);
 		Assert.Empty(snapshot.GetDeltas());
 	}

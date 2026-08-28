@@ -210,7 +210,7 @@ internal sealed class LiquidWalletSendExecutor
 				receipt.AcceptedTransactionIdHex,
 				localTransactionIdHex))
 			{
-				await TryScheduleRefreshAsync(scope, localTransactionIdHex, cancellationToken)
+				await TryScheduleManualRefreshAsync(scope, cancellationToken)
 					.ConfigureAwait(false);
 				return new LiquidWalletUiSendExecutionResult(
 					LiquidWalletUiSendExecutionStatus.SubmissionAmbiguous,
@@ -224,20 +224,13 @@ internal sealed class LiquidWalletSendExecutor
 					"send-submission-ambiguous");
 			}
 
-			// Step 12: on a matching receipt, construct the internal scan intent from the
-			// validated canonical RPC-order hex, derive the bounded fetch intent, and invoke the
-			// application-owned state-refresh handoff. This schedules or performs the landed
-			// fetch/sync path; it does not claim immediate confirmation.
+			// Step 12: on a matching receipt, the scope records the validated canonical accepted
+			// transaction id (before consulting cancellation) and invokes the exact shared refresh
+			// delegate once with Trigger = AcceptedSend. This schedules or performs the landed
+			// fetch/sync path; it does not claim immediate confirmation. No scan intent is derived
+			// and discarded here — intent derivation occurs exactly once inside the refresh service.
 			try
 			{
-				LiquidTransactionId acceptedId =
-					LiquidTransactionId.ParseRpcHex(localTransactionIdHex);
-				LiquidWalletScanIntent scanIntent =
-					LiquidWalletScanIntent.Create(acceptedId, blockHash: null);
-				LiquidWalletScanIntentDerivation derivation =
-					LiquidWalletScanIntentDeriver.Derive([scanIntent]);
-				_ = derivation;
-
 				await scope.ScheduleRefreshAsync(localTransactionIdHex, cancellationToken)
 					.ConfigureAwait(false);
 			}
@@ -348,10 +341,10 @@ internal sealed class LiquidWalletSendExecutor
 		}
 
 		// Any non-RPC-kind failure, or a failure whose stage cannot be proven pre-submit, is
-		// ambiguous. The local id exists, so schedule a txid-directed scan/fetch handoff when
-		// possible (best-effort; a handoff failure does not change the ambiguous status and
-		// never triggers a resubmission).
-		await TryScheduleRefreshAsync(scope, localTransactionIdHex, cancellationToken)
+		// ambiguous. Invoke a best-effort manual discovery refresh so bounded node discovery may
+		// find the transaction; it records no accepted id, never transforms ambiguity into
+		// acceptance, and never triggers a resubmission.
+		await TryScheduleManualRefreshAsync(scope, cancellationToken)
 			.ConfigureAwait(false);
 		return new LiquidWalletUiSendExecutionResult(
 			LiquidWalletUiSendExecutionStatus.SubmissionAmbiguous,
@@ -365,14 +358,13 @@ internal sealed class LiquidWalletSendExecutor
 			"send-submission-ambiguous");
 	}
 
-	private static async Task TryScheduleRefreshAsync(
+	private static async Task TryScheduleManualRefreshAsync(
 		ILiquidWalletSendExecutionScope scope,
-		string localTransactionIdHex,
 		CancellationToken cancellationToken)
 	{
 		try
 		{
-			await scope.ScheduleRefreshAsync(localTransactionIdHex, cancellationToken)
+			await scope.ScheduleManualRefreshAsync(cancellationToken)
 				.ConfigureAwait(false);
 		}
 		catch (Exception)
