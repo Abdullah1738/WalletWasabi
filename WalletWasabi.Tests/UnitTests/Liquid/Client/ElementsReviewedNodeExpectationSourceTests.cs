@@ -3,7 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text.Json;
-using WalletWasabi.Client.Liquid;
+using WalletWasabi.Liquid.Application;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Tests.Helpers;
@@ -83,7 +83,7 @@ public sealed class ElementsReviewedNodeExpectationSourceTests
 	public void ProductionCatalogShapeIsClosedOneToOneAndObservationFree()
 	{
 		ElementsReviewedNodeExpectationSource.AssertCatalogShape();
-		string source = File.ReadAllText(Path.Combine(RepositoryRoot(), "WalletWasabi.Client", "Liquid", "ElementsReviewedNodeExpectationSource.cs"));
+		string source = File.ReadAllText(Path.Combine(RepositoryRoot(), "WalletWasabi", "Liquid", "Application", "ElementsReviewedNodeExpectationSource.cs"));
 		Assert.DoesNotContain("Http", source, StringComparison.Ordinal);
 		Assert.DoesNotContain("RpcClient", source, StringComparison.Ordinal);
 		Assert.DoesNotContain("Json", source, StringComparison.Ordinal);
@@ -141,12 +141,12 @@ public sealed class ElementsReviewedNodeExpectationSourceTests
 	[Fact]
 	public void FreshChildBindsReviewedManifestWithoutObservationInput()
 	{
-		string clientAssembly = typeof(LiquidAuthenticatedRuntimeProvider).Assembly.Location;
+		string coreAssembly = typeof(LiquidAuthenticatedRuntimeProvider).Assembly.Location;
 		string childPath = RoslynFreshChildHarness.CompileChildAssembly(
 			"""
 			using System;
 			using System.Text.Json;
-			using WalletWasabi.Client.Liquid;
+			using WalletWasabi.Liquid.Application;
 			using WalletWasabi.Liquid.Network;
 
 			string input = Console.In.ReadToEnd();
@@ -159,8 +159,8 @@ public sealed class ElementsReviewedNodeExpectationSourceTests
 			""",
 			"pre-refresh-node-expectation-child",
 			"PreRefreshNodeExpectationChild.dll",
-			[clientAssembly, typeof(Uri).Assembly.Location]);
-		File.Copy(clientAssembly, Path.Combine(Path.GetDirectoryName(childPath)!, "WalletWasabi.Client.dll"), overwrite: true);
+			[coreAssembly, typeof(Uri).Assembly.Location]);
+		File.Copy(coreAssembly, Path.Combine(Path.GetDirectoryName(childPath)!, "WalletWasabi.dll"), overwrite: true);
 
 		using JsonDocument output = RoslynFreshChildHarness.RunChild(
 			childPath,

@@ -8,7 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
-namespace WalletWasabi.Client.Liquid;
+namespace WalletWasabi.Liquid.Application;
 
 internal sealed record LiquidRpcProfile(
 	string Name,

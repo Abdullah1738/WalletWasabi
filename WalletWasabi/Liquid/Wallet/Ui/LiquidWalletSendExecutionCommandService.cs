@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
 using NBitcoin;
+using WalletWasabi.Liquid.Application;
 using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
@@ -30,54 +31,68 @@ public sealed class LiquidWalletSendExecutionCommandService
 	private const string ContextKeyInfo = "WalletWasabi/Liquid/v1/context";
 	private const string Slip77Info = "WalletWasabi/Liquid/v1/slip77";
 
-	private readonly ILiquidWalletSendSessionSource _sessionSource;
+	private readonly LiquidAuthenticatedRuntimeProvider _runtimeProvider;
 	private readonly ElementsPublicNetworkManifest _manifest;
 	private readonly Dictionary<string, byte> _activeExecutions = new(StringComparer.Ordinal);
 	private readonly object _fenceGate = new();
 	private readonly LiquidWalletSendExecutor _executor;
+	private readonly Func<
+		LiquidWalletUiSendExecutionRequest,
+		ILiquidWalletSendExecutionScopeFactory,
+		CancellationToken,
+		Task<LiquidWalletUiSendExecutionResult>> _execute;
 
 	private LiquidWalletSendExecutionCommandService(
-		ILiquidWalletSendSessionSource sessionSource,
-		ElementsPublicNetworkManifest manifest)
+		LiquidAuthenticatedRuntimeProvider runtimeProvider,
+		ElementsPublicNetworkManifest manifest,
+		Func<
+			LiquidWalletUiSendExecutionRequest,
+			ILiquidWalletSendExecutionScopeFactory,
+			CancellationToken,
+			Task<LiquidWalletUiSendExecutionResult>>? execute = null)
 	{
-		_sessionSource = sessionSource ?? throw new ArgumentNullException(nameof(sessionSource));
+		_runtimeProvider = runtimeProvider ?? throw new ArgumentNullException(nameof(runtimeProvider));
 		_manifest = manifest ?? throw new ArgumentNullException(nameof(manifest));
+		if (!StringComparer.Ordinal.Equals(runtimeProvider.ManifestId, manifest.ManifestId))
+		{
+			throw new ArgumentException(
+				"The authenticated Liquid runtime provider must match the send manifest.",
+				nameof(manifest));
+		}
 		_executor = new LiquidWalletSendExecutor(manifest);
+		_execute = execute ?? _executor.ExecuteAsync;
 	}
 
 	/// <summary>
-	/// The composition-time factory. <paramref name="sessionSource"/> is the typed session source
-	/// the Client composition root supplies (its only implementation is the internal Client
-	/// authenticated runtime provider); the command service resolves one open session by canonical
-	/// wallet id through it at scope-open time. The seam is fully typed — no
-	/// <see langword="dynamic"/>, no opaque <see cref="object"/>, no <c>Func&lt;object, ...&gt;</c>,
-	/// and no <c>InternalsVisibleTo</c>. The returned delegate is the entire public command surface;
-	/// the Client stores only it.
+	/// Internal core composition path. The returned command acquires one provider operation lease
+	/// before reading any session authority and releases it only after the executor has completed,
+	/// including scope disposal and accepted-transaction recording.
 	/// </summary>
-	public static Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>>
-		CreateSendCommand(
-			ILiquidWalletSendSessionSource sessionSource,
-			ElementsPublicNetworkManifest manifest)
+	internal static Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>>
+		CreateSendCommand(LiquidAuthenticatedRuntimeProvider runtimeProvider)
 	{
-		LiquidWalletSendExecutionCommandService service = new(sessionSource, manifest);
+		ArgumentNullException.ThrowIfNull(runtimeProvider);
+		ElementsPublicNetworkManifest manifest =
+			ElementsPublicNetworkManifest.GetByManifestId(runtimeProvider.ManifestId);
+		LiquidWalletSendExecutionCommandService service = new(runtimeProvider, manifest);
 		return service.ExecuteAsync;
 	}
 
-	/// <summary>
-	/// Composition-time overload that resolves the reviewed <see cref="ElementsPublicNetworkManifest"/>
-	/// from the session source's bound manifest id (ordinal, via
-	/// <see cref="ElementsPublicNetworkManifest.GetByManifestId"/>). Fail-closed: a manifest id with
-	/// no reviewed manifest (including the Liquid regtest binding, whose reviewed manifest has not
-	/// landed) throws at composition time and no send command is produced. Never fabricates a
-	/// manifest.
-	/// </summary>
-	public static Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>>
-		CreateSendCommand(ILiquidWalletSendSessionSource sessionSource)
+	internal static Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>>
+		CreateSendCommandForTesting(
+			LiquidAuthenticatedRuntimeProvider runtimeProvider,
+			Func<
+				LiquidWalletUiSendExecutionRequest,
+				ILiquidWalletSendExecutionScopeFactory,
+				CancellationToken,
+				Task<LiquidWalletUiSendExecutionResult>> execute)
 	{
-		ArgumentNullException.ThrowIfNull(sessionSource);
+		ArgumentNullException.ThrowIfNull(runtimeProvider);
+		ArgumentNullException.ThrowIfNull(execute);
 		ElementsPublicNetworkManifest manifest =
-			ElementsPublicNetworkManifest.GetByManifestId(sessionSource.ManifestId);
-		return CreateSendCommand(sessionSource, manifest);
+			ElementsPublicNetworkManifest.GetByManifestId(runtimeProvider.ManifestId);
+		LiquidWalletSendExecutionCommandService service = new(runtimeProvider, manifest, execute);
+		return service.ExecuteAsync;
 	}
 
 	/// <summary>
@@ -92,6 +107,9 @@ public sealed class LiquidWalletSendExecutionCommandService
 	{
 		ArgumentNullException.ThrowIfNull(request);
 
+		using LiquidWalletOperationLease operationLease =
+			_runtimeProvider.AcquireOperation(request.WalletName);
+
 		lock (_fenceGate)
 		{
 			if (!_activeExecutions.TryAdd(request.WalletName, 0))
@@ -103,10 +121,10 @@ public sealed class LiquidWalletSendExecutionCommandService
 
 		try
 		{
-			ILiquidWalletSendExecutionScopeFactory scopeFactory = new SessionScopeFactory(
-				_sessionSource,
+			ILiquidWalletSendExecutionScopeFactory scopeFactory = new ProviderScopeFactory(
+				operationLease.Session,
 				_manifest);
-			return await _executor.ExecuteAsync(request, scopeFactory, cancellationToken)
+			return await _execute(request, scopeFactory, cancellationToken)
 				.ConfigureAwait(false);
 		}
 		finally
@@ -119,25 +137,22 @@ public sealed class LiquidWalletSendExecutionCommandService
 	}
 
 	/// <summary>
-	/// The per-call execution scope factory. Resolves the authenticated session for the named
-	/// wallet through the typed composition-supplied source and re-derives every secret-bearing
-	/// value from the session's retained authenticated master at scope-open time — never
-	/// re-reading a file, never asking the caller, never a service locator. All mutable byte
-	/// arrays the scope builds are owned and zeroized on dispose; the call-scoped signer is
-	/// the one the scope owns; the shared RPC client is never disposed by the scope. Every
-	/// session value is reached through the typed <see cref="ILiquidWalletSendSession"/> seam —
-	/// no <see langword="dynamic"/>, no opaque <see cref="object"/>.
+	/// The per-call execution scope factory. Re-derives every secret-bearing value from the
+	/// leased authenticated session's retained master at scope-open time — never re-reading a
+	/// file, never asking the caller, never a service locator. All mutable byte arrays the scope
+	/// builds are owned and zeroized on dispose; the call-scoped signer is the one the scope owns;
+	/// the shared RPC client is never disposed by the scope.
 	/// </summary>
-	private sealed class SessionScopeFactory : ILiquidWalletSendExecutionScopeFactory
+	private sealed class ProviderScopeFactory : ILiquidWalletSendExecutionScopeFactory
 	{
-		private readonly ILiquidWalletSendSessionSource _sessionSource;
+		private readonly LiquidAuthenticatedWalletSession _session;
 		private readonly ElementsPublicNetworkManifest _manifest;
 
-		internal SessionScopeFactory(
-			ILiquidWalletSendSessionSource sessionSource,
+		internal ProviderScopeFactory(
+			LiquidAuthenticatedWalletSession session,
 			ElementsPublicNetworkManifest manifest)
 		{
-			_sessionSource = sessionSource;
+			_session = session;
 			_manifest = manifest;
 		}
 
@@ -145,18 +160,16 @@ public sealed class LiquidWalletSendExecutionCommandService
 		{
 			ArgumentException.ThrowIfNullOrEmpty(walletName);
 
-			ILiquidWalletSendSession session = _sessionSource.TryGetOpenSession(walletName)
-				?? throw new InvalidOperationException(
-					"No authenticated Liquid wallet session is open for the named wallet.");
+			LiquidAuthenticatedWalletSession session = _session;
 
-			// Fail-closed ordinal guard: the resolved session must be the session for the wallet the
+			// Fail-closed ordinal guard: the leased session must be the session for the wallet the
 			// request names. The session is the single source of truth for the wallet data
 			// directory; the request carries no directory copy, so this guard binds the request to
 			// the exact session before any directory/key material is read.
-			if (!StringComparer.Ordinal.Equals(session.CanonicalWalletId, walletName))
+			if (!StringComparer.Ordinal.Equals(session.Identity.CanonicalWalletId, walletName))
 			{
 				throw new InvalidOperationException(
-					"The resolved Liquid wallet session does not match the named wallet.");
+					"The authenticated Liquid wallet session does not match the named wallet.");
 			}
 
 			ExtKey master = session.AuthenticatedMaster;
@@ -172,7 +185,7 @@ public sealed class LiquidWalletSendExecutionCommandService
 				byte[] keyMaterial = replayContextChild.PrivateKey.ToBytes();
 				try
 				{
-					string networkManifestId = session.NetworkManifestId;
+											string networkManifestId = session.Identity.NetworkManifestId;
 					byte[] salt = ComputePersistenceSalt(networkManifestId, walletName);
 					replayProtectionKey = DeriveHkdf(keyMaterial, salt, ReplayKeyInfo);
 					externalWalletNetworkContext = DeriveHkdf(keyMaterial, salt, ContextKeyInfo);

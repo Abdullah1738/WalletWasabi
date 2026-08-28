@@ -31,6 +31,15 @@ public record WasabiAppBuilder(string AppName, string[] Arguments)
 	public WasabiApplication Build() =>
 		Build(ApplicationRuntime.Bitcoin);
 
+	public WasabiApplication BuildLiquid(string reviewedManifestId)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(reviewedManifestId);
+		return WasabiApplication.CreateLiquid(this, reviewedManifestId);
+	}
+
+	public WasabiApplication BuildLiquid() =>
+		throw new InvalidOperationException("An explicit reviewed Liquid manifest ID is required.");
+
 	internal WasabiApplication Build(ApplicationRuntime runtime) =>
 		SelectApplication(runtime, () => new WasabiApplication(this));
 
@@ -40,8 +49,7 @@ public record WasabiAppBuilder(string AppName, string[] Arguments)
 		runtime switch
 		{
 			ApplicationRuntime.Bitcoin => InvokeFactory(applicationFactory),
-			ApplicationRuntime.Liquid when typeof(TApplication) == typeof(WasabiApplication) => (TApplication)(object)WasabiApplication.CreateLiquid(this),
-			ApplicationRuntime.Liquid => throw new NotSupportedException("Liquid application composition is only available for WasabiApplication."),
+			ApplicationRuntime.Liquid => throw new InvalidOperationException("An explicit reviewed Liquid manifest ID is required."),
 			_ => throw new ArgumentOutOfRangeException(nameof(runtime), runtime, "An explicit supported application runtime is required."),
 		};
 

@@ -9,9 +9,9 @@ using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Liquid.Wallet.Ui;
 
-namespace WalletWasabi.Client.Liquid;
+namespace WalletWasabi.Liquid.Application;
 
-internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiquidWalletSendSession
+internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable
 {
 	// The bounded accepted-txid record for the next scan cycle: newest-first, ordinal,
 	// distinct. The send-execution command service's refresh sink records here; the landed
@@ -19,10 +19,14 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 	private const int MaxRecordedAcceptedTransactionIds = 64;
 
 	private readonly object _refreshGate = new();
+	private readonly object _lifetimeGate = new();
 	private readonly List<string> _acceptedTransactionIds = [];
 	private readonly Action<string>? _compositionRefreshSink;
 	private readonly ElementsPublicNetworkManifest _manifest;
-	private int _disposed;
+	private int _activeOperationCount;
+	private bool _closing;
+	private TaskCompletionSource<object?>? _drained;
+	private Task? _disposeTask;
 
 	internal LiquidAuthenticatedWalletSession(
 		LiquidWalletIdentity identity,
@@ -87,18 +91,84 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 	/// <summary>The directory the wallet's landed state files live under (non-secret).</summary>
 	internal string WalletDataDirectory { get; }
 
-	internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+	internal bool IsDisposed
+	{
+		get
+		{
+			lock (_lifetimeGate)
+			{
+				return _disposeTask?.IsCompleted == true;
+			}
+		}
+	}
 
-	// ILiquidWalletSendSession forwarders: the interface is the command-service-facing view
-	// of this same instance; every member is already retained here.
-	string ILiquidWalletSendSession.CanonicalWalletId => Identity.CanonicalWalletId;
-	string ILiquidWalletSendSession.NetworkManifestId => Identity.NetworkManifestId;
-	ExtKey ILiquidWalletSendSession.AuthenticatedMaster => AuthenticatedMaster;
-	string ILiquidWalletSendSession.Descriptor => Descriptor;
-	ulong ILiquidWalletSendSession.LastIndex => LastIndex;
-	ILiquidWalletSigner ILiquidWalletSendSession.SignerKeyAdapter => SignerKeyAdapter;
-	ElementsRpcClient ILiquidWalletSendSession.RpcClient => RpcClient;
-	string ILiquidWalletSendSession.WalletDataDirectory => WalletDataDirectory;
+	internal LiquidWalletOperationLease AcquireOperationUnderProviderGate()
+	{
+		lock (_lifetimeGate)
+		{
+			if (_closing)
+			{
+				throw new InvalidOperationException("The Liquid wallet session is closing.");
+			}
+
+			_activeOperationCount = checked(_activeOperationCount + 1);
+			return new LiquidWalletOperationLease(this);
+		}
+	}
+
+	internal Task BeginCloseUnderProviderGate()
+	{
+		lock (_lifetimeGate)
+		{
+			_closing = true;
+			if (_activeOperationCount == 0)
+			{
+				return Task.CompletedTask;
+			}
+
+			_drained ??= new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+			return _drained.Task;
+		}
+	}
+
+	internal Task DisposeAfterDrainAsync(Task drainTask)
+	{
+		ArgumentNullException.ThrowIfNull(drainTask);
+		TaskCompletionSource<object?> completion;
+		lock (_lifetimeGate)
+		{
+			if (_disposeTask is not null)
+			{
+				return _disposeTask;
+			}
+
+			completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+			_disposeTask = completion.Task;
+		}
+
+		_ = CompleteDisposalAsync(completion, drainTask);
+		return completion.Task;
+	}
+
+	internal void ReleaseOperation()
+	{
+		TaskCompletionSource<object?>? drained = null;
+		lock (_lifetimeGate)
+		{
+			if (_activeOperationCount <= 0)
+			{
+				throw new InvalidOperationException("The Liquid wallet operation counter underflowed.");
+			}
+
+			_activeOperationCount--;
+			if (_closing && _activeOperationCount == 0)
+			{
+				drained = _drained;
+			}
+		}
+
+		drained?.TrySetResult(null);
+	}
 
 	/// <summary>
 	/// The session's state-refresh sink for the send-execution handoff. Records one
@@ -202,11 +272,26 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 
 	public ValueTask DisposeAsync()
 	{
-		if (Interlocked.Exchange(ref _disposed, 1) != 0)
-		{
-			return ValueTask.CompletedTask;
-		}
+		Task drainTask = BeginCloseUnderProviderGate();
+		return new ValueTask(DisposeAfterDrainAsync(drainTask));
+	}
 
+	private async Task CompleteDisposalAsync(TaskCompletionSource<object?> completion, Task drainTask)
+	{
+		try
+		{
+			await DisposeAfterDrainCoreAsync(drainTask).ConfigureAwait(false);
+			completion.TrySetResult(null);
+		}
+		catch (Exception exception)
+		{
+			completion.TrySetException(exception);
+		}
+	}
+
+	private async Task DisposeAfterDrainCoreAsync(Task drainTask)
+	{
+		await drainTask.ConfigureAwait(false);
 		try
 		{
 			SignerKeyAdapter.Dispose();
@@ -215,7 +300,5 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable, ILiqu
 		{
 			RpcClient.Dispose();
 		}
-
-		return ValueTask.CompletedTask;
 	}
 }

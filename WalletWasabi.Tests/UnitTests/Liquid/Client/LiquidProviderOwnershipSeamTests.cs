@@ -13,7 +13,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
 using WalletWasabi.Blockchain.Keys;
-using WalletWasabi.Client.Liquid;
+using WalletWasabi.Liquid.Application;
+
 using WalletWasabi.Liquid.Amounts;
 using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Cryptography;
@@ -24,37 +25,40 @@ using WalletWasabi.Liquid.Wallet;
 using WalletWasabi.Liquid.Wallet.Ui;
 using WalletWasabi.Tests.Helpers;
 using Xunit;
+#pragma warning disable CA2000 // Provider ownership is explicitly closed in each test.
 
 namespace WalletWasabi.Tests.UnitTests.Liquid.Client;
 
 public sealed class LiquidProviderOwnershipSeamTests
 {
 	[Fact]
-	public void PasswordAuthorizationLeaseRejectsEmptyPassword()
+	public async Task PasswordAuthorizationRejectsEmptyPasswordAsync()
 	{
-		Assert.Throws<ArgumentException>(() => LiquidPasswordAuthorizationLease.Create(ReadOnlySpan<char>.Empty));
+		await using LiquidWalletApplicationClient client = CreateApplicationClient();
+		Assert.Throws<ArgumentException>(() => client.CreateOpenAuthorization(ReadOnlySpan<char>.Empty));
 	}
 
 	[Fact]
-	public void PasswordAuthorizationLeaseRejectsOversizedPassword()
+	public async Task PasswordAuthorizationRejectsOversizedPasswordAsync()
 	{
-		Assert.Throws<ArgumentException>(() => LiquidPasswordAuthorizationLease.Create(new string('x', 1025)));
+		await using LiquidWalletApplicationClient client = CreateApplicationClient();
+		Assert.Throws<ArgumentException>(() => client.CreateOpenAuthorization(new string('x', 1025)));
 	}
 
 	[Fact]
-	public void PasswordAuthorizationLeaseDisposesAndZeroizesOwnedBuffer()
+	public async Task PasswordAuthorizationDisposesAndZeroizesOwnedBufferAsync()
 	{
-		LiquidPasswordAuthorizationLease lease = LiquidPasswordAuthorizationLease.Create("secret");
-		char[] buffer = Assert.IsType<char[]>(typeof(LiquidPasswordAuthorizationLease)
-			.GetField("_password", BindingFlags.Instance | BindingFlags.NonPublic)!
-			.GetValue(lease));
+		await using LiquidWalletApplicationClient client = CreateApplicationClient();
+		LiquidWalletOpenAuthorization authorization = client.CreateOpenAuthorization("secret");
+		char[] buffer = Assert.IsType<char[]>(typeof(LiquidWalletOpenAuthorization)
+			.GetField("_buffer", BindingFlags.Instance | BindingFlags.NonPublic)!
+			.GetValue(authorization));
 
-		lease.Dispose();
-		lease.Dispose();
+		authorization.Dispose();
+		authorization.Dispose();
 
-		Assert.True(lease.IsDisposed);
 		Assert.All(buffer, value => Assert.Equal('\0', value));
-		Assert.Throws<ObjectDisposedException>(() => ReadPassword(lease));
+		Assert.Throws<InvalidOperationException>(() => authorization.TakeBuffer());
 	}
 
 	[Fact]
@@ -105,16 +109,13 @@ public sealed class LiquidProviderOwnershipSeamTests
 		const ulong expectedNextIndex = 1UL;
 		LiquidWalletIdentity identity = LiquidWalletIdentity.Create("alpha", walletFile, "local", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", new LiquidWalletDirectories(walletDirectory));
 		CreateRpcProfile(directory.Path, "local", identity.NetworkManifestId);
-		LiquidWalletRuntimeHandoff? published = null;
 		await using LiquidAuthenticatedRuntimeProvider provider = new(
 			new LiquidRpcProfileSource(directory.Path),
 			new LiquidWalletDirectories(walletDirectory),
-			new ElementsPublicNetworkManifestSource(identity.NetworkManifestId),
-			handoff => published = handoff);
+			new ElementsPublicNetworkManifestSource(identity.NetworkManifestId));
 
-		using LiquidPasswordAuthorizationLease lease = LiquidPasswordAuthorizationLease.Create("TestPassword");
-		LiquidAuthenticatedWalletSession session = await provider.OpenAsync(identity, lease, default);
-		LiquidWalletRuntimeHandoff handoff = Assert.IsType<LiquidWalletRuntimeHandoff>(published);
+		LiquidAuthenticatedWalletSession session = await OpenAsync(provider, identity, "TestPassword");
+		LiquidWalletRuntimeHandoff handoff = Assert.IsType<LiquidWalletRuntimeHandoff>(provider.CurrentHandoff);
 		Assert.Same(session.StateOwner.NodeExpectation, session.NodeExpectation);
 		Assert.Equal(ElementsPublicNetworkManifest.LiquidMainnet.ChainRpcName, session.NodeExpectation.Chain);
 		Assert.Equal(100, session.NodeExpectation.PeginConfirmationDepth);
@@ -450,7 +451,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 		byte[] context = LiquidKeyDomain.DeriveHkdf(childMaterial, salt, "WalletWasabi/Liquid/v1/context");
 		try
 		{
-			string clientAssembly = typeof(LiquidAuthenticatedRuntimeProvider).Assembly.Location;
+			string coreAssembly = typeof(LiquidAuthenticatedRuntimeProvider).Assembly.Location;
 			string childPath = RoslynFreshChildHarness.CompileChildAssembly(
 				""""
 				using System;
@@ -465,7 +466,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 				using System.Threading.Tasks;
 				using NBitcoin;
 				using WalletWasabi.Blockchain.Keys;
-				using WalletWasabi.Client.Liquid;
+				using WalletWasabi.Liquid.Application;
 				using WalletWasabi.Liquid.Network;
 				using WalletWasabi.Liquid.Rpc;
 				using WalletWasabi.Liquid.Wallet;
@@ -542,7 +543,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 				"pre-refresh-owner-child",
 				"PreRefreshOwnerChild.dll",
 				[
-					clientAssembly,
+					coreAssembly,
 					typeof(Enumerable).Assembly.Location,
 					typeof(HttpClient).Assembly.Location,
 					typeof(Uri).Assembly.Location,
@@ -550,7 +551,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 					typeof(ExtKey).Assembly.Location,
 					typeof(LiquidWalletRuntimeHandoff).Assembly.Location,
 				]);
-			File.Copy(clientAssembly, Path.Combine(Path.GetDirectoryName(childPath)!, "WalletWasabi.Client.dll"), overwrite: true);
+			File.Copy(coreAssembly, Path.Combine(Path.GetDirectoryName(childPath)!, "WalletWasabi.dll"), overwrite: true);
 			using JsonDocument output = RoslynFreshChildHarness.RunChild(childPath, new Dictionary<string, string>(StringComparer.Ordinal)
 			{
 				["walletDirectory"] = walletDirectory,
@@ -596,17 +597,92 @@ public sealed class LiquidProviderOwnershipSeamTests
 			new ElementsPublicNetworkManifestSource("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b"));
 		CreateRpcProfile(directory.Path, "local", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b");
 
-		using LiquidPasswordAuthorizationLease firstLease = LiquidPasswordAuthorizationLease.Create("TestPassword");
-		LiquidAuthenticatedWalletSession session = await provider.OpenAsync(identity, firstLease, default);
-		using LiquidPasswordAuthorizationLease duplicateLease = LiquidPasswordAuthorizationLease.Create("TestPassword");
+		LiquidAuthenticatedWalletSession session = await OpenAsync(provider, identity, "TestPassword");
 
-		await Assert.ThrowsAsync<InvalidOperationException>(async () => await provider.OpenAsync(identity, duplicateLease, default));
+		await Assert.ThrowsAsync<InvalidOperationException>(async () => await OpenAsync(provider, identity, "TestPassword"));
 
 		Assert.Equal(identity.CanonicalWalletId, session.PublicHandoff.CanonicalWalletId);
 
 		await provider.CloseAsync(identity, default);
 		Assert.True(session.IsDisposed);
 		await provider.DisposeAsync();
+	}
+
+	[Fact]
+	public async Task ProductionSessionOperationLeaseBlocksProviderDisposalAsync()
+	{
+		using TemporaryDirectory directory = new();
+		string walletDirectory = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
+		string walletFile = Path.Combine(walletDirectory, "alpha.json");
+		KeyManager.CreateNew(out _, "TestPassword", NBitcoin.Network.RegTest, walletFile);
+		CreatePersistedLiquidState(walletDirectory, walletFile, "TestPassword", "alpha");
+		LiquidWalletIdentity identity = LiquidWalletIdentity.Create(
+			"alpha",
+			walletFile,
+			"local",
+			ElementsPublicNetworkManifest.LiquidMainnet.ManifestId,
+			new LiquidWalletDirectories(walletDirectory));
+		CreateRpcProfile(directory.Path, "local", ElementsPublicNetworkManifest.LiquidMainnet.ManifestId);
+#pragma warning disable CA2000 // Provider ownership is closed after the real leased operation drains.
+		LiquidAuthenticatedRuntimeProvider provider = new(
+			new LiquidRpcProfileSource(directory.Path),
+			new LiquidWalletDirectories(walletDirectory),
+			new ElementsPublicNetworkManifestSource(ElementsPublicNetworkManifest.LiquidMainnet.ManifestId));
+#pragma warning restore CA2000
+		LiquidAuthenticatedWalletSession session = await OpenAsync(provider, identity, "TestPassword");
+		using LiquidWalletOperationLease operationLease = provider.AcquireOperation(identity.CanonicalWalletId);
+		Assert.Same(session, operationLease.Session);
+
+		Task disposal = provider.DisposeAsync().AsTask();
+		Assert.False(disposal.IsCompleted);
+		Assert.False(session.IsDisposed);
+		Assert.Throws<ObjectDisposedException>(() => provider.AcquireOperation(identity.CanonicalWalletId));
+
+		operationLease.Dispose();
+		await disposal;
+
+		Assert.True(session.IsDisposed);
+		Assert.Null(provider.CurrentHandoff);
+	}
+
+	[Fact]
+	public async Task ConcurrentCloseAndProviderDisposalJoinDetachedSessionDrainAsync()
+	{
+		using TemporaryDirectory directory = new();
+		string walletDirectory = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
+		string walletFile = Path.Combine(walletDirectory, "alpha.json");
+		KeyManager.CreateNew(out _, "TestPassword", NBitcoin.Network.RegTest, walletFile);
+		CreatePersistedLiquidState(walletDirectory, walletFile, "TestPassword", "alpha");
+		LiquidWalletIdentity identity = LiquidWalletIdentity.Create(
+			"alpha",
+			walletFile,
+			"local",
+			ElementsPublicNetworkManifest.LiquidMainnet.ManifestId,
+			new LiquidWalletDirectories(walletDirectory));
+		CreateRpcProfile(directory.Path, "local", ElementsPublicNetworkManifest.LiquidMainnet.ManifestId);
+#pragma warning disable CA2000 // Provider is disposed after all close/disposal joiners complete.
+		LiquidAuthenticatedRuntimeProvider provider = new(
+			new LiquidRpcProfileSource(directory.Path),
+			new LiquidWalletDirectories(walletDirectory),
+			new ElementsPublicNetworkManifestSource(ElementsPublicNetworkManifest.LiquidMainnet.ManifestId));
+#pragma warning restore CA2000
+		LiquidAuthenticatedWalletSession session = await OpenAsync(provider, identity, "TestPassword");
+		using LiquidWalletOperationLease operationLease = provider.AcquireOperation(identity.CanonicalWalletId);
+
+		Task firstClose = provider.CloseAsync(identity, default).AsTask();
+		Assert.False(firstClose.IsCompleted);
+		Task providerDisposal = provider.DisposeAsync().AsTask();
+		Assert.False(providerDisposal.IsCompleted);
+		Task secondClose = provider.CloseAsync(identity, default).AsTask();
+		Assert.False(secondClose.IsCompleted);
+		Assert.False(session.IsDisposed);
+		Assert.Null(provider.CurrentHandoff);
+
+		operationLease.Dispose();
+		await Task.WhenAll(firstClose, providerDisposal, secondClose);
+
+		Assert.True(session.IsDisposed);
+		Assert.Null(provider.CurrentHandoff);
 	}
 
 	[Fact]
@@ -619,15 +695,15 @@ public sealed class LiquidProviderOwnershipSeamTests
 		CreatePersistedLiquidState(walletDirectory, walletFile, "TestPassword", "alpha");
 		LiquidWalletIdentity identity = LiquidWalletIdentity.Create("alpha", walletFile, "local", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", new LiquidWalletDirectories(walletDirectory));
 		CreateRpcProfile(directory.Path, "local", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b");
+#pragma warning disable CA2000 // Provider is explicitly disposed below.
 		LiquidAuthenticatedRuntimeProvider provider = new(new LiquidRpcProfileSource(directory.Path), new LiquidWalletDirectories(walletDirectory), new ElementsPublicNetworkManifestSource("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b"));
-		using LiquidPasswordAuthorizationLease openLease = LiquidPasswordAuthorizationLease.Create("TestPassword");
-		LiquidAuthenticatedWalletSession session = await provider.OpenAsync(identity, openLease, default);
+#pragma warning restore CA2000
+		LiquidAuthenticatedWalletSession session = await OpenAsync(provider, identity, "TestPassword");
 
 		await provider.DisposeAsync();
 
 		Assert.True(session.IsDisposed);
-		using LiquidPasswordAuthorizationLease rejectedLease = LiquidPasswordAuthorizationLease.Create("TestPassword");
-		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await provider.OpenAsync(identity, rejectedLease, default));
+		await Assert.ThrowsAsync<ObjectDisposedException>(async () => await OpenAsync(provider, identity, "TestPassword"));
 	}
 
 	private sealed record PersistedLiquidState(LiquidWalletState State);
@@ -695,7 +771,30 @@ public sealed class LiquidProviderOwnershipSeamTests
 		}
 	}
 
-	private static string ReadPassword(LiquidPasswordAuthorizationLease lease) => new(lease.Password);
+	private static async Task<LiquidAuthenticatedWalletSession> OpenAsync(
+		LiquidAuthenticatedRuntimeProvider provider,
+		LiquidWalletIdentity identity,
+		string password)
+	{
+		char[] buffer = password.ToCharArray();
+		try
+		{
+			return await provider.OpenAsync(identity, buffer, default);
+		}
+		finally
+		{
+			LiquidWalletOpenAuthorization.ZeroBuffer(buffer);
+		}
+	}
+
+	private static LiquidWalletApplicationClient CreateApplicationClient()
+	{
+		string root = Path.GetTempPath();
+		return LiquidWalletApplicationClient.Create(new(
+			root,
+			root,
+			ElementsPublicNetworkManifest.LiquidMainnet.ManifestId));
+	}
 
 	private static IEnumerable<MethodBase> ReadCalledMethods(MethodBase method)
 	{

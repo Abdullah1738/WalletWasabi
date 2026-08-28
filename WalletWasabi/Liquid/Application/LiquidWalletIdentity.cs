@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace WalletWasabi.Client.Liquid;
+namespace WalletWasabi.Liquid.Application;
 
 internal sealed class LiquidWalletDirectories
 {

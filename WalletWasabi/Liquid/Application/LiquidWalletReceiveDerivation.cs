@@ -1,7 +1,7 @@
 using System;
 using NBitcoin;
 
-namespace WalletWasabi.Client.Liquid;
+namespace WalletWasabi.Liquid.Application;
 
 internal sealed class LiquidWalletReceiveDerivation
 {
@@ -19,7 +19,7 @@ internal sealed class LiquidWalletReceiveDerivation
 	internal ulong LastIndex { get; }
 	internal byte[] ScriptPubKey { get; }
 
-	internal static LiquidWalletReceiveDerivation Create(ExtKey authenticatedMaster, Network network, int account, ulong externalIndex)
+	internal static LiquidWalletReceiveDerivation Create(ExtKey authenticatedMaster, NBitcoin.Network network, int account, ulong externalIndex)
 	{
 		ArgumentNullException.ThrowIfNull(authenticatedMaster);
 		ArgumentNullException.ThrowIfNull(network);

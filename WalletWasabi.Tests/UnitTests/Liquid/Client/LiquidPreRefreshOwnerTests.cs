@@ -1,6 +1,6 @@
 using System;
 using System.Linq;
-using WalletWasabi.Client.Liquid;
+using WalletWasabi.Liquid.Application;
 using Xunit;
 
 namespace WalletWasabi.Tests.UnitTests.Liquid.Client;

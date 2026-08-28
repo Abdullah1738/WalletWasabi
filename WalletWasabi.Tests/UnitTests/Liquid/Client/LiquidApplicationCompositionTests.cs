@@ -1,32 +1,34 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
+using WalletWasabi.Client;
 using WalletWasabi.Client.Liquid;
 using WalletWasabi.Liquid.Amounts;
+using WalletWasabi.Liquid.Application;
 using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Transactions;
 using WalletWasabi.Liquid.Wallet;
 using WalletWasabi.Liquid.Wallet.Ui;
 using Xunit;
-#pragma warning disable CA2000
 
 namespace WalletWasabi.Tests.UnitTests.Liquid.Client;
 
 public sealed class LiquidApplicationCompositionTests
 {
 	[Fact]
-	public async Task CompositionDisposesOwnedProviderAndRejectsSecondDisposalAsync()
+	public async Task CompositionOwnsOneFacadeAndForwardsExactMembersAsync()
 	{
-		using TemporaryDirectory directory = new();
-		string wallets = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
-		LiquidWalletRuntimeHandoff handoff = CreateHandoff();
-		LiquidWalletRuntimeComposition composition = new(
-			CreateProvider(directory.Path, wallets),
-			handoff,
-			LiquidWalletSendExecutionCommandService.CreateSendCommand(CreateProvider(directory.Path, wallets)));
+		await using LiquidWalletApplicationClient applicationClient = CreateApplicationClient();
+		await using LiquidWalletRuntimeComposition composition = new(applicationClient);
+
+		Assert.Same(applicationClient, composition.ApplicationClient);
+		Assert.Same(applicationClient.SendCommand, composition.SendCommand);
+		Assert.Null(composition.PublicHandoff);
 
 		await composition.DisposeAsync();
 		await composition.DisposeAsync();
@@ -77,22 +79,46 @@ public sealed class LiquidApplicationCompositionTests
 		}
 	}
 
-	private static LiquidAuthenticatedRuntimeProvider CreateProvider(string dataDirectory, string walletDirectory) =>
-		new(new LiquidRpcProfileSource(dataDirectory), new LiquidWalletDirectories(walletDirectory), new ElementsPublicNetworkManifestSource("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b"));
-
-	private static LiquidWalletRuntimeHandoff CreateHandoff()
+	[Fact]
+	public void WasabiApplicationExposesForwardersWithoutFacade()
 	{
-		const string walletName = "alpha";
-		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidMainnet;
-		LiquidWalletState state = LiquidWalletState.Empty(LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId));
-		return new LiquidWalletRuntimeHandoff(
-			walletName,
-			manifest.ManifestId,
-			LiquidWalletUiSnapshot.Capture(walletName, manifest, state),
-			LiquidWalletUiSelectableOutputsSnapshot.Capture(walletName, manifest, state),
-			LiquidWalletUiHistorySnapshot.Capture(walletName, manifest, state),
-			new LiquidWalletUiReceiveMaterial([0x51], Convert.FromHexString("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")));
+		Type application = typeof(WasabiApplication);
+		Assert.NotNull(application.GetMethod(nameof(WasabiApplication.CreateLiquidWalletOpenAuthorization)));
+		Assert.NotNull(application.GetMethod(nameof(WasabiApplication.OpenLiquidWalletAsync)));
+		Assert.NotNull(application.GetMethod(nameof(WasabiApplication.CloseLiquidWalletAsync)));
+		Assert.NotNull(application.GetProperty(nameof(WasabiApplication.LiquidWalletRuntime)));
+		Assert.NotNull(application.GetProperty(nameof(WasabiApplication.LiquidWalletSendCommand)));
+		Assert.DoesNotContain(
+			application.GetMembers(BindingFlags.Public | BindingFlags.Instance),
+			member => GetSignatureTypes(member).Contains(typeof(LiquidWalletApplicationClient)));
 	}
+
+	[Fact]
+	public void CompositionContainsNoRegtestManifestHardcode()
+	{
+		string source = File.ReadAllText(Path.Combine(
+			FindRepositoryRoot(),
+			"WalletWasabi.Client",
+			"Liquid",
+			"LiquidApplicationWalletBootstrap.cs"));
+		Assert.DoesNotContain("elements-regtest", source, StringComparison.Ordinal);
+	}
+
+	private static LiquidWalletApplicationClient CreateApplicationClient()
+	{
+		string root = Path.GetTempPath();
+		return LiquidWalletApplicationClient.Create(new(
+			root,
+			root,
+			ElementsPublicNetworkManifest.LiquidMainnet.ManifestId));
+	}
+
+	private static Type[] GetSignatureTypes(MemberInfo member) => member switch
+	{
+		MethodInfo method => method.GetParameters().Select(parameter => parameter.ParameterType).Append(method.ReturnType).ToArray(),
+		PropertyInfo property => [property.PropertyType],
+		_ => []
+	};
 
 	private sealed class TemporaryDirectory : IDisposable
 	{
@@ -103,5 +129,15 @@ public sealed class LiquidApplicationCompositionTests
 		}
 		internal string Path { get; }
 		public void Dispose() => Directory.Delete(Path, true);
+	}
+
+	private static string FindRepositoryRoot()
+	{
+		DirectoryInfo? directory = new(AppContext.BaseDirectory);
+		while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "WalletWasabi.Client")))
+		{
+			directory = directory.Parent;
+		}
+		return directory?.FullName ?? throw new DirectoryNotFoundException("Repository root was not found.");
 	}
 }

@@ -4,7 +4,7 @@ using System.Threading;
 using NBitcoin;
 using WalletWasabi.Liquid.Wallet.Ui;
 
-namespace WalletWasabi.Client.Liquid;
+namespace WalletWasabi.Liquid.Application;
 
 /// <summary>
 /// Managed production implementation of the caller-owned <see cref="ILiquidWalletSigner"/>
@@ -17,7 +17,7 @@ namespace WalletWasabi.Client.Liquid;
 /// or substituted result. <see cref="Dispose"/> zeroizes the adapter's retained copy of the
 /// master secret and disposes the underlying key idempotently.
 /// </summary>
-public sealed class LiquidWalletSignerKeyAdapter : ILiquidWalletSigner, IDisposable
+internal sealed class LiquidWalletSignerKeyAdapter : ILiquidWalletSigner, IDisposable
 {
 	private const uint PurposeBranch = 2089617494;
 	private const uint CoinTypeBranch = 1984574463;
@@ -38,7 +38,7 @@ public sealed class LiquidWalletSignerKeyAdapter : ILiquidWalletSigner, IDisposa
 	public LiquidWalletSignerKeyAdapter(
 		ExtKey masterKey,
 		Func<string, (int account, int change, int index)?> outpointLocator,
-		Network network)
+		NBitcoin.Network network)
 	{
 		ArgumentNullException.ThrowIfNull(masterKey);
 		ArgumentNullException.ThrowIfNull(outpointLocator);

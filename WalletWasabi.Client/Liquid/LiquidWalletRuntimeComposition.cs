@@ -1,43 +1,44 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using WalletWasabi.Liquid.Application;
 using WalletWasabi.Liquid.Wallet.Ui;
 
 namespace WalletWasabi.Client.Liquid;
 
 internal sealed class LiquidWalletRuntimeComposition : IAsyncDisposable
 {
-	private readonly LiquidAuthenticatedRuntimeProvider _provider;
+	private readonly object _disposeGate = new();
+	private Task? _disposeTask;
 	private int _disposed;
 
-	internal LiquidWalletRuntimeComposition(
-		LiquidAuthenticatedRuntimeProvider provider,
-		LiquidWalletRuntimeHandoff? publicHandoff,
-		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>>? sendCommand = null)
+	internal LiquidWalletRuntimeComposition(LiquidWalletApplicationClient applicationClient)
 	{
-		_provider = provider ?? throw new ArgumentNullException(nameof(provider));
-		PublicHandoff = publicHandoff;
-		SendCommand = sendCommand;
+		ApplicationClient = applicationClient ?? throw new ArgumentNullException(nameof(applicationClient));
 	}
 
-	internal LiquidWalletRuntimeHandoff? PublicHandoff { get; }
-
-	/// <summary>
-	/// The composition-time send-execution command surface, built once by the WalletWasabi-resident
-	/// command service's public static <c>CreateSendCommand</c> over the provider's typed session
-	/// source. The composition stores only this public delegate; it never names the executor, the
-	/// scope, the session, the RPC client, or any secret-bearing type.
-	/// </summary>
-	internal Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>>? SendCommand { get; }
-
+	internal LiquidWalletApplicationClient ApplicationClient { get; }
+	internal LiquidWalletRuntimeHandoff? PublicHandoff => ApplicationClient.CurrentHandoff;
+	internal Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> SendCommand => ApplicationClient.SendCommand;
 	internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
-	public async ValueTask DisposeAsync()
+	public ValueTask DisposeAsync()
 	{
-		if (Interlocked.Exchange(ref _disposed, 1) != 0)
+		lock (_disposeGate)
 		{
-			return;
+			return new ValueTask(_disposeTask ??= DisposeApplicationClientAsync());
 		}
-		await _provider.DisposeAsync().ConfigureAwait(false);
+	}
+
+	private async Task DisposeApplicationClientAsync()
+	{
+		try
+		{
+			await ApplicationClient.DisposeAsync().ConfigureAwait(false);
+		}
+		finally
+		{
+			Volatile.Write(ref _disposed, 1);
+		}
 	}
 }

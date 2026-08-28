@@ -10,9 +10,9 @@ internal sealed record LiquidApplicationCleanupResult(ImmutableArray<Exception> 
 
 internal sealed class LiquidApplicationLifecycleCoordinator
 {
-	private readonly LiquidWalletRuntimeComposition _composition;
-	private readonly Global _global;
-	private readonly SingleInstanceChecker _singleInstanceChecker;
+	private readonly Func<Task> _disposeCompositionAsync;
+	private readonly Func<Task> _disposeGlobalAsync;
+	private readonly Action _disposeSingleInstanceChecker;
 	private readonly Action _appConfigTerminate;
 	private readonly object _errorGate = new();
 	private readonly List<Exception> _errors = [];
@@ -23,10 +23,23 @@ internal sealed class LiquidApplicationLifecycleCoordinator
 	private LiquidApplicationCleanupResult? _finalResult;
 
 	internal LiquidApplicationLifecycleCoordinator(LiquidWalletRuntimeComposition composition, Global global, SingleInstanceChecker singleInstanceChecker, Action appConfigTerminate)
+		: this(
+			composition is null ? throw new ArgumentNullException(nameof(composition)) : () => composition.DisposeAsync().AsTask(),
+			(global ?? throw new ArgumentNullException(nameof(global))).DisposeAsync,
+			(singleInstanceChecker ?? throw new ArgumentNullException(nameof(singleInstanceChecker))).Dispose,
+			appConfigTerminate)
 	{
-		_composition = composition ?? throw new ArgumentNullException(nameof(composition));
-		_global = global ?? throw new ArgumentNullException(nameof(global));
-		_singleInstanceChecker = singleInstanceChecker ?? throw new ArgumentNullException(nameof(singleInstanceChecker));
+	}
+
+	internal LiquidApplicationLifecycleCoordinator(
+		Func<Task> disposeCompositionAsync,
+		Func<Task> disposeGlobalAsync,
+		Action disposeSingleInstanceChecker,
+		Action appConfigTerminate)
+	{
+		_disposeCompositionAsync = disposeCompositionAsync ?? throw new ArgumentNullException(nameof(disposeCompositionAsync));
+		_disposeGlobalAsync = disposeGlobalAsync ?? throw new ArgumentNullException(nameof(disposeGlobalAsync));
+		_disposeSingleInstanceChecker = disposeSingleInstanceChecker ?? throw new ArgumentNullException(nameof(disposeSingleInstanceChecker));
 		_appConfigTerminate = appConfigTerminate ?? throw new ArgumentNullException(nameof(appConfigTerminate));
 	}
 
@@ -81,7 +94,7 @@ internal sealed class LiquidApplicationLifecycleCoordinator
 		RecordSynchronousTermination();
 		try
 		{
-			await _composition.DisposeAsync().ConfigureAwait(false);
+			await _disposeCompositionAsync().ConfigureAwait(false);
 		}
 		catch (Exception ex)
 		{
@@ -93,7 +106,7 @@ internal sealed class LiquidApplicationLifecycleCoordinator
 
 		try
 		{
-			await _global.DisposeAsync().ConfigureAwait(false);
+			await _disposeGlobalAsync().ConfigureAwait(false);
 		}
 		catch (Exception ex)
 		{
@@ -105,7 +118,7 @@ internal sealed class LiquidApplicationLifecycleCoordinator
 
 		try
 		{
-			_singleInstanceChecker.Dispose();
+			_disposeSingleInstanceChecker();
 		}
 		catch (Exception ex)
 		{

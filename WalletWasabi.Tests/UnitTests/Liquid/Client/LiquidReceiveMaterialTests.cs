@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using NBitcoin;
-using WalletWasabi.Client.Liquid;
+using WalletWasabi.Liquid.Application;
 using WalletWasabi.Tests;
 using WalletWasabi.Tests.Helpers;
 using BitcoinNetwork = NBitcoin.Network;

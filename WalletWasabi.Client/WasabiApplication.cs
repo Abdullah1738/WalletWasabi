@@ -1,15 +1,19 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
 using WalletWasabi.Client.Configuration;
 using WalletWasabi.Extensions;
 using WalletWasabi.Helpers;
+using WalletWasabi.Liquid.Application;
+using WalletWasabi.Liquid.Network;
+using WalletWasabi.Liquid.Wallet.Ui;
 using WalletWasabi.Logging;
 using WalletWasabi.Services.Terminate;
-using WalletWasabi.Liquid.Wallet.Ui;
 using Constants = WalletWasabi.Helpers.Constants;
 using WalletWasabi.Client.Liquid;
 
@@ -17,19 +21,21 @@ namespace WalletWasabi.Client;
 
 public class WasabiApplication
 {
-	private readonly LiquidWalletRuntimeHandoffHolder? _liquidHandoffHolder;
+	private readonly LiquidWalletRuntimeComposition? _liquidComposition;
 	public WasabiAppBuilder AppConfig { get; }
 	public Global Global { get; }
 	public Config Config { get; }
 	public SingleInstanceChecker SingleInstanceChecker { get; }
 	public TerminateService TerminateService { get; }
-	public LiquidWalletRuntimeHandoff? LiquidWalletRuntime => _liquidHandoffHolder?.Value;
+	public LiquidWalletRuntimeHandoff? LiquidWalletRuntime => _liquidComposition?.PublicHandoff;
+	public Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> LiquidWalletSendCommand =>
+		RequireLiquidComposition().SendCommand;
 	private static Guid InstanceGuid { get; } = Guid.NewGuid();
 
 	public WasabiApplication(WasabiAppBuilder wasabiAppBuilder)
 	{
 		AppConfig = wasabiAppBuilder;
-		_liquidHandoffHolder = null;
+		_liquidComposition = null;
 
 		CheckVersionAndHelp();
 		Directory.CreateDirectory(Config.DataDir);
@@ -42,33 +48,17 @@ public class WasabiApplication
 		TerminateService = new(TerminateApplicationAsync, AppConfig.Terminate);
 	}
 
-	internal static WasabiApplication CreateLiquid(WasabiAppBuilder wasabiAppBuilder)
+	internal static WasabiApplication CreateLiquid(WasabiAppBuilder wasabiAppBuilder, string reviewedManifestId)
 	{
 		ArgumentNullException.ThrowIfNull(wasabiAppBuilder);
-
-		string liquidWalletRoot = Path.Combine(Config.DataDir, "liquid", "wallets");
-		Directory.CreateDirectory(liquidWalletRoot);
-		LiquidApplicationWalletBootstrap bootstrap = new(new LiquidWalletDirectories(liquidWalletRoot), Config.DataDir);
-		LiquidWalletRuntimeHandoffHolder holder = new();
-#pragma warning disable CA2000 // Dispose objects before losing scope - ownership transfers to the lifecycle coordinator's cleanup
-		LiquidAuthenticatedRuntimeProvider provider = bootstrap.CreateProvider(holder.Publish);
-		// No wallet is open at composition time: the handoff is published by the
-		// provider into the holder when OpenAsync publishes the session. The
-		// composition carries a null handoff until then; the coordinator owns its
-		// disposal regardless. The send-execution command surface is the single
-		// public delegate built by the WalletWasabi-resident command service over
-		// the provider's typed session source; the composition stores only that
-		// delegate and never names the executor, scope, session, or RPC client.
-		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> sendCommand =
-			LiquidWalletSendExecutionCommandService.CreateSendCommand(provider);
-		LiquidWalletRuntimeComposition composition = new(provider, null, sendCommand);
-#pragma warning restore CA2000
-		return new WasabiApplication(wasabiAppBuilder, composition, holder);
+		ArgumentException.ThrowIfNullOrWhiteSpace(reviewedManifestId);
+		return new WasabiApplication(wasabiAppBuilder, reviewedManifestId);
 	}
 
-	private WasabiApplication(WasabiAppBuilder wasabiAppBuilder, LiquidWalletRuntimeComposition composition, LiquidWalletRuntimeHandoffHolder holder)
+	private WasabiApplication(WasabiAppBuilder wasabiAppBuilder, string reviewedManifestId)
 	{
 		AppConfig = wasabiAppBuilder;
+		_liquidComposition = null;
 
 		CheckVersionAndHelp();
 		Directory.CreateDirectory(Config.DataDir);
@@ -76,12 +66,120 @@ public class WasabiApplication
 		SetupLogger();
 		Logger.LogDebug($"Wasabi was started with these argument(s): {string.Join(" ", AppConfig.Arguments.DefaultIfEmpty("none"))}.");
 
-		Global = new Global(Config.DataDir, Config);
-		SingleInstanceChecker = new(Config.DataDir);
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.GetByManifestId(reviewedManifestId);
+		Global? global = null;
+		SingleInstanceChecker? singleInstanceChecker = null;
+		LiquidWalletApplicationClient? applicationClient = null;
+		LiquidWalletRuntimeComposition? composition = null;
+		try
+		{
+			global = new Global(Config.DataDir, Config);
+			singleInstanceChecker = new SingleInstanceChecker(Config.DataDir);
+			string liquidWalletRoot = Path.GetFullPath(Path.Combine(Config.DataDir, "liquid", "wallets"));
+			Directory.CreateDirectory(liquidWalletRoot);
+#pragma warning disable CA2000 // Ownership transfers to the composition and lifecycle coordinator below.
+			applicationClient = LiquidApplicationWalletBootstrap.CreateApplicationClient(
+				Config.DataDir,
+				liquidWalletRoot,
+				manifest.ManifestId);
+#pragma warning restore CA2000
+			composition = new LiquidWalletRuntimeComposition(applicationClient);
+			applicationClient = null;
+			LiquidApplicationLifecycleCoordinator coordinator = new(
+				composition,
+				global,
+				singleInstanceChecker,
+				AppConfig.Terminate);
 
-		LiquidApplicationLifecycleCoordinator coordinator = new(composition, Global, SingleInstanceChecker, AppConfig.Terminate);
-		_liquidHandoffHolder = holder;
-		TerminateService = new(coordinator.TerminateApplicationAsync, AppConfig.Terminate);
+			Global = global;
+			SingleInstanceChecker = singleInstanceChecker;
+			_liquidComposition = composition;
+			TerminateService = new(coordinator.TerminateApplicationAsync, coordinator.RecordSynchronousTermination);
+		}
+		catch (Exception originalException)
+		{
+			RollbackFailedLiquidInstallation(
+				originalException,
+				composition,
+				applicationClient,
+				global,
+				singleInstanceChecker);
+			throw;
+		}
+	}
+
+	public LiquidWalletOpenAuthorization CreateLiquidWalletOpenAuthorization(ReadOnlySpan<char> password) =>
+		RequireLiquidComposition().ApplicationClient.CreateOpenAuthorization(password);
+
+	public ValueTask<LiquidWalletRuntimeHandoff> OpenLiquidWalletAsync(
+		LiquidWalletOpenRequest request,
+		LiquidWalletOpenAuthorization authorization,
+		CancellationToken cancellationToken) =>
+		RequireLiquidComposition().ApplicationClient.OpenAsync(request, authorization, cancellationToken);
+
+	public ValueTask CloseLiquidWalletAsync(string canonicalWalletId, CancellationToken cancellationToken) =>
+		RequireLiquidComposition().ApplicationClient.CloseAsync(canonicalWalletId, cancellationToken);
+
+	private LiquidWalletRuntimeComposition RequireLiquidComposition() =>
+		_liquidComposition ?? throw new NotSupportedException("Liquid wallet operations are not supported by this application runtime.");
+
+	private static void RollbackFailedLiquidInstallation(
+		Exception originalException,
+		LiquidWalletRuntimeComposition? composition,
+		LiquidWalletApplicationClient? applicationClient,
+		Global? global,
+		SingleInstanceChecker? singleInstanceChecker) =>
+		RollbackFailedLiquidInstallation(
+			originalException,
+			composition is not null
+				? () => composition.DisposeAsync().AsTask()
+				: applicationClient is not null
+					? () => applicationClient.DisposeAsync().AsTask()
+					: null,
+			global is null ? null : global.DisposeAsync,
+			singleInstanceChecker is null ? null : singleInstanceChecker.Dispose);
+
+	internal static void RollbackFailedLiquidInstallation(
+		Exception originalException,
+		Func<Task>? disposeCompositionOrApplicationClientAsync,
+		Func<Task>? disposeGlobalAsync,
+		Action? disposeSingleInstanceChecker)
+	{
+		ArgumentNullException.ThrowIfNull(originalException);
+		List<Exception> errors = [originalException];
+		try
+		{
+			disposeCompositionOrApplicationClientAsync?.Invoke().GetAwaiter().GetResult();
+		}
+		catch (Exception cleanupException)
+		{
+			errors.Add(cleanupException);
+		}
+
+		try
+		{
+			disposeGlobalAsync?.Invoke().GetAwaiter().GetResult();
+		}
+		catch (Exception cleanupException)
+		{
+			errors.Add(cleanupException);
+		}
+
+		try
+		{
+			disposeSingleInstanceChecker?.Invoke();
+		}
+		catch (Exception cleanupException)
+		{
+			errors.Add(cleanupException);
+		}
+
+		if (errors.Count > 1)
+		{
+			throw new AggregateException(errors);
+		}
+
+		ExceptionDispatchInfo.Capture(originalException).Throw();
 	}
 
 	private void CheckVersionAndHelp()

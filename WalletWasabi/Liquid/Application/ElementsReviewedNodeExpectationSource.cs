@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
 
-namespace WalletWasabi.Client.Liquid;
+namespace WalletWasabi.Liquid.Application;
 
 internal sealed record ElementsReviewedNodeExpectationDescriptor(
 	string ManifestId,

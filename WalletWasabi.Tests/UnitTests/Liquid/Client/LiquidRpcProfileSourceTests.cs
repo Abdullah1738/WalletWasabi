@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Net;
 using System.Text;
-using WalletWasabi.Client.Liquid;
+using WalletWasabi.Liquid.Application;
 using Xunit;
 
 #pragma warning disable CA1416

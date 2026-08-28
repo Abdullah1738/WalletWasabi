@@ -11,7 +11,7 @@ using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Liquid.Wallet;
 using WalletWasabi.Liquid.Wallet.Ui;
 
-namespace WalletWasabi.Client.Liquid;
+namespace WalletWasabi.Liquid.Application;
 
 internal sealed class LiquidAuthenticatedWalletStateOwner
 {
@@ -118,9 +118,9 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 				identity.CanonicalWalletId,
 				replayKey,
 				context);
-			Network descriptorNetwork = ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidMainnet)
-				? Network.Main
-				: Network.TestNet;
+			NBitcoin.Network descriptorNetwork = ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidMainnet)
+				? NBitcoin.Network.Main
+				: NBitcoin.Network.TestNet;
 			LiquidWalletReceiveDerivation receive = LiquidWalletReceiveDerivation.Create(
 				authenticatedMaster,
 				descriptorNetwork,

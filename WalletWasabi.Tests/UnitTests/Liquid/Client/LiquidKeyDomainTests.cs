@@ -1,7 +1,7 @@
 using System;
 using System.Security.Cryptography;
 using System.Text;
-using WalletWasabi.Client.Liquid;
+using WalletWasabi.Liquid.Application;
 using Xunit;
 
 namespace WalletWasabi.Tests.UnitTests.Liquid.Client;
