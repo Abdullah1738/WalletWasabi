@@ -47,18 +47,44 @@ public class ElementsPublicNetworkManifestTests
 		Assert.Equal("PUBLIC_CT_SENTINEL_INCOMPLETE", mainnet.CtFixtureEligibility);
 	}
 
+	[Fact]
+	public void LoadsExactReviewedControlledRegtestManifest()
+	{
+		ElementsPublicNetworkManifest regtest = ElementsPublicNetworkManifest.LiquidControlledRegtest;
+
+		Assert.Equal(3, regtest.ManifestSchema);
+		Assert.Equal("LIQUID_REGTEST_CONTROLLED", regtest.ProductNetworkId);
+		Assert.Equal("elementsregtest", regtest.ChainRpcName);
+		Assert.Equal("cd179c84c35f51825f20a3b91a18d45f0c53b5ceb744a5b6ef8f0babe809396f", regtest.GenesisBlockHash);
+		Assert.Equal("b2e15d0d7a0c94e4e2ce0fe6e8691b9e451377f6e46e8045a86f7c4b5d4f0f23", regtest.PeggedAssetId);
+		Assert.Equal(regtest.PeggedAssetId, regtest.RequiredFeeAssetId);
+		Assert.Equal("0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206", regtest.ParentGenesisHash);
+		Assert.True(regtest.HasParentChain);
+		Assert.False(regtest.EnforcePak);
+		Assert.Equal(new ElementsAddressEncodingProfile(235, 75, 4, "ert", "el"), regtest.AddressEncoding);
+		Assert.Equal(18444, regtest.DefaultPort);
+		Assert.Equal("28.99.0", regtest.ElementsVersion);
+		Assert.Equal(289900, regtest.ElementsNumericVersion);
+		Assert.Equal(70016, regtest.ElementsProtocolVersion);
+		Assert.Equal("/Elements Core:28.99.0/", regtest.ExpectedSubversion);
+		Assert.Equal("5319f20e", regtest.MessageStart);
+		Assert.Equal("4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260", regtest.FedpegScriptSha256);
+		Assert.Equal("CONTROLLED-REGTEST-MANIFEST-001-LOCAL-DEMO-ONLY-NO-GATE-CREDIT", regtest.ScopeMarker);
+		Assert.Equal("CONTROLLED_REGTEST_CT_FIXTURE_INCOMPLETE", regtest.CtFixtureEligibility);
+	}
+
 	[Theory]
-	[InlineData(true, 1260, "7a99aca826aeefd659c4af97347ae302c72c3093c07697d8baa4dc03139cb908", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b")]
-	[InlineData(false, 1274, "9fc3e29fe188d63826c18a9f8ab59b42b83e47f57fbf16ca3842d970c16994f1", "e4e7ec03e19ce5f83fd04c586788b724d88052b65ef2480cc93bcd50324f6b20")]
+	[InlineData(2, 1260, "7a99aca826aeefd659c4af97347ae302c72c3093c07697d8baa4dc03139cb908", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b")]
+	[InlineData(2, 1274, "9fc3e29fe188d63826c18a9f8ab59b42b83e47f57fbf16ca3842d970c16994f1", "e4e7ec03e19ce5f83fd04c586788b724d88052b65ef2480cc93bcd50324f6b20")]
+	[InlineData(3, 1371, "76844ce95da0c91bab521e9ea41631e53469f1ae5b826d4652c3a14d97a71679", "71115e296e89e5f9161a74649f3a16fa2bb7ed9cf59d42ec203750b8a54350da")]
 	public void PreservesCanonicalBytesAndDomainSeparatedIdentity(
-		bool mainnet,
+		int schema,
 		int expectedLength,
 		string expectedCborSha256,
 		string expectedManifestId)
 	{
-		ElementsPublicNetworkManifest manifest = mainnet
-			? ElementsPublicNetworkManifest.LiquidMainnet
-			: ElementsPublicNetworkManifest.LiquidTestnet;
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.GetByManifestId(expectedManifestId);
+		Assert.Equal(schema, manifest.ManifestSchema);
 		byte[] canonicalCbor = manifest.ExportCanonicalCbor();
 		byte[] domain = "wasabi-liquid/network-manifest/v1\0"u8.ToArray();
 		byte[] idInput = new byte[domain.Length + canonicalCbor.Length];
@@ -80,6 +106,7 @@ public class ElementsPublicNetworkManifestTests
 		{
 			ElementsPublicNetworkManifest.LiquidMainnet,
 			ElementsPublicNetworkManifest.LiquidTestnet,
+			ElementsPublicNetworkManifest.LiquidControlledRegtest,
 		})
 		{
 			byte[] canonicalCbor = manifest.ExportCanonicalCbor();
@@ -118,6 +145,33 @@ public class ElementsPublicNetworkManifestTests
 		byte[] fresh = ElementsPublicNetworkManifest.LiquidMainnet.ExportCanonicalCbor();
 		Assert.NotEqual(exported[0], fresh[0]);
 		Assert.Equal("7a99aca826aeefd659c4af97347ae302c72c3093c07697d8baa4dc03139cb908", LowerHex(SHA256.HashData(fresh)));
+	}
+
+	[Fact]
+	public void ReviewedCatalogIsExactlyThreeAndFailsClosedElsewhere()
+	{
+		ElementsPublicNetworkManifest[] catalog =
+		[
+			ElementsPublicNetworkManifest.LiquidMainnet,
+			ElementsPublicNetworkManifest.LiquidTestnet,
+			ElementsPublicNetworkManifest.LiquidControlledRegtest,
+		];
+
+		Assert.Equal(3, catalog.Select(manifest => manifest.ManifestId).Distinct(StringComparer.Ordinal).Count());
+		Assert.Equal(3, catalog.Select(manifest => manifest.CanonicalCborSha256).Distinct(StringComparer.Ordinal).Count());
+		Assert.Equal(3, catalog.Select(manifest => LowerHex(SHA256.HashData(manifest.ExportCanonicalCbor()))).Distinct(StringComparer.Ordinal).Count());
+		Assert.Equal([2, 2, 3], catalog.OrderBy(manifest => manifest.ManifestSchema).Select(manifest => manifest.ManifestSchema).ToArray());
+
+		foreach (ElementsPublicNetworkManifest manifest in catalog)
+		{
+			Assert.Same(manifest, ElementsPublicNetworkManifest.GetByManifestId(manifest.ManifestId));
+		}
+		Assert.Throws<ElementsNetworkManifestException>(
+			() => ElementsPublicNetworkManifest.GetByManifestId(ZeroHash));
+		Assert.Throws<ElementsNetworkManifestException>(
+			() => ElementsPublicNetworkManifest.GetByManifestId(ZeroHash[..^1] + "1"));
+		Assert.Throws<ArgumentException>(
+			() => ElementsPublicNetworkManifest.GetByManifestId(""));
 	}
 
 	[Fact]

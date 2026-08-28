@@ -13,7 +13,11 @@ public sealed class ElementsPublicNetworkManifest
 	private const string MainnetManifestId = "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b";
 	private const string TestnetCborSha256 = "9fc3e29fe188d63826c18a9f8ab59b42b83e47f57fbf16ca3842d970c16994f1";
 	private const string TestnetManifestId = "e4e7ec03e19ce5f83fd04c586788b724d88052b65ef2480cc93bcd50324f6b20";
+	private const string ControlledRegtestCborSha256 = "76844ce95da0c91bab521e9ea41631e53469f1ae5b826d4652c3a14d97a71679";
+	private const string ControlledRegtestManifestId = "71115e296e89e5f9161a74649f3a16fa2bb7ed9cf59d42ec203750b8a54350da";
 	private static readonly byte[] ManifestIdDomain = "wasabi-liquid/network-manifest/v1\0"u8.ToArray();
+	private static readonly byte[] ControlledRegtestCanonicalCbor = Convert.FromBase64String(
+		"mB8DeBlMSVFVSURfUkVHVEVTVF9DT05UUk9MTEVEb2VsZW1lbnRzcmVndGVzdFggzRechMNfUYJfIKO5GhjUXwxTtc63RKW2748Lq+gJOW9YIHN1qR8ZspgcdKQwTzHHPCwjacjCDKRhp1cwwo+4jndwGNJYIMLR4M9JxsPNmxdz87NiWyEYHm9R75ZtngJBrsgyTOl7AFggsuFdDXoMlOTizg/m6GkbnkUTd/bkboBFqG98S11PDyNYILLhXQ16DJTk4s4P5uhpG55FE3f25G6ARahvfEtdTw8jWCAPkYjxPLeyxx8qM146T8Mov1vrQ2ASr8pZCxoRRm4iBvX0hRjrGEsEY2VydGJlbGcyOC45OS4wGgABEYCIeCpFTEVNRU5UU18yOF85OV8wX0NPTUJJTkVEX0xPQ0FMX1JFR1RFU1RfVjH19fX09fT1g3gYR0VORVJBVElPTl9BUElfU0NIRU1BX1YyhGpzdGFydHVwX2lkc2NoYWluc3RhdGVfcmV2aXNpb25mYmxvY2tzbWJlc3RibG9ja2hhc2j1eChHRU5FUkFUSU9OX0FCQV9DT01QTEVURV9CT1VOREVEX0xPQ0FMX1YxRFMZ8g4ZSAxYIEroFXLwbhuI/VztehoACUVDLoPhVR5vch7pwAuMwzJgWCBK6BVy8G4biP1c7XoaAAlFQy6D4VUeb3Ie6cALjMMyYIdvZWxlbWVudHNyZWd0ZXN0aklOQ09NUExFVEV4aU5PX1JFVklFV0VEX0xPQ0FMX0NPTlRBSU5JTkdfQkxPQ0tfV0lUSF9OT05FTVBUWV9PVVRQVVRfU1VSSkVDVElPTl9BTkRfUkFOR0VfUFJPT0ZTX0ZPUl9FWEFDVF9TT1VSQ0VfVFJFRVgggvW8pIkdOCIcIL7YFyZOBFiewuukz1KvmHqqArcuXyz09PSGeDZjb250cm9sbGVkLWVsZW1lbnRzcmVndGVzdC1leHBsaWNpdC1vdXRwdXQtdHJhbnNhY3Rpb25YIAqT9rwI0NOlgog0OYy7dAiaWYfjjw2fMrPG1VBRzaJOWCBzdJO4/bmWD2sLKjWqmpTHNELawGvX2rbMniOlGZGKVFggc3STuP25lg9rCyo1qpqUxzRC2sBr19q2zJ4jpRmRilR4OmV4cGxpY2l0LWFzc2V0LXZhbHVlLW91dHB1dC1jb2RlYy1leGFtcGxlLW5vLW91dHB1dC1wcm9vZnOCggAAggAAhngdZWxlbWVudHMtMjguOTkuMC01OTIxMTUyOWJlNjZUWSEVKb5mV1Lxv/4uAX0mOhR8wbNU0mP/iBtp+fE+HMGC4RbaQW+a1tZYIJM2gOLHQALXvrYj2fzM8Smb4plBHJ5oMdXlPqQVHOjAWCDeyKacUOJa9opWfLl6AgH1sq+w3IF6cPzQq48X61LP5VggUWFVPS2Z/FZeSf32VucgIokdNojGsraIRdp+Xk+pbvqG9WhlbGVtZW50c/X19QBYIKnpH8pHQ+MgT8nlHJothXtaY015v0ktQ3hng6GO+qTklnglTk9ERV9ORVRNQU5JRkVTVF9CT1VOREVEX1JFU09VUkNFU19WMRkQABoAAQAAGCAaAQAAABoAgAAAGgACAAAIGQEAGQIACBhAGIAaAAEAABAaAIAAABknEBoAQAAAGScQGScQGQPoGgBAAAB4PkNPTlRST0xMRUQtUkVHVEVTVC1NQU5JRkVTVC0wMDEtTE9DQUwtREVNTy1PTkxZLU5PLUdBVEUtQ1JFRElUeChDT05UUk9MTEVEX1JFR1RFU1RfQ1RfRklYVFVSRV9JTkNPTVBMRVRF");
 	private static readonly byte[] MainnetCanonicalCbor = Convert.FromBase64String(
 		"mB8CbkxJUVVJRF9NQUlOTkVUaGxpcXVpZHYxWCAUZidYNiINspRMoFmjoQ72/S6mhLBojSw3kpaIiiBgA1gg3cNUu+fy/jPlqbfi+/8XZeFvG9BizFfJpVuBSSN9ZNQZAtRYIMLR4M9JxsPNmxdz87NiWyEYHm9R75ZtngJBrsgyTOl7AFggbwJ56e0EHD1xCp9X0MApKEFkYMS3Iq40V6Ee7DgcUm1YIG8CeentBBw9cQqfV9DAKShBZGDEtyKuNFehHuw4HFJtWCAAAAAAABnWaJwIWuFlgx6TT/djrkaipsFys/G2Cozib/X1hRg5GCcMYmV4YmxxZjIzLjMuMxoAARGAiHgnRUxFTUVOVFNfMjNfM18zX1NPVVJDRV9JREVOVElUWV9PTkxZX1Yy9fX19PT09IN4KEdFTkVSQVRJT05fQVBJX1NDSEVNQV9WMV9SRVFVSVJFRF9BQlNFTlSEanN0YXJ0dXBfaWRzY2hhaW5zdGF0ZV9yZXZpc2lvbmZoZWlnaHRoYmVzdGhhc2j0eBlHRU5FUkFUSU9OX0FCQV9JTkNPTVBMRVRFRPq/tdoZG4JYIOUSEekdnPSuw73DcKAwOs3l0kuu2xIjX90nhohQadkcWCCpESuesrFaLvRR6FmPMmeINC945sX6k8C+ltotAaPHi4dobGlxdWlkdjFqSU5DT01QTEVURXhZTk9fQUxMT1dFRF9MT0NBTF9QVUJMSUNfQ09OVEFJTklOR19CTE9DS19XSVRIX05PTkVNUFRZX09VVFBVVF9TVVJKRUNUSU9OX0FORF9SQU5HRV9QUk9PRlNYIKNnQlu7FE8bpdKiN2GPAj+qTWFEhej29NDCfanhQL7n9PT0hnRsaXF1aWR2MS1wZWdpbi1wcm9vZlggW+QRpwpe08euo0vduPK1zDpFtXUKHVpaFvI2NysTsSJYILnLbNUna8a6P0hr/UKgff8m/giwqve25VUjCtuiHfP3WCBxTXjoHhQ5s4Y86v0vu/fmndTrUCUq4P8uHuaei5HJ/3g7cGVnaW4tcGFyZW50LWluY2x1c2lvbi1wcm9vZi1jb2RlYy1leGFtcGxlLW5vLW91dHB1dC1wcm9vZnOCggAAggAAhm9lbGVtZW50cy0yMy4zLjNUGvek2b6pO01/Kad/l1Gg5uA6Q5BURA/KViur7QUYvru0UpEbfA0/IAtYIEvhl47wqCrggDkhTjyM8qp5k8KO+TWGSTP9HRrAsUUSWCCCLBYyr7r6iKdHtxZ79uL5fukRtzKgr8AM9hz8y0OCbFggfJQnUNtAOIzL3FWZHWkqsfsyPip2GKvKMgVu4geYgZ2G9WhlbGVtZW50c/X19QBYIPC9xX3gMyh1elk70InACX9PMS3Wp9YNh1sFZVQVA5w0lnglTk9ERV9ORVRNQU5JRkVTVF9CT1VOREVEX1JFU09VUkNFU19WMRkQABoAAQAAGCAaAQAAABoAgAAAGgACAAAIGQEAGQIACBhAGIAaAAEAABAaAIAAABknEBoAQAAAGScQGScQGQPoGgBAAAB4PU5PREUtTkVUTUFOSUZFU1QtMDAxLVNPVVJDRS1PTkxZLUNULUlOQ09NUExFVEUtTk8tR0FURS1DUkVESVR4HVBVQkxJQ19DVF9TRU5USU5FTF9JTkNPTVBMRVRF");
 	private static readonly byte[] TestnetCanonicalCbor = Convert.FromBase64String(
@@ -38,6 +42,7 @@ public sealed class ElementsPublicNetworkManifest
 		bool enforcePak,
 		ElementsAddressEncodingProfile addressEncoding,
 		string elementsVersion,
+		int elementsNumericVersion,
 		int elementsProtocolVersion,
 		string messageStart,
 		int defaultPort,
@@ -64,6 +69,7 @@ public sealed class ElementsPublicNetworkManifest
 		EnforcePak = enforcePak;
 		AddressEncoding = addressEncoding;
 		ElementsVersion = elementsVersion;
+		ElementsNumericVersion = elementsNumericVersion;
 		ElementsProtocolVersion = elementsProtocolVersion;
 		MessageStart = messageStart;
 		DefaultPort = defaultPort;
@@ -78,16 +84,18 @@ public sealed class ElementsPublicNetworkManifest
 	private readonly LiquidAssetId _requiredFeeAssetId;
 
 	public static ElementsPublicNetworkManifest LiquidMainnet { get; } =
-		DecodeKnown(MainnetCanonicalCbor, MainnetCborSha256, MainnetManifestId);
+		DecodeKnown(MainnetCanonicalCbor, MainnetCborSha256, MainnetManifestId, expectedSchema: 2);
 
 	public static ElementsPublicNetworkManifest LiquidTestnet { get; } =
-		DecodeKnown(TestnetCanonicalCbor, TestnetCborSha256, TestnetManifestId);
+		DecodeKnown(TestnetCanonicalCbor, TestnetCborSha256, TestnetManifestId, expectedSchema: 2);
+
+	public static ElementsPublicNetworkManifest LiquidControlledRegtest { get; } =
+		DecodeKnown(ControlledRegtestCanonicalCbor, ControlledRegtestCborSha256, ControlledRegtestManifestId, expectedSchema: 3);
 
 	/// <summary>
 	/// Resolves a reviewed manifest by its domain-separated manifest id (ordinal). The catalog is
-	/// the reviewed allowlist (mainnet and testnet today); an id with no reviewed manifest —
-	/// including the Liquid regtest binding, whose reviewed manifest has not landed — throws
-	/// fail-closed. Never fabricates or parses an unreviewed manifest.
+	/// the reviewed allowlist; an id with no reviewed manifest throws fail-closed. Never fabricates
+	/// or parses an unreviewed manifest.
 	/// </summary>
 	public static ElementsPublicNetworkManifest GetByManifestId(string manifestId)
 	{
@@ -99,6 +107,10 @@ public sealed class ElementsPublicNetworkManifest
 		if (StringComparer.Ordinal.Equals(manifestId, LiquidTestnet.ManifestId))
 		{
 			return LiquidTestnet;
+		}
+		if (StringComparer.Ordinal.Equals(manifestId, LiquidControlledRegtest.ManifestId))
+		{
+			return LiquidControlledRegtest;
 		}
 
 		throw new ElementsNetworkManifestException(
@@ -122,7 +134,7 @@ public sealed class ElementsPublicNetworkManifest
 	public bool EnforcePak { get; }
 	public ElementsAddressEncodingProfile AddressEncoding { get; }
 	public string ElementsVersion { get; }
-	public int ElementsNumericVersion => 230303;
+	public int ElementsNumericVersion { get; }
 	public int ElementsProtocolVersion { get; }
 	public string ExpectedSubversion => $"/Elements Core:{ElementsVersion}/";
 	public string MessageStart { get; }
@@ -145,6 +157,10 @@ public sealed class ElementsPublicNetworkManifest
 		if (canonicalCbor.SequenceEqual(TestnetCanonicalCbor))
 		{
 			return LiquidTestnet;
+		}
+		if (canonicalCbor.SequenceEqual(ControlledRegtestCanonicalCbor))
+		{
+			return LiquidControlledRegtest;
 		}
 
 		throw new ElementsNetworkManifestException("The Elements public-network manifest is not in the reviewed byte allowlist.");
@@ -208,7 +224,8 @@ public sealed class ElementsPublicNetworkManifest
 	private static ElementsPublicNetworkManifest DecodeKnown(
 		byte[] canonicalCbor,
 		string expectedCborSha256,
-		string expectedManifestId)
+		string expectedManifestId,
+		int expectedSchema)
 	{
 		string cborSha256 = LowerHex(SHA256.HashData(canonicalCbor));
 		Require(StringComparer.Ordinal.Equals(cborSha256, expectedCborSha256), "canonical_cbor_sha256");
@@ -315,29 +332,35 @@ public sealed class ElementsPublicNetworkManifest
 		string ctFixtureEligibility = reader.ReadText("ct_fixture_eligibility");
 		reader.EnsureFinished();
 
-		Require(schema == 2, "manifest_schema");
+		Require(schema == expectedSchema, "manifest_schema");
 		Require(StringComparer.Ordinal.Equals(peggedAssetId, requiredFeeAssetId), "required_fee_asset_id");
 		Require(hasParentChain != IsZeroHash(parentGenesisHash), "has_parent_chain");
-		Require(StringComparer.Ordinal.Equals(elementsVersion, "23.3.3"), "elements_version");
+		Require(StringComparer.Ordinal.Equals(elementsVersion, expectedSchema == 2 ? "23.3.3" : "28.99.0"), "elements_version");
 		Require(elementsProtocolVersion == 70016, "elements_protocol_version");
-		Require(StringComparer.Ordinal.Equals(capabilityProfile, "ELEMENTS_23_3_3_SOURCE_IDENTITY_ONLY_V2"), "capability_profile");
+		Require(StringComparer.Ordinal.Equals(capabilityProfile, expectedSchema == 2 ? "ELEMENTS_23_3_3_SOURCE_IDENTITY_ONLY_V2" : "ELEMENTS_28_99_0_COMBINED_LOCAL_REGTEST_V1"), "capability_profile");
 		Require(deterministicGenesisCodec && seededUtxoCodec && addressCodec, "capability_profile");
-		Require(!arbitraryFeeAsset && !generationApi && !publicCtFixture && !runtimeQualification, "capability_profile");
-		Require(StringComparer.Ordinal.Equals(generationSchema, "GENERATION_API_SCHEMA_V1_REQUIRED_ABSENT"), "generation_api_schema");
+		Require(expectedSchema == 2
+			? !arbitraryFeeAsset && !generationApi && !publicCtFixture && !runtimeQualification
+			: !arbitraryFeeAsset && generationApi && !publicCtFixture && runtimeQualification, "capability_profile");
+		Require(StringComparer.Ordinal.Equals(generationSchema, expectedSchema == 2 ? "GENERATION_API_SCHEMA_V1_REQUIRED_ABSENT" : "GENERATION_API_SCHEMA_V2"), "generation_api_schema");
 		Require(StringComparer.Ordinal.Equals(generationField0, "startup_id"), "generation_api_schema");
 		Require(StringComparer.Ordinal.Equals(generationField1, "chainstate_revision"), "generation_api_schema");
-		Require(StringComparer.Ordinal.Equals(generationField2, "height"), "generation_api_schema");
-		Require(StringComparer.Ordinal.Equals(generationField3, "besthash"), "generation_api_schema");
-		Require(!generationImplemented && StringComparer.Ordinal.Equals(generationStatus, "GENERATION_ABA_INCOMPLETE"), "generation_status");
+		Require(StringComparer.Ordinal.Equals(generationField2, expectedSchema == 2 ? "height" : "blocks"), "generation_api_schema");
+		Require(StringComparer.Ordinal.Equals(generationField3, expectedSchema == 2 ? "besthash" : "bestblockhash"), "generation_api_schema");
+		Require(generationImplemented == (expectedSchema == 3) && StringComparer.Ordinal.Equals(generationStatus, expectedSchema == 2 ? "GENERATION_ABA_INCOMPLETE" : "GENERATION_ABA_COMPLETE_BOUNDED_LOCAL_V1"), "generation_status");
 		Require(StringComparer.Ordinal.Equals(ctNetwork, chainRpcName), "public_ct_sentinel_disposition");
 		Require(StringComparer.Ordinal.Equals(ctStatus, "INCOMPLETE"), "public_ct_sentinel_disposition");
-		Require(StringComparer.Ordinal.Equals(ctReason, "NO_ALLOWED_LOCAL_PUBLIC_CONTAINING_BLOCK_WITH_NONEMPTY_OUTPUT_SURJECTION_AND_RANGE_PROOFS"), "public_ct_sentinel_disposition");
+		Require(StringComparer.Ordinal.Equals(
+			ctReason,
+			expectedSchema == 2
+				? "NO_ALLOWED_LOCAL_PUBLIC_CONTAINING_BLOCK_WITH_NONEMPTY_OUTPUT_SURJECTION_AND_RANGE_PROOFS"
+				: "NO_REVIEWED_LOCAL_CONTAINING_BLOCK_WITH_NONEMPTY_OUTPUT_SURJECTION_AND_RANGE_PROOFS_FOR_EXACT_SOURCE_TREE"), "public_ct_sentinel_disposition");
 		Require(!ctContainingBlock && !ctSurjectionProof && !ctRangeProof, "public_ct_sentinel_disposition");
-		Require(StringComparer.Ordinal.Equals(sourceRelease, "elements-23.3.3"), "source_provenance.release");
+		Require(StringComparer.Ordinal.Equals(sourceRelease, expectedSchema == 2 ? "elements-23.3.3" : "elements-28.99.0-59211529be66"), "source_provenance.release");
 		Require(connectGenesisOutputs && genesisHashVerified && genesisMerkleVerified && genesisUtxoVerified, "genesis_construction_profile");
 		Require(StringComparer.Ordinal.Equals(genesisMode, "elements"), "genesis_construction_profile.mode");
-		Require(StringComparer.Ordinal.Equals(scopeMarker, "NODE-NETMANIFEST-001-SOURCE-ONLY-CT-INCOMPLETE-NO-GATE-CREDIT"), "scope_marker");
-		Require(StringComparer.Ordinal.Equals(ctFixtureEligibility, "PUBLIC_CT_SENTINEL_INCOMPLETE"), "ct_fixture_eligibility");
+		Require(StringComparer.Ordinal.Equals(scopeMarker, expectedSchema == 2 ? "NODE-NETMANIFEST-001-SOURCE-ONLY-CT-INCOMPLETE-NO-GATE-CREDIT" : "CONTROLLED-REGTEST-MANIFEST-001-LOCAL-DEMO-ONLY-NO-GATE-CREDIT"), "scope_marker");
+		Require(StringComparer.Ordinal.Equals(ctFixtureEligibility, expectedSchema == 2 ? "PUBLIC_CT_SENTINEL_INCOMPLETE" : "CONTROLLED_REGTEST_CT_FIXTURE_INCOMPLETE"), "ct_fixture_eligibility");
 		ValidateNetworkTuple(productNetworkId, chainRpcName, hasParentChain, enforcePak, addressEncoding, defaultPort);
 
 		return new ElementsPublicNetworkManifest(
@@ -359,6 +382,7 @@ public sealed class ElementsPublicNetworkManifest
 			enforcePak,
 			addressEncoding,
 			elementsVersion,
+			elementsNumericVersion: expectedSchema == 2 ? 230303 : 289900,
 			elementsProtocolVersion,
 			messageStart,
 			defaultPort,
@@ -424,6 +448,14 @@ public sealed class ElementsPublicNetworkManifest
 			Require(!hasParentChain && !enforcePak, "liquidtestnet policy");
 			Require(addressEncoding == new ElementsAddressEncodingProfile(36, 19, 23, "tex", "tlq"), "address_encoding_profile");
 			Require(defaultPort == 18891, "default_port");
+			return;
+		}
+		if (StringComparer.Ordinal.Equals(chainRpcName, "elementsregtest"))
+		{
+			Require(StringComparer.Ordinal.Equals(productNetworkId, "LIQUID_REGTEST_CONTROLLED"), "product_network_id");
+			Require(hasParentChain && !enforcePak, "elementsregtest policy");
+			Require(addressEncoding == new ElementsAddressEncodingProfile(235, 75, 4, "ert", "el"), "address_encoding_profile");
+			Require(defaultPort == 18444, "default_port");
 			return;
 		}
 
