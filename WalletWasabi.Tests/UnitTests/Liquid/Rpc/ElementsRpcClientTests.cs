@@ -710,6 +710,49 @@ public class ElementsRpcClientTests
 		Assert.Equal(["getnodegeneration", "getsidechaininfo"], harness.Handler.Methods);
 	}
 
+	[Fact]
+	public async Task DefaultsEffectiveFeeAssetToPeggedAssetWhenSchema2ManifestOmitsFeeAssetFieldAsync()
+	{
+		string testnetPeggedAsset = ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId;
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getblockchaininfo" => Envelope(invocation.Id, BlockchainResult()),
+			"getblockhash" => Envelope(invocation.Id, JsonSerializer.Serialize(BestBlockHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, SidechainResult(peggedAsset: testnetPeggedAsset)),
+			_ => throw new InvalidOperationException($"Unexpected RPC method '{invocation.Method}'."),
+		});
+
+		ElementsFeeAssetGenerationObservation observation =
+			await harness.Client.GetFeeAssetGenerationObservationAsync(
+				ElementsPublicNetworkManifest.LiquidTestnet,
+				CancellationToken.None);
+
+		Assert.Equal(testnetPeggedAsset, observation.PeggedAsset);
+		Assert.Equal(testnetPeggedAsset, observation.EffectiveFeeAsset);
+		Assert.True(observation.UsesPeggedAssetForFees);
+		Assert.Equal(
+			["getblockchaininfo", "getblockhash", "getsidechaininfo", "getblockchaininfo", "getblockhash"],
+			harness.Handler.Methods);
+	}
+
+	[Fact]
+	public async Task ManifestLessObservationStillRequiresFeeAssetFieldAsync()
+	{
+		const string StartupId = "abababababababababababababababababababababababababababababababab";
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getnodegeneration" => Envelope(invocation.Id, GenerationResult(StartupId, 9, 42, BestBlockHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, SidechainResult()),
+			_ => throw new InvalidOperationException(),
+		});
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => harness.Client.GetFeeAssetGenerationObservationAsync(CancellationToken.None));
+
+		Assert.Contains("fee_asset", exception.Message, StringComparison.Ordinal);
+		Assert.Equal(["getnodegeneration", "getsidechaininfo"], harness.Handler.Methods);
+	}
+
 	[Theory]
 	[InlineData("{\"startup_id\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"chainstate_revision\":9,\"blocks\":42,\"bestblockhash\":\"0101010101010101010101010101010101010101010101010101010101010101\"}", "startup_id")]
 	[InlineData("{\"startup_id\":\"abababababababababababababababababababababababababababababababab\",\"chainstate_revision\":1.0,\"blocks\":42,\"bestblockhash\":\"0101010101010101010101010101010101010101010101010101010101010101\"}", "chainstate_revision")]

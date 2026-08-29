@@ -314,6 +314,69 @@ public class LiquidWalletSyncSessionTests
 	}
 
 	[Fact]
+	public void CommitSkipsUnrelatedTransactionWithoutAdvancingRevision()
+	{
+		// Recent-block discovery on public networks stages every non-coinbase
+		// transaction, including arbitrary third-party ones. An observation that
+		// spends no wallet outpoint and owns no output is not this wallet's
+		// transaction: it is skipped (not applied, no revision advance) instead
+		// of reaching the delta guard, and the base state passes through
+		// unchanged.
+		LiquidTransactionId receiveId = Tx('a');
+		LiquidOwnedOutput received = Output(receiveId, 0, PeggedAsset, 100);
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(receiveId, [], [received]));
+		LiquidWalletSyncSession session = Open(state);
+		LiquidTransactionId foreignId = Tx('b');
+		LiquidWalletObservationBatch batch = Batch(
+			Observation(
+				foreignId,
+				[],
+				inputs: [LiquidOutPoint.CreateSpendable(Tx('9'), 0)]));
+
+		LiquidWalletSyncResult result = session.Commit(batch, []);
+
+		Assert.Equal(1ul, result.BaseRevision);
+		Assert.Equal(1ul, result.ResultRevision);
+		Assert.Equal(0, result.AppliedTransactionCount);
+		Assert.Same(state, result.State);
+		Assert.Equal(1, result.State.UnspentOutputCount);
+		Assert.True(result.State.ContainsUnspent(received.OutPoint));
+		Assert.Equal(100, result.State.QueryAssetBalance(1, PeggedAsset).AtomicUnits);
+		Assert.Equal(1, result.State.AppliedTransactionCount);
+	}
+
+	[Fact]
+	public void CommitSkipsUnrelatedTransactionButAppliesOwnedOutputInSameBatch()
+	{
+		// A batch mixing an unrelated third-party transaction with a genuine
+		// owned-output receive skips only the unrelated one; the owned
+		// transaction still applies exactly once and advances the revision.
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
+		LiquidWalletSyncSession session = Open(state);
+		LiquidTransactionId foreignId = Tx('b');
+		LiquidTransactionId receiveId = Tx('a');
+		// The batch requires strictly ascending consensus identifiers, so the
+		// owned receive ('a') precedes the unrelated transaction ('b').
+		LiquidWalletObservationBatch batch = Batch(
+			Observation(receiveId, [OwnedOutput(receiveId, 0, PeggedAsset, 12_345)]),
+			Observation(
+				foreignId,
+				[],
+				inputs: [LiquidOutPoint.CreateSpendable(Tx('9'), 0)]));
+
+		LiquidWalletSyncResult result = session.Commit(batch, []);
+
+		Assert.Equal(0ul, result.BaseRevision);
+		Assert.Equal(1ul, result.ResultRevision);
+		Assert.Equal(1, result.AppliedTransactionCount);
+		Assert.Equal(1, result.State.UnspentOutputCount);
+		Assert.Equal(
+			12_345,
+			result.State.QueryAssetBalance(result.ResultRevision, PeggedAsset).AtomicUnits);
+	}
+
+	[Fact]
 	public void CommitRejectsConfirmationOfUnappliedTransaction()
 	{
 		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);

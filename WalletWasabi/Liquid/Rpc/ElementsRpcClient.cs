@@ -184,7 +184,7 @@ public sealed class ElementsRpcClient : IDisposable
 		await _probeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
-			return await GetFeeAssetGenerationCoreAsync(manifest.HasGenerationApi, cancellationToken)
+			return await GetFeeAssetGenerationCoreAsync(manifest, manifest.HasGenerationApi, cancellationToken)
 				.ConfigureAwait(false);
 		}
 		finally
@@ -203,9 +203,24 @@ public sealed class ElementsRpcClient : IDisposable
 
 	private async Task<ElementsFeeAssetGenerationObservation> GetFeeAssetGenerationCoreAsync(
 		CancellationToken cancellationToken) =>
-		await GetFeeAssetGenerationCoreAsync(hasGenerationApi: true, cancellationToken).ConfigureAwait(false);
+		await GetFeeAssetGenerationCoreAsync(manifest: null, hasGenerationApi: true, cancellationToken).ConfigureAwait(false);
 
 	private async Task<ElementsFeeAssetGenerationObservation> GetFeeAssetGenerationCoreAsync(
+		bool hasGenerationApi,
+		CancellationToken cancellationToken) =>
+		await GetFeeAssetGenerationCoreAsync(manifest: null, hasGenerationApi, cancellationToken).ConfigureAwait(false);
+
+	/// <summary>
+	/// Fee-asset generation observation core. When a reviewed <paramref name="manifest"/> is
+	/// supplied and the manifest is schema 2, the reviewed manifest proves
+	/// <c>required_fee_asset_id == pegged_asset_id</c> and <c>arbitrary_fee_asset == false</c>,
+	/// so the effective fee asset IS the pegged asset and the upstream node's omitted
+	/// <c>fee_asset</c> field is tolerated by defaulting it to the observed pegged asset.
+	/// The manifest-less path stays fail-closed and still requires the explicit
+	/// <c>fee_asset</c> field.
+	/// </summary>
+	private async Task<ElementsFeeAssetGenerationObservation> GetFeeAssetGenerationCoreAsync(
+		ElementsPublicNetworkManifest? manifest,
 		bool hasGenerationApi,
 		CancellationToken cancellationToken)
 	{
@@ -213,7 +228,15 @@ public sealed class ElementsRpcClient : IDisposable
 			await GetNodeGenerationObservationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
 		JsonElement sidechain = await CallObjectAsync("getsidechaininfo", [], cancellationToken).ConfigureAwait(false);
 		LiquidAssetId peggedAsset = RequiredAssetId(sidechain, "pegged_asset");
-		LiquidAssetId effectiveFeeAsset = RequiredAssetId(sidechain, "fee_asset");
+		LiquidAssetId effectiveFeeAsset;
+		if (manifest is not null && manifest.ManifestSchema == 2)
+		{
+			effectiveFeeAsset = TryGetAssetId(sidechain, "fee_asset") ?? peggedAsset;
+		}
+		else
+		{
+			effectiveFeeAsset = RequiredAssetId(sidechain, "fee_asset");
+		}
 		ElementsNodeGenerationObservation generationAfter =
 			await GetNodeGenerationObservationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
 
@@ -890,6 +913,23 @@ public sealed class ElementsRpcClient : IDisposable
 		}
 	}
 
+	private static LiquidAssetId? TryGetAssetId(JsonElement value, string propertyName)
+	{
+		if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty(propertyName, out JsonElement property))
+		{
+			return null;
+		}
+		string result = RequiredString(value, propertyName);
+		try
+		{
+			return LiquidAssetId.ParseRpcHex(result, propertyName);
+		}
+		catch (ArgumentException)
+		{
+			throw InvalidResult("node identity", $"field '{propertyName}' must be a canonical nonzero Liquid asset identifier");
+		}
+	}
+
 	private static int RequiredNonNegativeInt32(JsonElement value, string propertyName)
 	{
 		JsonElement property = RequiredProperty(value, propertyName, "node identity");
@@ -1113,6 +1153,7 @@ public sealed class ElementsRpcClient : IDisposable
 		await GetExpectationBoundNodeObservationGateAsync(
 				expectation,
 				expectedEffectiveFeeAsset,
+				manifest: null,
 				hasGenerationApi: true,
 				cancellationToken)
 			.ConfigureAwait(false);
@@ -1131,6 +1172,7 @@ public sealed class ElementsRpcClient : IDisposable
 		return await GetExpectationBoundNodeObservationGateAsync(
 				expectation,
 				expectedEffectiveFeeAsset,
+				manifest,
 				manifest.HasGenerationApi,
 				cancellationToken)
 			.ConfigureAwait(false);
@@ -1139,6 +1181,7 @@ public sealed class ElementsRpcClient : IDisposable
 	private async Task<ElementsExpectationBoundNodeObservation> GetExpectationBoundNodeObservationGateAsync(
 		ElementsNodeExpectation expectation,
 		string expectedEffectiveFeeAsset,
+		ElementsPublicNetworkManifest? manifest,
 		bool hasGenerationApi,
 		CancellationToken cancellationToken)
 	{
@@ -1153,6 +1196,7 @@ public sealed class ElementsRpcClient : IDisposable
 			return await GetExpectationBoundNodeObservationCoreAsync(
 				normalizedExpectation,
 				normalizedEffectiveFeeAsset,
+				manifest,
 				hasGenerationApi,
 				cancellationToken).ConfigureAwait(false);
 		}
@@ -1186,6 +1230,7 @@ public sealed class ElementsRpcClient : IDisposable
 				expectedNodeExpectation,
 				expectedEffectiveFeeAsset,
 				signedTransactionHex,
+				manifest: null,
 				hasGenerationApi: true,
 				cancellationToken)
 			.ConfigureAwait(false);
@@ -1206,6 +1251,7 @@ public sealed class ElementsRpcClient : IDisposable
 				expectedNodeExpectation,
 				expectedEffectiveFeeAsset,
 				signedTransactionHex,
+				manifest,
 				manifest.HasGenerationApi,
 				cancellationToken)
 			.ConfigureAwait(false);
@@ -1215,6 +1261,7 @@ public sealed class ElementsRpcClient : IDisposable
 		ElementsNodeExpectation? expectedNodeExpectation,
 		string expectedEffectiveFeeAsset,
 		string signedTransactionHex,
+		ElementsPublicNetworkManifest? manifest,
 		bool hasGenerationApi,
 		CancellationToken cancellationToken)
 	{
@@ -1235,7 +1282,7 @@ public sealed class ElementsRpcClient : IDisposable
 				ElementsNodeGenerationObservation generationAfterStatus =
 					await GetNodeGenerationObservationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
 				ElementsFeeAssetGenerationObservation feeObservation =
-					await GetFeeAssetGenerationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
+					await GetFeeAssetGenerationCoreAsync(manifest, hasGenerationApi, cancellationToken).ConfigureAwait(false);
 
 				EnsureExactExpectationBoundGenerationFence(
 					generationBefore,
@@ -1346,6 +1393,7 @@ public sealed class ElementsRpcClient : IDisposable
 	private async Task<ElementsExpectationBoundNodeObservation> GetExpectationBoundNodeObservationCoreAsync(
 		ElementsNodeExpectation expectation,
 		LiquidAssetId expectedEffectiveFeeAsset,
+		ElementsPublicNetworkManifest? manifest,
 		bool hasGenerationApi,
 		CancellationToken cancellationToken)
 	{
@@ -1355,7 +1403,7 @@ public sealed class ElementsRpcClient : IDisposable
 		ElementsNodeGenerationObservation generationAfterStatus =
 			await GetNodeGenerationObservationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
 		ElementsFeeAssetGenerationObservation feeObservation =
-			await GetFeeAssetGenerationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
+			await GetFeeAssetGenerationCoreAsync(manifest, hasGenerationApi, cancellationToken).ConfigureAwait(false);
 
 		EnsureExactExpectationBoundGenerationFence(
 			generationBeforeStatus,
@@ -1427,6 +1475,7 @@ public sealed class ElementsRpcClient : IDisposable
 				expectation,
 				expectedEffectiveFeeAsset,
 				requests,
+				manifest: null,
 				hasGenerationApi: true,
 				cancellationToken)
 			.ConfigureAwait(false);
@@ -1447,6 +1496,7 @@ public sealed class ElementsRpcClient : IDisposable
 				expectation,
 				expectedEffectiveFeeAsset,
 				requests,
+				manifest,
 				manifest.HasGenerationApi,
 				cancellationToken)
 			.ConfigureAwait(false);
@@ -1456,6 +1506,7 @@ public sealed class ElementsRpcClient : IDisposable
 		ElementsNodeExpectation expectation,
 		string expectedEffectiveFeeAsset,
 		IReadOnlyList<ElementsRawTransactionRequest> requests,
+		ElementsPublicNetworkManifest? manifest,
 		bool hasGenerationApi,
 		CancellationToken cancellationToken)
 	{
@@ -1509,6 +1560,7 @@ public sealed class ElementsRpcClient : IDisposable
 				normalizedExpectation,
 				normalizedEffectiveFeeAsset,
 				normalizedRequests,
+				manifest,
 				hasGenerationApi,
 				cancellationToken).ConfigureAwait(false);
 		}
@@ -1536,6 +1588,7 @@ public sealed class ElementsRpcClient : IDisposable
 		ElementsNodeExpectation expectation,
 		LiquidAssetId expectedEffectiveFeeAsset,
 		ElementsRawTransactionRequest[] requests,
+		ElementsPublicNetworkManifest? manifest,
 		bool hasGenerationApi,
 		CancellationToken cancellationToken)
 	{
@@ -1543,6 +1596,7 @@ public sealed class ElementsRpcClient : IDisposable
 			await GetExpectationBoundNodeObservationCoreAsync(
 				expectation,
 				expectedEffectiveFeeAsset,
+				manifest,
 				hasGenerationApi,
 				cancellationToken).ConfigureAwait(false);
 		var transactions = new ElementsRawTransactionObservation[requests.Length];
@@ -1592,6 +1646,7 @@ public sealed class ElementsRpcClient : IDisposable
 		await GetObservedRawTransactionsGateAsync(
 				expectedEffectiveFeeAsset,
 				requests,
+				manifest: null,
 				hasGenerationApi: true,
 				cancellationToken)
 			.ConfigureAwait(false);
@@ -1610,6 +1665,7 @@ public sealed class ElementsRpcClient : IDisposable
 		return await GetObservedRawTransactionsGateAsync(
 				expectedEffectiveFeeAsset,
 				requests,
+				manifest,
 				manifest.HasGenerationApi,
 				cancellationToken)
 			.ConfigureAwait(false);
@@ -1618,6 +1674,7 @@ public sealed class ElementsRpcClient : IDisposable
 	private async Task<ElementsExpectationBoundRawTransactionBatch> GetObservedRawTransactionsGateAsync(
 		string expectedEffectiveFeeAsset,
 		IReadOnlyList<ElementsRawTransactionRequest> requests,
+		ElementsPublicNetworkManifest? manifest,
 		bool hasGenerationApi,
 		CancellationToken cancellationToken)
 	{
@@ -1645,7 +1702,7 @@ public sealed class ElementsRpcClient : IDisposable
 			ElementsNodeGenerationObservation generationBefore =
 				await GetNodeGenerationObservationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
 			ElementsFeeAssetGenerationObservation feeObservation =
-				await GetFeeAssetGenerationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
+				await GetFeeAssetGenerationCoreAsync(manifest, hasGenerationApi, cancellationToken).ConfigureAwait(false);
 			ElementsNodeGenerationObservation generationAfterFee =
 				await GetNodeGenerationObservationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
 
@@ -1822,6 +1879,7 @@ public sealed class ElementsRpcClient : IDisposable
 				expectedEffectiveFeeAsset,
 				acceptedTransactionIds,
 				suppliedAcceptedTransactionId,
+				manifest: null,
 				hasGenerationApi: true,
 				cancellationToken)
 			.ConfigureAwait(false);
@@ -1844,6 +1902,7 @@ public sealed class ElementsRpcClient : IDisposable
 				expectedEffectiveFeeAsset,
 				acceptedTransactionIds,
 				suppliedAcceptedTransactionId,
+				manifest,
 				manifest.HasGenerationApi,
 				cancellationToken)
 			.ConfigureAwait(false);
@@ -1854,6 +1913,7 @@ public sealed class ElementsRpcClient : IDisposable
 		string expectedEffectiveFeeAsset,
 		IReadOnlyList<string> acceptedTransactionIds,
 		string? suppliedAcceptedTransactionId,
+		ElementsPublicNetworkManifest? manifest,
 		bool hasGenerationApi,
 		CancellationToken cancellationToken)
 	{
@@ -1871,6 +1931,7 @@ public sealed class ElementsRpcClient : IDisposable
 				normalizedEffectiveFeeAsset,
 				acceptedTransactionIds,
 				suppliedAcceptedTransactionId,
+				manifest,
 				hasGenerationApi,
 				cancellationToken).ConfigureAwait(false);
 		}
@@ -1885,6 +1946,7 @@ public sealed class ElementsRpcClient : IDisposable
 		LiquidAssetId expectedEffectiveFeeAsset,
 		IReadOnlyList<string> acceptedTransactionIds,
 		string? suppliedAcceptedTransactionId,
+		ElementsPublicNetworkManifest? manifest,
 		bool hasGenerationApi,
 		CancellationToken cancellationToken)
 	{
@@ -1896,7 +1958,7 @@ public sealed class ElementsRpcClient : IDisposable
 		await EnsureRefreshGenerationAsync(generation, acquisition, hasGenerationApi, cancellationToken).ConfigureAwait(false);
 
 		ElementsFeeAssetGenerationObservation feeObservation =
-			await GetFeeAssetGenerationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
+			await GetFeeAssetGenerationCoreAsync(manifest, hasGenerationApi, cancellationToken).ConfigureAwait(false);
 		if (feeObservation.GenerationBefore != generation || feeObservation.GenerationAfter != generation)
 		{
 			throw InvalidResult(acquisition, "node generation changed during the fee observation");
@@ -2424,6 +2486,7 @@ public sealed class ElementsRpcClient : IDisposable
 					normalizedExpectation,
 					normalizedEffectiveFeeAsset,
 					requests,
+					planManifest,
 					planManifest.HasGenerationApi,
 					cancellationToken).ConfigureAwait(false);
 			cancellationToken.ThrowIfCancellationRequested();

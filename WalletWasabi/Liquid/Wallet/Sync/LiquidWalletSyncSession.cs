@@ -113,6 +113,19 @@ internal sealed class LiquidWalletSyncSession
 
 			LiquidOutPoint[] spentOutPoints = ComputeSpentOutPoints(observation);
 			LiquidOwnedOutput[] createdOutputs = ProjectCreatedOutputs(observation);
+			if (spentOutPoints.Length == 0 && createdOutputs.Length == 0)
+			{
+				// Recent-block discovery on public networks stages every
+				// non-coinbase transaction; ownership can only be decided after
+				// download. An observation with no spend of a wallet outpoint
+				// and no owned output is not this wallet's transaction, so it
+				// is skipped without applying or advancing the revision. A
+				// transaction with any spend or owned output still applies and
+				// still passes the double-apply guard.
+				skippedTransactionCount++;
+				continue;
+			}
+
 			LiquidWalletTransactionDelta delta = LiquidWalletTransactionDelta.Create(
 				transactionId,
 				spentOutPoints,
