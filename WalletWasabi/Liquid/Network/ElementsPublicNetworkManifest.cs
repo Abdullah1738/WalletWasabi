@@ -44,6 +44,7 @@ public sealed class ElementsPublicNetworkManifest
 		int defaultPort,
 		string signblockScriptSha256,
 		string fedpegScriptSha256,
+		bool hasGenerationApi,
 		string scopeMarker,
 		string ctFixtureEligibility)
 	{
@@ -71,6 +72,7 @@ public sealed class ElementsPublicNetworkManifest
 		DefaultPort = defaultPort;
 		SignblockScriptSha256 = signblockScriptSha256;
 		FedpegScriptSha256 = fedpegScriptSha256;
+		HasGenerationApi = hasGenerationApi;
 		ScopeMarker = scopeMarker;
 		CtFixtureEligibility = ctFixtureEligibility;
 	}
@@ -130,6 +132,15 @@ public sealed class ElementsPublicNetworkManifest
 	public int DefaultPort { get; }
 	public string SignblockScriptSha256 { get; }
 	public string FedpegScriptSha256 { get; }
+
+	/// <summary>
+	/// Whether the reviewed node build declares the fork-only <c>getnodegeneration</c> RPC. When
+	/// absent (the official upstream Elements 23.3.3 public networks) the RPC client substitutes a
+	/// strictly weaker fallback fence built from <c>getblockchaininfo</c> that still detects tip
+	/// changes between observations but cannot detect a node restart mid-observation.
+	/// </summary>
+	public bool HasGenerationApi { get; }
+
 	public string ScopeMarker { get; }
 	public string CtFixtureEligibility { get; }
 
@@ -373,6 +384,7 @@ public sealed class ElementsPublicNetworkManifest
 			defaultPort,
 			signblockScriptSha256,
 			fedpegScriptSha256,
+			hasGenerationApi: generationApi,
 			scopeMarker,
 			ctFixtureEligibility);
 	}

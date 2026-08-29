@@ -297,7 +297,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 		Assert.IsType<InvalidOperationException>(failure.InnerException);
 		Assert.Equal("Observer failure marker.", failure.InnerException!.Message);
 		Assert.Contains("getrawtransaction", handler.Methods);
-		Assert.Equal(12, handler.Methods.Count);
+		Assert.Equal(17, handler.Methods.Count);
 	}
 
 	[Fact]
@@ -336,7 +336,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 
 		Assert.Equal("Observer cancellation marker.", failure.Message);
 		Assert.Contains("getrawtransaction", handler.Methods);
-		Assert.Equal(12, handler.Methods.Count);
+		Assert.Equal(17, handler.Methods.Count);
 	}
 
 	[Fact]
@@ -413,7 +413,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 		Assert.Null(capturedRequest.BlockHash);
 		Assert.Equal(1, rpcEntries);
 		Assert.Equal(
-			["getnodegeneration", "getnetworkinfo", "getblockchaininfo", "getblockhash", "getblockhash", "getsidechaininfo", "getnodegeneration", "getnodegeneration", "getsidechaininfo", "getnodegeneration", "getrawtransaction", "getnodegeneration"],
+			["getblockchaininfo", "getblockhash", "getnetworkinfo", "getblockchaininfo", "getblockhash", "getblockhash", "getsidechaininfo", "getblockchaininfo", "getblockhash", "getblockchaininfo", "getblockhash", "getsidechaininfo", "getblockchaininfo", "getblockhash", "getrawtransaction", "getblockchaininfo", "getblockhash"],
 			handler.Methods);
 	}
 
@@ -517,6 +517,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 					const string Best = "0101010101010101010101010101010101010101010101010101010101010101";
 					const string Genesis = "a771da8e52ee6ad581ed1e9a99825e5b3b7992225534eaa2ae23244fe26ab1c1";
 					const string Fee = "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49";
+					int _sidechainCalls;
 					internal List<string> Methods { get; } = [];
 					protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
 					{
@@ -525,13 +526,14 @@ public sealed class LiquidProviderOwnershipSeamTests
 						string id = requestJson.RootElement.GetProperty("id").GetString()!;
 						string parameters = requestJson.RootElement.GetProperty("params").GetRawText();
 						Methods.Add(method);
+						int sidechainCallIndex = method == "getsidechaininfo" ? _sidechainCalls++ : -1;
 						string result = method switch {
 							"getnodegeneration" => $$"""{"startup_id":"{{Startup}}","chainstate_revision":9,"blocks":42,"bestblockhash":"{{Best}}"}""",
 							"getnetworkinfo" => """{"version":230303,"protocolversion":70016,"subversion":"/Elements Core:23.3.3/","localrelay":true,"networkactive":true,"warnings":""}""",
 							"getblockchaininfo" => $$"""{"chain":"liquidtestnet","blocks":42,"headers":42,"bestblockhash":"{{Best}}","initialblockdownload":false,"pruned":false,"trim_headers":false,"warnings":""}""",
 							"getblockhash" when parameters == "[0]" => JsonSerializer.Serialize(Genesis),
 							"getblockhash" => JsonSerializer.Serialize(Best),
-							"getsidechaininfo" when Methods.Count == 9 => $$"""{"pegged_asset":"{{Fee}}","fee_asset":"{{Fee}}"}""",
+							"getsidechaininfo" when sidechainCallIndex > 0 => $$"""{"pegged_asset":"{{Fee}}","fee_asset":"{{Fee}}"}""",
 							"getsidechaininfo" => $$"""{"fedpegscript":"51","pegged_asset":"{{Fee}}","parent_blockhash":"0000000000000000000000000000000000000000000000000000000000000000","pegin_confirmation_depth":8,"enforce_pak":false}""",
 							"getrawtransaction" when parameters == $"[\"{txid}\",false]" => JsonSerializer.Serialize("010203"),
 							_ => throw new InvalidOperationException()
@@ -570,7 +572,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 			Assert.True(output.RootElement.GetProperty("boundToRpcEntry").GetBoolean());
 			Assert.True(output.RootElement.GetProperty("batchOk").GetBoolean());
 			Assert.Equal(
-				new[] { "getnodegeneration", "getnetworkinfo", "getblockchaininfo", "getblockhash", "getblockhash", "getsidechaininfo", "getnodegeneration", "getnodegeneration", "getsidechaininfo", "getnodegeneration", "getrawtransaction", "getnodegeneration" },
+				new[] { "getblockchaininfo", "getblockhash", "getnetworkinfo", "getblockchaininfo", "getblockhash", "getblockhash", "getsidechaininfo", "getblockchaininfo", "getblockhash", "getblockchaininfo", "getblockhash", "getsidechaininfo", "getblockchaininfo", "getblockhash", "getrawtransaction", "getblockchaininfo", "getblockhash" },
 				output.RootElement.GetProperty("methods").EnumerateArray().Select(method => method.GetString()!).ToArray());
 		}
 		finally
@@ -848,6 +850,8 @@ public sealed class LiquidProviderOwnershipSeamTests
 		private const string GenesisBlockHash = "a771da8e52ee6ad581ed1e9a99825e5b3b7992225534eaa2ae23244fe26ab1c1";
 		private const string FeeAsset = "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49";
 
+		private int _sidechainCalls;
+
 		internal List<string> Methods { get; } = [];
 
 		protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -858,6 +862,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 			string id = document.RootElement.GetProperty("id").GetString()!;
 			string parameters = document.RootElement.GetProperty("params").GetRawText();
 			Methods.Add(method);
+			int sidechainCallIndex = method == "getsidechaininfo" ? _sidechainCalls++ : -1;
 			string result = method switch
 			{
 				"getnodegeneration" => $$"""{"startup_id":"{{StartupId}}","chainstate_revision":9,"blocks":42,"bestblockhash":"{{BestBlockHash}}"}""",
@@ -865,7 +870,7 @@ public sealed class LiquidProviderOwnershipSeamTests
 				"getblockchaininfo" => $$"""{"chain":"liquidtestnet","blocks":42,"headers":42,"bestblockhash":"{{BestBlockHash}}","initialblockdownload":false,"pruned":false,"trim_headers":false,"warnings":""}""",
 				"getblockhash" when parameters == "[0]" => JsonSerializer.Serialize(GenesisBlockHash),
 				"getblockhash" => JsonSerializer.Serialize(BestBlockHash),
-				"getsidechaininfo" when Methods.Count == 9 => $$"""{"pegged_asset":"{{FeeAsset}}","fee_asset":"{{FeeAsset}}"}""",
+				"getsidechaininfo" when sidechainCallIndex > 0 => $$"""{"pegged_asset":"{{FeeAsset}}","fee_asset":"{{FeeAsset}}"}""",
 				"getsidechaininfo" => $$"""{"fedpegscript":"51","pegged_asset":"{{FeeAsset}}","parent_blockhash":"0000000000000000000000000000000000000000000000000000000000000000","pegin_confirmation_depth":8,"enforce_pak":false}""",
 				"getrawtransaction" when parameters == $"[\"{transactionId}\",false]" => JsonSerializer.Serialize("010203"),
 				_ => throw new InvalidOperationException($"Unexpected RPC method '{method}'."),

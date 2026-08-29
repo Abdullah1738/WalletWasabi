@@ -146,6 +146,7 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 				NodeExpectation,
 				manifest.RequiredFeeAssetId,
 				requests,
+				manifest,
 				cancellationToken);
 		}
 

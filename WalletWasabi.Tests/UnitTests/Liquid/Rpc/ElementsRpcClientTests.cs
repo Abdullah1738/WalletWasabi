@@ -379,7 +379,8 @@ public class ElementsRpcClientTests
 		{
 			Assert.Equal(
 				[
-					"getnodegeneration",
+					"getblockchaininfo",
+					"getblockhash",
 					"getnetworkinfo",
 					"getblockchaininfo",
 					"getblockhash",
@@ -417,18 +418,23 @@ public class ElementsRpcClientTests
 		Assert.Equal("liquidtestnet", statusAfterPlanEncoding.Chain);
 		Assert.Equal(
 			[
-				"getnodegeneration",
+				"getblockchaininfo",
+				"getblockhash",
 				"getnetworkinfo",
 				"getblockchaininfo",
 				"getblockhash",
 				"getblockhash",
 				"getsidechaininfo",
-				"getnodegeneration",
-				"getnodegeneration",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockchaininfo",
+				"getblockhash",
 				"getsidechaininfo",
-				"getnodegeneration",
+				"getblockchaininfo",
+				"getblockhash",
 				"getrawtransaction",
-				"getnodegeneration",
+				"getblockchaininfo",
+				"getblockhash",
 				"getnetworkinfo",
 				"getblockchaininfo",
 				"getblockhash",
@@ -594,9 +600,9 @@ public class ElementsRpcClientTests
 			await harness.Client.GetNodeStatusAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
 
 		Assert.Equal("elementsregtest", statusAfterPlanEncodingCancellation.Chain);
-		Assert.Equal(16, harness.Handler.Methods.Count - methodCountBeforePlanEncoding);
-		Assert.Equal("getrawtransaction", harness.Handler.Methods[methodCountBeforePlanEncoding + 10]);
-		Assert.Equal("getnetworkinfo", harness.Handler.Methods[methodCountBeforePlanEncoding + 11]);
+		Assert.Equal(20, harness.Handler.Methods.Count - methodCountBeforePlanEncoding);
+		Assert.Equal("getrawtransaction", harness.Handler.Methods[methodCountBeforePlanEncoding + 14]);
+		Assert.Equal("getnetworkinfo", harness.Handler.Methods[methodCountBeforePlanEncoding + 15]);
 	}
 
 	[Theory]
@@ -760,6 +766,87 @@ public class ElementsRpcClientTests
 		Assert.Equal(
 			["getnodegeneration", "getnetworkinfo", "getblockchaininfo", "getblockhash", "getblockhash", "getsidechaininfo"],
 			harness.Handler.Methods);
+	}
+
+	[Fact]
+	public async Task BracketsEffectiveFeeAssetWithFallbackTipFenceWhenManifestDeclaresGenerationApiAbsentAsync()
+	{
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getblockchaininfo" => Envelope(invocation.Id, BlockchainResult()),
+			"getblockhash" => Envelope(invocation.Id, JsonSerializer.Serialize(BestBlockHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset)),
+			_ => throw new InvalidOperationException($"Unexpected RPC method '{invocation.Method}'."),
+		});
+
+		ElementsFeeAssetGenerationObservation observation =
+			await harness.Client.GetFeeAssetGenerationObservationAsync(
+				ElementsPublicNetworkManifest.LiquidTestnet,
+				CancellationToken.None);
+
+		Assert.True(observation.UsesPeggedAssetForFees);
+		Assert.False(observation.ChainstateChangedDuringObservation);
+		Assert.Equal("0000000000000000000000000000000000000000000000000000000000000000", observation.GenerationBefore.StartupId);
+		Assert.Equal(0UL, observation.GenerationBefore.ChainstateRevision);
+		Assert.Equal(42, observation.GenerationBefore.Blocks);
+		Assert.Equal(BestBlockHash, observation.GenerationBefore.BestBlockHash);
+		Assert.Equal(observation.GenerationBefore, observation.GenerationAfter);
+		Assert.Equal(
+			["getblockchaininfo", "getblockhash", "getsidechaininfo", "getblockchaininfo", "getblockhash"],
+			harness.Handler.Methods);
+	}
+
+	[Fact]
+	public async Task ManifestGatedFenceKeepsGetNodeGenerationWhenManifestDeclaresItPresentAsync()
+	{
+		const string StartupId = "abababababababababababababababababababababababababababababababab";
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getnodegeneration" => Envelope(
+				invocation.Id,
+				GenerationResult(StartupId, 9, 42, BestBlockHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset)),
+			_ => throw new InvalidOperationException($"Unexpected RPC method '{invocation.Method}'."),
+		});
+
+		ElementsFeeAssetGenerationObservation observation =
+			await harness.Client.GetFeeAssetGenerationObservationAsync(CancellationToken.None);
+
+		Assert.Equal(StartupId, observation.GenerationBefore.StartupId);
+		Assert.Equal(9UL, observation.GenerationBefore.ChainstateRevision);
+		Assert.Equal(["getnodegeneration", "getsidechaininfo", "getnodegeneration"], harness.Handler.Methods);
+	}
+
+	[Theory]
+	[InlineData(43, BestBlockHash)]
+	[InlineData(42, "0202020202020202020202020202020202020202020202020202020202020202")]
+	public async Task RejectsTipDriftInsideFallbackFenceWithoutGetNodeGenerationAsync(
+		int closingBlocks,
+		string closingHash)
+	{
+		int blockchainCalls = 0;
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getblockchaininfo" => Envelope(
+				invocation.Id,
+				++blockchainCalls == 1
+					? BlockchainResult()
+					: BlockchainResult(blocks: closingBlocks, headers: closingBlocks, bestBlockHash: closingHash)),
+			"getblockhash" => Envelope(
+				invocation.Id,
+				JsonSerializer.Serialize(blockchainCalls <= 1 ? BestBlockHash : closingHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset)),
+			_ => throw new InvalidOperationException($"Unexpected RPC method '{invocation.Method}'."),
+		});
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => harness.Client.GetFeeAssetGenerationObservationAsync(
+				ElementsPublicNetworkManifest.LiquidTestnet,
+				CancellationToken.None));
+
+		Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+		Assert.Contains("inconsistent tip", exception.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain("getnodegeneration", harness.Handler.Methods);
 	}
 
 	[Fact]
@@ -2414,7 +2501,7 @@ public class ElementsRpcClientTests
 	[Fact]
 	public async Task EncodesOneExpectationBoundPlanFromCanonicalAcquiredTransactionsAsync()
 	{
-		using var harness = new ElementsRpcHarness(ExpectationBoundPlanCompositionResult);
+		using var harness = new ElementsRpcHarness(ExpectationBoundPlanCompositionFactory());
 		LiquidOrdinaryWalletExactSpendPlan plan = CreateExpectationBoundPlan();
 		byte[] sourceEpoch = PlanSourceEpoch();
 		(
@@ -2430,8 +2517,10 @@ public class ElementsRpcClientTests
 		using (frame)
 		{
 			Assert.Equal("liquidtestnet", nodeObservation.Expectation!.Chain);
-			Assert.Equal(ExpectationStartupId, nodeObservation.Generation.StartupId);
-			Assert.Equal(9UL, nodeObservation.Generation.ChainstateRevision);
+			Assert.Equal(
+				"0000000000000000000000000000000000000000000000000000000000000000",
+				nodeObservation.Generation.StartupId);
+			Assert.Equal(0UL, nodeObservation.Generation.ChainstateRevision);
 			Assert.True(nodeObservation.HasExactGenerationFenceObservation);
 			Assert.True(nodeObservation.HasEffectiveFeeAssetObservation);
 			Assert.False(nodeObservation.HasArtifactSourceAttestation);
@@ -2490,34 +2579,39 @@ public class ElementsRpcClientTests
 
 		Assert.Equal(
 			[
-				"getnodegeneration",
+				"getblockchaininfo",
+				"getblockhash",
 				"getnetworkinfo",
 				"getblockchaininfo",
 				"getblockhash",
 				"getblockhash",
 				"getsidechaininfo",
-				"getnodegeneration",
-				"getnodegeneration",
+				"getblockchaininfo",
+				"getblockhash",
+				"getblockchaininfo",
+				"getblockhash",
 				"getsidechaininfo",
-				"getnodegeneration",
+				"getblockchaininfo",
+				"getblockhash",
 				"getrawtransaction",
 				"getrawtransaction",
-				"getnodegeneration",
+				"getblockchaininfo",
+				"getblockhash",
 			],
 			harness.Handler.Methods);
 		Assert.Equal(
 			$"[\"{RawTransactionIdOne}\",false,\"{BestBlockHash}\"]",
-			harness.Handler.Parameters[10]);
+			harness.Handler.Parameters[14]);
 		Assert.Equal(
 			$"[\"{RawTransactionIdTwo}\",false]",
-			harness.Handler.Parameters[11]);
+			harness.Handler.Parameters[15]);
 	}
 
 	[Fact]
 	public async Task RejectsInvalidPlanCompositionBeforeRpcAndInvalidFundingWithoutPartialFrameAsync()
 	{
 		LiquidOrdinaryWalletExactSpendPlan plan = CreateExpectationBoundPlan();
-		using (var contextHarness = new ElementsRpcHarness(ExpectationBoundPlanCompositionResult))
+		using (var contextHarness = new ElementsRpcHarness(ExpectationBoundPlanCompositionFactory()))
 		{
 			await AssertPlanEncodingArgumentRejectedAsync(
 				contextHarness,
@@ -2526,7 +2620,7 @@ public class ElementsRpcClientTests
 				plan,
 				[[RawTransactionIdTwo]]);
 		}
-		using (var epochHarness = new ElementsRpcHarness(ExpectationBoundPlanCompositionResult))
+		using (var epochHarness = new ElementsRpcHarness(ExpectationBoundPlanCompositionFactory()))
 		{
 			await AssertPlanEncodingArgumentRejectedAsync(
 				epochHarness,
@@ -2535,7 +2629,7 @@ public class ElementsRpcClientTests
 				plan,
 				[[RawTransactionIdTwo]]);
 		}
-		using (var mappingHarness = new ElementsRpcHarness(ExpectationBoundPlanCompositionResult))
+		using (var mappingHarness = new ElementsRpcHarness(ExpectationBoundPlanCompositionFactory()))
 		{
 			await AssertPlanEncodingArgumentRejectedAsync(
 				mappingHarness,
@@ -2546,7 +2640,7 @@ public class ElementsRpcClientTests
 		}
 
 		using var invalidFundingHarness =
-			new ElementsRpcHarness(ExpectationBoundDuplicatePlanFundingResult);
+			new ElementsRpcHarness(ExpectationBoundDuplicatePlanFundingFactory());
 		ElementsRpcException? rejection = null;
 		try
 		{
@@ -2575,7 +2669,7 @@ public class ElementsRpcClientTests
 		Assert.DoesNotContain(RawTransactionIdOne, rejection.Message, StringComparison.Ordinal);
 		Assert.DoesNotContain(RawTransactionIdTwo, rejection.Message, StringComparison.Ordinal);
 		Assert.DoesNotContain(RawTransactionIdThree, rejection.Message, StringComparison.Ordinal);
-		Assert.Equal(14, invalidFundingHarness.Handler.Methods.Count);
+		Assert.Equal(19, invalidFundingHarness.Handler.Methods.Count);
 	}
 
 	private static async Task AssertPlanEncodingArgumentRejectedAsync(
@@ -2676,13 +2770,23 @@ public class ElementsRpcClientTests
 		25, 26, 27, 28, 29, 30, 31, 32,
 	];
 
-	private static string ExpectationBoundPlanCompositionResult(RpcInvocation invocation) =>
+	private static Func<RpcInvocation, string> ExpectationBoundPlanCompositionFactory()
+	{
+		int sidechainCalls = 0;
+		return invocation =>
+		{
+			int sidechainCallIndex = invocation.Method == "getsidechaininfo" ? sidechainCalls++ : -1;
+			return ExpectationBoundPlanCompositionResultCore(invocation, sidechainCallIndex);
+		};
+	}
+
+	private static string ExpectationBoundPlanCompositionResultCore(RpcInvocation invocation, int sidechainCallIndex) =>
 		invocation.Method switch
 		{
 			"getnodegeneration" => Envelope(
 				invocation.Id,
 				GenerationResult(ExpectationStartupId, 9, 42, BestBlockHash)),
-			"getsidechaininfo" when invocation.Id == "9" => Envelope(
+			"getsidechaininfo" when sidechainCallIndex > 0 => Envelope(
 				invocation.Id,
 				FeeAssetResult(
 					ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId,
@@ -2696,8 +2800,11 @@ public class ElementsRpcClientTests
 			_ => LiquidTestnetResult(invocation),
 		};
 
-	private static string ExpectationBoundDuplicatePlanFundingResult(RpcInvocation invocation) =>
-		invocation.Method == "getrawtransaction"
+	private static Func<RpcInvocation, string> ExpectationBoundDuplicatePlanFundingFactory()
+	{
+		Func<RpcInvocation, string> composition = ExpectationBoundPlanCompositionFactory();
+		return invocation => invocation.Method == "getrawtransaction"
 			? Envelope(invocation.Id, JsonSerializer.Serialize("0102"))
-			: ExpectationBoundPlanCompositionResult(invocation);
+			: composition(invocation);
+	}
 }

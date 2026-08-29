@@ -550,6 +550,53 @@ public class ElementsWalletRefreshObservationTests
 		}
 	}
 
+	[Fact]
+	public async Task CompletesRefreshAgainstManifestFallbackFenceWithoutGetNodeGenerationAsync()
+	{
+		// The official upstream Elements 23.3.3 build lacks the fork-only getnodegeneration RPC;
+		// the reviewed testnet manifest declares generation_api absent, so the refresh path must
+		// complete on the getblockchaininfo fallback fence without ever calling getnodegeneration.
+		string candidateId = Id(0xE0);
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getnetworkinfo" => Envelope(invocation.Id, NetworkResult()),
+			"getblockchaininfo" => Envelope(invocation.Id, BlockchainResult()),
+			"getsidechaininfo" => Envelope(invocation.Id, SidechainResult()),
+			"getblockhash" when invocation.Parameters == "[0]" => Envelope(invocation.Id, JsonSerializer.Serialize(GenesisBlockHash)),
+			"getblockhash" when invocation.Parameters == "[42]" => Envelope(invocation.Id, JsonSerializer.Serialize(BestBlockHash)),
+			"getblockhash" when invocation.Parameters == "[41]" => Envelope(invocation.Id, JsonSerializer.Serialize(BlockHashTip)),
+			"getblockhash" when invocation.Parameters == "[40]" => Envelope(invocation.Id, JsonSerializer.Serialize(BlockHashPrevious)),
+			"getblockhash" => Envelope(invocation.Id, JsonSerializer.Serialize(BlockHashPrevious)),
+			"getrawmempool" => Envelope(invocation.Id, "[]"),
+			"getblock" => Envelope(invocation.Id, BlockResult()),
+			"getrawtransaction" when IsVerbose(invocation) => Envelope(
+				invocation.Id,
+				$$"""{"txid":"{{candidateId}}","vin":[]}"""),
+			"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize("010203")),
+			_ => throw new System.InvalidOperationException($"Unexpected RPC method '{invocation.Method}' with parameters '{invocation.Parameters}'."),
+		});
+
+		using ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(),
+			PeggedAsset,
+			[candidateId],
+			null,
+			WalletWasabi.Liquid.Network.ElementsPublicNetworkManifest.LiquidTestnet,
+			CancellationToken.None);
+
+		ElementsWalletRefreshCandidate candidate = Assert.Single(observation.Candidates);
+		Assert.Equal(candidateId, candidate.TransactionId);
+		Assert.Equal(PeggedAsset, observation.NodeObservation.EffectiveFeeAsset);
+		Assert.Equal(
+			"0000000000000000000000000000000000000000000000000000000000000000",
+			observation.NodeObservation.Generation.StartupId);
+		Assert.Equal(0UL, observation.NodeObservation.Generation.ChainstateRevision);
+		Assert.Equal(42, observation.NodeObservation.Generation.Blocks);
+		Assert.Equal(BestBlockHash, observation.NodeObservation.Generation.BestBlockHash);
+		Assert.DoesNotContain(harness.Handler.Methods, method => method == "getnodegeneration");
+		Assert.Equal(1, RawFetchCount(harness, candidateId));
+	}
+
 	private static int RawFetchCount(ElementsRpcHarness harness, string transactionId) =>
 		harness.Handler.Parameters.Count(parameters =>
 			IsRawFetch(parameters) && StringComparer.Ordinal.Equals(ExtractRequestedTransactionId(parameters), transactionId));

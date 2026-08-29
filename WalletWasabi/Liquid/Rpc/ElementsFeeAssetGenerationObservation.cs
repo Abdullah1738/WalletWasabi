@@ -4,6 +4,9 @@ namespace WalletWasabi.Liquid.Rpc;
 
 public sealed record ElementsNodeGenerationObservation
 {
+	private const string FallbackTipStartupIdSentinel =
+		"0000000000000000000000000000000000000000000000000000000000000000";
+
 	internal ElementsNodeGenerationObservation(
 		string startupId,
 		ulong chainstateRevision,
@@ -15,6 +18,38 @@ public sealed record ElementsNodeGenerationObservation
 		Blocks = ElementsNodeStatus.RequireNonNegative(blocks, nameof(blocks));
 		BestBlockHash = ElementsNodeStatus.RequireHex32(bestBlockHash, nameof(bestBlockHash));
 	}
+
+	private ElementsNodeGenerationObservation(
+		string startupId,
+		ulong chainstateRevision,
+		int blocks,
+		string bestBlockHash,
+		bool allowSentinelStartupId)
+	{
+		StartupId = allowSentinelStartupId
+			? startupId
+			: ElementsNodeStatus.RequireHex32(startupId, nameof(startupId));
+		ChainstateRevision = chainstateRevision;
+		Blocks = ElementsNodeStatus.RequireNonNegative(blocks, nameof(blocks));
+		BestBlockHash = ElementsNodeStatus.RequireHex32(bestBlockHash, nameof(bestBlockHash));
+	}
+
+	/// <summary>
+	/// The fixed fallback observation shape used when the reviewed network manifest declares the
+	/// fork-only <c>getnodegeneration</c> RPC absent: an all-zero startup-id sentinel and revision
+	/// zero, so every fallback observation compares equal on the sentinel fields and the fences
+	/// reduce to an exact blocks/bestblockhash tip comparison. Never produced for a manifest that
+	/// declares the generation API present.
+	/// </summary>
+	internal static ElementsNodeGenerationObservation CreateFallbackTipObservation(
+		int blocks,
+		string bestBlockHash) =>
+		new(
+			FallbackTipStartupIdSentinel,
+			0UL,
+			ElementsNodeStatus.RequireNonNegative(blocks, nameof(blocks)),
+			ElementsNodeStatus.RequireHex32(bestBlockHash, nameof(bestBlockHash)),
+			allowSentinelStartupId: true);
 
 	public string StartupId { get; }
 	public ulong ChainstateRevision { get; }

@@ -231,7 +231,7 @@ public sealed class LiquidWalletSendExecutionCommandService
 				rpcClient,
 				_manifest.PeggedAssetId,
 				walletDataDirectory,
-				(request, ct) => AcquireFundingSourceAsync(rpcClient, _manifest.PeggedAssetId, session.StateOwner.State, request, ct),
+				(request, ct) => AcquireFundingSourceAsync(rpcClient, _manifest.PeggedAssetId, _manifest, session.StateOwner.State, request, ct),
 				(canonicalTransactionIdHex, ct) => ScheduleAcceptedRefreshAsync(recordAcceptedTxid, canonicalWalletId, canonicalTransactionIdHex, ct),
 				ct => ScheduleManualRefreshAsync(canonicalWalletId, ct));
 		}
@@ -275,6 +275,7 @@ public sealed class LiquidWalletSendExecutionCommandService
 		private static async Task<ElementsExpectationBoundRawTransactionBatch> AcquireFundingSourceAsync(
 			ElementsRpcClient rpcClient,
 			string expectedEffectiveFeeAsset,
+			ElementsPublicNetworkManifest manifest,
 			WalletWasabi.Liquid.Wallet.LiquidWalletState walletState,
 			LiquidWalletUiSendExecutionRequest request,
 			CancellationToken cancellationToken)
@@ -339,6 +340,7 @@ public sealed class LiquidWalletSendExecutionCommandService
 			return await rpcClient.GetObservedRawTransactionsAsync(
 				expectedEffectiveFeeAsset,
 				requests,
+				manifest,
 				cancellationToken).ConfigureAwait(false);
 		}
 

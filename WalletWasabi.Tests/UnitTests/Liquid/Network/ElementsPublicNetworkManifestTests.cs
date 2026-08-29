@@ -47,6 +47,15 @@ public class ElementsPublicNetworkManifestTests
 		Assert.Equal("PUBLIC_CT_SENTINEL_INCOMPLETE", mainnet.CtFixtureEligibility);
 	}
 
+	[Fact]
+	public void DeclaresGenerationApiAbsentForOfficialPublicNetworks()
+	{
+		// Both reviewed schema-2 manifests (mainnet and testnet) describe the official upstream
+		// Elements 23.3.3 build, which lacks the fork-only getnodegeneration RPC.
+		Assert.False(ElementsPublicNetworkManifest.LiquidTestnet.HasGenerationApi);
+		Assert.False(ElementsPublicNetworkManifest.LiquidMainnet.HasGenerationApi);
+	}
+
 	[Theory]
 	[InlineData(2, 1260, "7a99aca826aeefd659c4af97347ae302c72c3093c07697d8baa4dc03139cb908", "b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b")]
 	[InlineData(2, 1274, "9fc3e29fe188d63826c18a9f8ab59b42b83e47f57fbf16ca3842d970c16994f1", "e4e7ec03e19ce5f83fd04c586788b724d88052b65ef2480cc93bcd50324f6b20")]

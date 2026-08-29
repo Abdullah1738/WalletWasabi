@@ -190,6 +190,7 @@ internal sealed class LiquidWalletSendExecutor
 					expectedNodeExpectation: null,
 					scope.ExpectedEffectiveFeeAsset,
 					signedTransaction.SignedTransactionHex,
+					_manifest,
 					cancellationToken).ConfigureAwait(false);
 			}
 			catch (Exception broadcastException)
