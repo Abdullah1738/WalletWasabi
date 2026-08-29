@@ -23,7 +23,7 @@ the decoder consumes all bytes.
 | Maximum structurally reachable response | 80,599,492 |
 | Public descriptor bytes | 16,384 |
 | Last derivation index | 100,000 |
-| Candidate transactions | 4,096 |
+| Candidate transactions | 8,192 |
 | Previous transactions in one batch | 16,384 |
 | One serialized transaction | 4,194,304 |
 | Aggregate candidate and previous-transaction bytes | 67,108,864 |

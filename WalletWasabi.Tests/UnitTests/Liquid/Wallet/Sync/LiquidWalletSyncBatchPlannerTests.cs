@@ -33,7 +33,7 @@ public class LiquidWalletSyncBatchPlannerTests
 	}
 
 	[Fact]
-	public void CreateRequestsRejectsZeroAndOneHundredOneIntents()
+	public void CreateRequestsRejectsZeroAndCapPlusOneIntents()
 	{
 		Assert.Throws<ArgumentOutOfRangeException>(() =>
 			LiquidWalletSyncBatchPlanner.CreateRequests([]));

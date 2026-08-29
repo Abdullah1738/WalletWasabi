@@ -17,7 +17,9 @@ internal static class LiquidWalletFactsWireV1StructuralRequestCodec
 	private const int CandidateFixedLength = 12;
 	private const int PreviousLengthPrefix = 4;
 	private const int MaximumDescriptorLength = 16_384;
-	private const int MaximumCandidateCount = 4_096;
+	// One candidate per refresh-selected row; sized to ElementsRpcClient.MaxRefreshSelectedCandidates
+	// (8_192) so a full bounded rescan window passes and the selection cap is the only gate.
+	private const int MaximumCandidateCount = 8_192;
 	private const int MaximumPreviousTransactionCount = 16_384;
 	private const int MaximumTransactionLength = 4_194_304;
 	private const int MaximumAggregateTransactionLength = 67_108_864;

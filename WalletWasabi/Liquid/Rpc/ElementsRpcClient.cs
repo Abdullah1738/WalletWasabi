@@ -26,7 +26,12 @@ public sealed class ElementsRpcClient : IDisposable
 	private const int MaxRpcResponseBytes = 1024 * 1024;
 	private const int MaxJsonDepth = 64;
 	private const int MaxJsonTokens = 65536;
-	private const int MaxJsonStringBytes = 65536;
+
+	// Sized to the largest string that can appear inside an admissible response (verbose tx hex for
+	// dense confidential transactions, separately bounded by MaxRpcResponseBytes = 1 MiB), minus the
+	// fixed envelope and sibling-field framing of the smallest response that carries it, so the
+	// per-string guard fires before the response-size guard on any in-budget body.
+	private const int MaxJsonStringBytes = MaxRpcResponseBytes - 1024;
 	private const int MaxJsonPropertyNameBytes = 256;
 	private const int MaxJsonArrayItems = 4096;
 	private const int MaxJsonObjectProperties = 4096;
@@ -1520,7 +1525,7 @@ public sealed class ElementsRpcClient : IDisposable
 		{
 			throw new ArgumentOutOfRangeException(
 				nameof(requests),
-				"Between one and one hundred raw transaction requests are required.");
+				"Between one and MaxRawTransactionCount raw transaction requests are required.");
 		}
 
 		var normalizedRequests = new ElementsRawTransactionRequest[requestCount];
@@ -1686,7 +1691,7 @@ public sealed class ElementsRpcClient : IDisposable
 		{
 			throw new ArgumentOutOfRangeException(
 				nameof(requests),
-				"Between one and one hundred raw transaction requests are required.");
+				"Between one and MaxRawTransactionCount raw transaction requests are required.");
 		}
 
 		var normalizedRequests = new ElementsRawTransactionRequest[requestCount];
@@ -1862,10 +1867,11 @@ public sealed class ElementsRpcClient : IDisposable
 	/// walked heights contribute a bounded over-read inspection ledger so a skipped canonical
 	/// block-only coinbase (exactly one input, that input a coinbase, zero previous IDs — a null
 	/// prevout the native previous-set stage can never reference) never steals supported capacity.
-	/// Inspection IDs are verbose-classified in source order until 64 supported candidates
-	/// are collected; only the canonical block-only coinbase shape is skipped, and any accepted,
-	/// supplied, or mempool coinbase, and any mixed or multi-input coinbase shape, is terminal before
-	/// any raw fetch. Dependency accounting, the global candidate-plus-dependency cap of 100, raw
+	/// Inspection IDs are verbose-classified in source order until MaxRefreshSelectedCandidates
+	/// supported candidates are collected; only the canonical block-only coinbase shape is skipped,
+	/// and any accepted, supplied, or mempool coinbase, and any mixed or multi-input coinbase shape,
+	/// is terminal before any raw fetch. Dependency accounting, the global candidate-plus-dependency
+	/// cap of MaxRawTransactionCount, raw
 	/// fetches, the returned candidates, block metadata, and confirmations cover only the final
 	/// supported candidates; skipped rows are never raw-fetched or staged native. A dependency that
 	/// is itself a supported candidate is raw-fetched exactly once as the candidate and never again
@@ -1995,10 +2001,11 @@ public sealed class ElementsRpcClient : IDisposable
 
 		// Deterministic candidate ordering: accepted newest-first with the supplied accepted-send ID
 		// forced first (ordinal dedupe), then ordinal-sorted mempool, then recent blocks newest-first
-		// preserving node transaction order. The final supported candidate cap is 64; because a skipped
-		// canonical block-only coinbase must not consume supported capacity, recent-block discovery is a
-		// bounded inspection ledger of at most 64 + MaxRefreshRecentBlockCount IDs (at most one
-		// canonical coinbase can occupy each scanned block).
+		// preserving node transaction order. The final supported candidate cap is
+		// MaxRefreshSelectedCandidates; because a skipped canonical block-only coinbase must not consume
+		// supported capacity, block discovery is a bounded inspection ledger of at most
+		// MaxRefreshSelectedCandidates + walked-height-count IDs (at most one canonical coinbase can
+		// occupy each scanned block).
 		var selectedIds = new List<string>(MaxRefreshSelectedCandidates);
 		var selectedSet = new HashSet<string>(StringComparer.Ordinal);
 		var blockOnlyOriginIds = new HashSet<string>(StringComparer.Ordinal);
@@ -2094,7 +2101,8 @@ public sealed class ElementsRpcClient : IDisposable
 		}
 
 		// One typed verbose lookup per inspection ID in source order with coinbase/previous-txid
-		// exclusivity, until 64 supported candidates are collected. Conflicting block metadata is
+		// exclusivity, until MaxRefreshSelectedCandidates supported candidates are collected.
+		// Conflicting block metadata is
 		// terminal. The only skippable coinbase shape is canonical and block-only: the ID was first
 		// added by recent-block scanning, has exactly one input, that input is a coinbase, and it has
 		// zero previous IDs — a null prevout the native previous-set stage can never reference. Such a
@@ -2172,8 +2180,8 @@ public sealed class ElementsRpcClient : IDisposable
 		}
 
 		// Complete raw fetch of every supported candidate and every required distinct dependency under
-		// the landed per-transaction 4 MiB and aggregate 64 MiB bounds. Skipped coinbases are never
-		// raw-fetched or passed native.
+		// the landed per-transaction MaxRawTransactionBytes and aggregate MaxRawTransactionBatchBytes
+		// bounds. Skipped coinbases are never raw-fetched or passed native.
 		var rawTransactions = new List<ElementsWalletRefreshRawTransaction>(globalRawCount);
 		long aggregateBytes = 0;
 		try
@@ -2758,13 +2766,34 @@ public sealed class ElementsRpcClient : IDisposable
 		return (requests, normalizedPreviousTransactionIds);
 	}
 
+	// Every cap below is a hard fail-closed bound: exceeding any is terminal, never a silent partial
+	// import. The selection and raw-fetch bounds are sized so a confirmed payment anywhere inside the
+	// bounded MaxRefreshRescanDepth-deep rescan window is selected, with headroom, while staying finite.
+
+	// Per-transaction raw bytes: a single Liquid transaction (even with confidential rangeproofs) never
+	// needs more than 4 MiB. Unchanged — it does not scale with the rescan window.
 	private const int MaxRawTransactionBytes = 4_194_304;
-	private const int MaxRawTransactionBatchBytes = 67_108_864;
-	private const int MaxRawTransactionCount = 100;
+
+	// Aggregate raw bytes for one refresh batch (candidates + distinct dependencies). Sized to hold a
+	// full MaxRefreshRescanDepth window of dense, proof-carrying transactions: 256 MiB comfortably
+	// covers 16_384 transactions at a few KB each while remaining a finite fail-closed bound.
+	private const int MaxRawTransactionBatchBytes = 268_435_456;
+
+	// Candidate + distinct-dependency raw fetch count. Each supported candidate costs one raw fetch
+	// plus its distinct previous-transaction dependencies; 2× the candidate cap covers a candidate set
+	// whose every member pulls a distinct dependency, with no double-counting of shared dependencies.
+	private const int MaxRawTransactionCount = 16_384;
+
 	private const int MaxRawTransactionHexBytes = MaxRawTransactionBytes * 2;
 	private const int MaxRawTransactionRpcResponseBytes = MaxRawTransactionHexBytes + 1024;
 
-	private const int MaxRefreshSelectedCandidates = 64;
+	// Supported refresh candidates. Must cover the worst-case non-coinbase transaction count inside the
+	// MaxRefreshRescanDepth (1440-block) bounded rescan window so a confirmed payment anywhere in that
+	// window is selected. Observed testnet density is ~1–2 non-coinbase txs/block; 8_192 ≈ 1440 blocks
+	// × ~5.7 txs/block (rounded up to a power of two) covers bursty density while staying a finite
+	// fail-closed bound. This is a selection cap, not an allocation — the walk still stops at the
+	// rescan floor.
+	private const int MaxRefreshSelectedCandidates = 8_192;
 	private const int MaxRefreshRecentBlockCount = 6;
 
 	/// <summary>

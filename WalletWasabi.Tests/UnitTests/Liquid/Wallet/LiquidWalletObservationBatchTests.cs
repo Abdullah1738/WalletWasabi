@@ -27,7 +27,7 @@ namespace WalletWasabi.Tests.UnitTests.Liquid.Wallet;
 
 public class LiquidWalletObservationBatchTests
 {
-	private const int MaxTransactionCount = 4_096;
+	private const int MaxTransactionCount = 8_192;
 	private const int MaxAggregateInputCount = 1_636_801;
 	private const int MaxAggregateOwnedOutputCount = 148_470;
 	private const string TransactionIdHex = "35ab905fc934c08fa976d55427bdd3970383e0f01ece059426ec04144b4ecc3d";
@@ -667,10 +667,10 @@ public class LiquidWalletObservationBatchTests
 		byte[] manifest = BuildNormalizedInstructionManifest();
 #if DEBUG
 		const int ExpectedLength = 8_108;
-		const string ExpectedHash = "333b778aa528d07d2d721a4a8a6ec9ae6d3ad8251bc31dcef4073b19167e71b4";
+		const string ExpectedHash = "9a4fb62dcd79222d1bd970c04a0242f3369f0674b22286f654a4aeda6bc849f0";
 #else
 		const int ExpectedLength = 6_817;
-		const string ExpectedHash = "48f326a0d446021d9b30c71aaa5e51c7e52338e5ef6d7df8f438e90cf3da0047";
+		const string ExpectedHash = "79dc56784ad90195c330d862e2199664f9d9cea31a30c4ee616d6857a65e7b9b";
 #endif
 		Assert.Equal(ExpectedLength, manifest.Length);
 		Assert.Equal(ExpectedHash, Convert.ToHexString(SHA256.HashData(manifest)).ToLowerInvariant());

@@ -11,8 +11,8 @@ namespace WalletWasabi.Tests.UnitTests.Liquid.WalletFacts.Wire;
 internal static class WalletFactsWireV1Corpus
 {
 	public const string CorpusId = "wallet-facts-wire-v1-conformance-1";
-	public const string ParentRootSha256 = "9a3d11662670d13e23ed248f2ae145c87a52739e2e3bb03f7628e4d12e147c63";
-	public const string NestedRootSha256 = "9bcdcf31ffe90e7a23ada162c61c71cfc84343ba1c190865e0ed34af8c7da933";
+	public const string ParentRootSha256 = "40b9adffb17312430e4ff0153be0928d873ec9ddc3949a12075314b52e716db2";
+	public const string NestedRootSha256 = "31f7a810f6ffae3c418420abdfe2aedd9f2fcf66a6ca6a93ed45f4608f52d73d";
 
 	public static string RootPath { get; } = Path.Combine(
 		AppContext.BaseDirectory,

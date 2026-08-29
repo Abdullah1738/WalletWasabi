@@ -1254,7 +1254,9 @@ public class ElementsRpcClientTests
 	[Fact]
 	public async Task RejectsSubLimitOversizedJsonStringAsync()
 	{
-		string padding = new('a', 65537);
+		// Just above the per-string ceiling (1 MiB minus envelope framing); the per-string guard —
+		// not the response-size guard — is what fails closed.
+		string padding = new('a', MaxJsonStringTestCeiling + 1);
 		using var harness = new ElementsRpcHarness(invocation =>
 			invocation.Method == "getnetworkinfo"
 				? Envelope(invocation.Id, AddProperty(NetworkResult(), $"\"padding\":\"{padding}\""))
@@ -2177,7 +2179,7 @@ public class ElementsRpcClientTests
 			() => harness.Client.GetExpectationBoundRawTransactionsAsync(
 				ValidExpectation(),
 				PeggedAsset,
-				Enumerable.Range(0, 101)
+				Enumerable.Range(0, 16_385)
 					.Select(index => new ElementsRawTransactionRequest(index.ToString("x64"), null))
 					.ToArray(),
 				CancellationToken.None));
@@ -2400,7 +2402,7 @@ public class ElementsRpcClientTests
 			() => oversizedHarness.Client.GetExpectationBoundRawTransactionsAsync(
 				ValidExpectation(),
 				PeggedAsset,
-				[new ElementsRawTransactionRequest(RawTransactionIdOne, null)],
+				OversizedRawTransactionRequests,
 				CancellationToken.None));
 
 		Assert.Equal(ElementsRpcFailureKind.Protocol, oversizedException.FailureKind);
@@ -2526,7 +2528,7 @@ public class ElementsRpcClientTests
 
 	private static string ExpectationBoundOversizedRawTransactionResult(RpcInvocation invocation) => invocation.Method switch
 	{
-		"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize(new string('a', 4_194_305 * 2))),
+		"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize(new string('a', (MaxRawTransactionTestCeiling + 1) * 2))),
 		_ => ExpectationBoundValidResult(invocation),
 	};
 
@@ -2537,6 +2539,19 @@ public class ElementsRpcClientTests
 	private const string RawTransactionIdOne = "1111111111111111111111111111111111111111111111111111111111111111";
 	private const string RawTransactionIdTwo = "2222222222222222222222222222222222222222222222222222222222222222";
 	private const string RawTransactionIdThree = "3333333333333333333333333333333333333333333333333333333333333333";
+
+	// Mirror of the per-string JSON ceiling in ElementsRpcClient (MaxRpcResponseBytes - 1024); test
+	// fixtures derive their oversized strings from it so the fail-closed boundary moves with the guard.
+	private const int MaxJsonStringTestCeiling = 1024 * 1024 - 1024;
+
+	// Mirror of the 4 MiB per-transaction raw ceiling in ElementsRpcClient; the oversized fixture
+	// derives its above-ceiling raw hex string from it so the fail-closed boundary moves with the
+	// guard. An above-ceiling raw hex (8 MiB + 2 chars) exceeds the raw path's per-string budget,
+	// so the raw path's own per-string guard fails closed on the first fetch.
+	private const int MaxRawTransactionTestCeiling = 4_194_304;
+
+	private static readonly ElementsRawTransactionRequest[] OversizedRawTransactionRequests =
+		[new(RawTransactionIdOne, null)];
 	private const string PlanPublicKeyHex =
 		"0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 	private const string PlanScriptHex = "00140102030405060708090a0b0c0d0e0f1011121314";

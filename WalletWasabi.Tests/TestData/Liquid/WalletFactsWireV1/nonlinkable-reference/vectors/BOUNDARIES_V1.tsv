@@ -7,8 +7,8 @@ arithmetic-add-overflow	checked-arithmetic	arithmetic-rejection	none	u64	1844674
 arithmetic-multiply-overflow	checked-arithmetic	arithmetic-rejection	none	u64	18446744073709551615*2	overflow	-	4
 batch-bytes-maximum	request-decode	component-limit	max-batch-bytes	usize64	67108864	ok	67108864	0
 batch-bytes-plus-one	request-decode	component-limit	max-batch-bytes	usize64	67108864+1	rejected	67108865	4
-candidate-transactions-maximum	request-decode	component-limit	max-candidate-transactions	u32	4096	ok	4096	0
-candidate-transactions-plus-one	request-decode	component-limit	max-candidate-transactions	u32	4096+1	rejected	4097	4
+candidate-transactions-maximum	request-decode	component-limit	max-candidate-transactions	u32	8192	ok	8192	0
+candidate-transactions-plus-one	request-decode	component-limit	max-candidate-transactions	u32	8192+1	rejected	8193	4
 derivation-index-maximum	request-decode	component-limit	max-derivation-index	u32	100000	ok	100000	0
 derivation-index-plus-one	request-decode	component-limit	max-derivation-index	u32	100000+1	rejected	100001	4
 inputs-per-transaction-maximum	response-decode	component-limit	max-inputs-per-transaction	usize64	102298	ok	102298	0
@@ -21,7 +21,7 @@ previous-transactions-maximum	request-decode	component-limit	max-previous-transa
 previous-transactions-plus-one	request-decode	component-limit	max-previous-transactions-per-batch	u32	16384+1	rejected	16385	4
 public-descriptor-bytes-maximum	request-decode	component-limit	max-public-descriptor-bytes	u32	16384	ok	16384	0
 public-descriptor-bytes-plus-one	request-decode	component-limit	max-public-descriptor-bytes	u32	16384+1	rejected	16385	4
-reachable-request-bytes	checked-arithmetic	reachable-maximum	max-reachable-request-bytes	usize64	76+16384+4096*12+16384*4+67108864	ok	67240012	0
+reachable-request-bytes	checked-arithmetic	reachable-maximum	max-reachable-request-bytes	usize64	76+16384+8192*12+16384*4+67108864	ok	67289100	0
 reachable-response-bytes	checked-arithmetic	reachable-maximum	max-reachable-response-bytes	usize64	64+4096*72+1636801*36+148470*144	ok	80599492	0
 request-outer-ceiling	request-outer-length-check	outer-ceiling	max-request-frame-bytes	usize64	268435456	ok	268435456	0
 request-outer-plus-one	request-outer-length-check	outer-ceiling	max-request-frame-bytes	usize64	268435456+1	rejected	268435457	4

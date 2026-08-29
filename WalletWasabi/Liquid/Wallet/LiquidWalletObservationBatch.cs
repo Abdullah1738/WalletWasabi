@@ -10,7 +10,9 @@ namespace WalletWasabi.Liquid.Wallet;
 /// </summary>
 internal sealed class LiquidWalletObservationBatch : IEquatable<LiquidWalletObservationBatch>
 {
-	private const int MaxTransactionCount = 4_096;
+	// One observation per refresh-selected candidate; sized to ElementsRpcClient.MaxRefreshSelectedCandidates
+	// (8_192) so a full bounded rescan window passes and the selection cap is the only gate.
+	private const int MaxTransactionCount = 8_192;
 	private const int MaxAggregateInputCount = 1_636_801;
 	private const int MaxAggregateOwnedOutputCount = 148_470;
 

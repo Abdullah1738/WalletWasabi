@@ -302,7 +302,7 @@ public class LiquidWalletFactsWireV1StructuralRequestCodecTests
 		AssertRejected(SourceA, LiquidWalletFactsWireV1DescriptorNetworkClass.Test, 0, [], null!, LiquidWalletFactsWireErrorCode.InvalidArgument);
 		AssertRejected(SourceA, LiquidWalletFactsWireV1DescriptorNetworkClass.Test, uint.MaxValue, [], throwingCandidates, LiquidWalletFactsWireErrorCode.InvalidEncoding);
 		AssertRejected(SourceA, LiquidWalletFactsWireV1DescriptorNetworkClass.Test, uint.MaxValue, ValidDescriptor, new CountedThrowingList<CandidateSource>(1), LiquidWalletFactsWireErrorCode.LimitExceeded);
-		AssertRejected(SourceA, LiquidWalletFactsWireV1DescriptorNetworkClass.Test, 0, ValidDescriptor, new CountedThrowingList<CandidateSource>(4_097), LiquidWalletFactsWireErrorCode.LimitExceeded);
+		AssertRejected(SourceA, LiquidWalletFactsWireV1DescriptorNetworkClass.Test, 0, ValidDescriptor, new CountedThrowingList<CandidateSource>(8_193), LiquidWalletFactsWireErrorCode.LimitExceeded);
 
 		CandidateSource empty = new(ReadOnlyMemory<byte>.Empty, []);
 		CandidateSource laterOverflow = new(new byte[] { 1 }, new CountedThrowingList<ReadOnlyMemory<byte>>(16_385));
@@ -678,7 +678,7 @@ public class LiquidWalletFactsWireV1StructuralRequestCodecTests
 			AssertRejected(SourceA, LiquidWalletFactsWireV1DescriptorNetworkClass.Test, 0, descriptorOverMaximum, [], LiquidWalletFactsWireErrorCode.LimitExceeded);
 
 			var sharedCandidate = new CandidateSource(one, []);
-			CandidateSource[] maximumCandidates = Enumerable.Repeat(sharedCandidate, 4_096).ToArray();
+			CandidateSource[] maximumCandidates = Enumerable.Repeat(sharedCandidate, 8_192).ToArray();
 			built = Build(SourceA, LiquidWalletFactsWireV1DescriptorNetworkClass.Test, 0, ValidDescriptor, maximumCandidates);
 			CryptographicOperations.ZeroMemory(built);
 			AssertRejected(
@@ -686,7 +686,7 @@ public class LiquidWalletFactsWireV1StructuralRequestCodecTests
 				LiquidWalletFactsWireV1DescriptorNetworkClass.Test,
 				0,
 				ValidDescriptor,
-				new CountedThrowingList<CandidateSource>(4_097),
+				new CountedThrowingList<CandidateSource>(8_193),
 				LiquidWalletFactsWireErrorCode.LimitExceeded);
 
 			var maximumPrevious = new RepeatedReadOnlyMemoryList(16_384, one);
@@ -950,7 +950,7 @@ public class LiquidWalletFactsWireV1StructuralRequestCodecTests
 		Assert.Contains(rows, row => row.SequenceEqual(
 			["batch-bytes-plus-one", "request-decode", "component-limit", "max-batch-bytes", "usize64", "67108864+1", "rejected", "67108865", "4"]));
 		Assert.Contains(rows, row => row.SequenceEqual(
-			["reachable-request-bytes", "checked-arithmetic", "reachable-maximum", "max-reachable-request-bytes", "usize64", "76+16384+4096*12+16384*4+67108864", "ok", "67240012", "0"]));
+			["reachable-request-bytes", "checked-arithmetic", "reachable-maximum", "max-reachable-request-bytes", "usize64", "76+16384+8192*12+16384*4+67108864", "ok", "67289100", "0"]));
 		Assert.Contains(rows, row => row.SequenceEqual(
 			["request-outer-ceiling", "request-outer-length-check", "outer-ceiling", "max-request-frame-bytes", "usize64", "268435456", "ok", "268435456", "0"]));
 		Assert.Contains(rows, row => row.SequenceEqual(
@@ -966,7 +966,7 @@ public class LiquidWalletFactsWireV1StructuralRequestCodecTests
 			.Select(field => Convert.ToUInt64(field.GetRawConstantValue(), CultureInfo.InvariantCulture))
 			.ToArray();
 		Assert.All(
-			new ulong[] { 76, 12, 4, 16_384, 4_096, 16_384, 4_194_304, 67_108_864, 67_240_012, 268_435_456, 100_000 },
+			new ulong[] { 76, 12, 4, 16_384, 8_192, 16_384, 4_194_304, 67_108_864, 67_240_012, 268_435_456, 100_000 },
 			value => Assert.Contains(value, literalValues));
 	}
 

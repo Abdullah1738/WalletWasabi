@@ -159,12 +159,13 @@ public class LiquidWalletScanIntentDeriverTests
 			LiquidWalletSyncBatchPlanner.CreateRequests(derivation.Intents));
 	}
 
-	// Required evidence row 4: bounding vs MaximumRequestCount. Exactly 100
-	// unique transaction ids succeeds; 101 throws ArgumentOutOfRangeException
-	// and produces no intent. The bound is enforced by the deriver before
-	// CreateRequests is reached, and CreateRequests remains the final fence.
+	// Required evidence row 4: bounding vs MaximumRequestCount. Exactly
+	// MaximumRequestCount unique transaction ids succeeds; MaximumRequestCount+1
+	// throws ArgumentOutOfRangeException and produces no intent. The bound is
+	// enforced by the deriver before CreateRequests is reached, and
+	// CreateRequests remains the final fence.
 	[Fact]
-	public void DeriveAcceptsExactCapAndRejectsOneHundredOneUniqueIntents()
+	public void DeriveAcceptsExactCapAndRejectsCapPlusOneUniqueIntents()
 	{
 		LiquidWalletScanIntent[] atCap = Enumerable
 			.Range(1, LiquidWalletSyncBatchPlanner.MaximumRequestCount)

@@ -60,6 +60,39 @@ public class ElementsWalletRefreshObservationTests
 	}
 
 	[Fact]
+	public async Task AcceptsDenseVerboseCandidateHexStringAsync()
+	{
+		// A verbose getrawtransaction whose hex is ~200_000 chars — the shape of a dense confidential
+		// transaction, above the former 64 KiB per-string ceiling but below the raised per-string
+		// ceiling — must now be accepted by the inspection loop instead of aborting the refresh.
+		string hex = new('a', 200_000);
+		string candidateId = Id(0xC8);
+		string previousId = Id(0xC9);
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getrawmempool" => Envelope(invocation.Id, "[]"),
+			"getblock" => Envelope(invocation.Id, BlockResult()),
+			"getrawtransaction" when IsVerbose(invocation) => Envelope(
+				invocation.Id,
+				$$"""{"txid":"{{candidateId}}","hex":"{{hex}}","vin":[{"txid":"{{previousId}}"}]}"""),
+			_ => RefreshCapBaseResult(invocation),
+		});
+
+		using ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(),
+			PeggedAsset,
+			[candidateId],
+			null,
+			CancellationToken.None);
+
+		ElementsWalletRefreshCandidate candidate = Assert.Single(observation.Candidates);
+		Assert.Equal(candidateId, candidate.TransactionId);
+		Assert.Equal(
+			[candidateId, previousId],
+			observation.RawTransactions.Select(raw => raw.TransactionId).ToArray());
+	}
+
+	[Fact]
 	public async Task AcceptedIdForcedFirstOrdinalDedupSortedMempoolRecentBlockOrderAndCapAsync()
 	{
 		// Unsorted mempool (high then low), SharedId present in both mempool and the tip block to
@@ -103,9 +136,11 @@ public class ElementsWalletRefreshObservationTests
 	}
 
 	[Fact]
-	public async Task SelectedCandidateCountIsCappedAtSixtyFourAsync()
+	public async Task SelectedCandidateCountDoesNotStopAtTheFormerSixtyFourBoundAsync()
 	{
-		// 3 accepted + 4 mempool + 60 block = 67 distinct, so selection must stop at 64.
+		// 3 accepted + 4 mempool + 60 block = 67 distinct candidates. The former 64-candidate
+		// selection cap would have stopped at 64; the raised MaxRefreshSelectedCandidates bound
+		// (8_192) admits every one of the 67, so all 67 are selected and raw-fetched.
 		using var harness = new ElementsRpcHarness(RefreshCapResult);
 
 		ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
@@ -115,10 +150,10 @@ public class ElementsWalletRefreshObservationTests
 			null,
 			CancellationToken.None);
 
-		Assert.Equal(64, observation.Candidates.Count);
+		Assert.Equal(67, observation.Candidates.Count);
 		Assert.Equal(Id(0x01), observation.Candidates[0].TransactionId);
-		Assert.Equal(64, observation.RawTransactions.Count);
-		Assert.Equal(128, harness.Handler.Methods.Count(m => m == "getrawtransaction"));
+		Assert.Equal(67, observation.RawTransactions.Count);
+		Assert.Equal(134, harness.Handler.Methods.Count(m => m == "getrawtransaction"));
 	}
 
 	[Fact]
@@ -212,8 +247,14 @@ public class ElementsWalletRefreshObservationTests
 	[Fact]
 	public async Task CandidatePlusDependencyCapFailsBeforeFirstRawFetchAsync()
 	{
-		string[] candidateIds = Enumerable.Range(1, 64).Select(Id).ToArray();
-		string[] dependencyIds = Enumerable.Range(0x80, 37).Select(Id).ToArray();
+		// The candidate-plus-dependency raw cap is now MaxRawTransactionCount (16_384). 240 accepted
+		// candidates together pull 16_145 distinct dependencies (contiguous non-overlapping
+		// slices, no dependency itself a candidate), giving 240 candidates + 16_145 dependencies
+		// = 16_385 raw IDs — one over the cap — so the refresh is terminal before the first raw
+		// fetch. Dependencies use WideId because Id(int) is only a valid 64-character
+		// identifier for byte-sized inputs, and 16_145 distinct dependencies exceed that range.
+		string[] candidateIds = Enumerable.Range(1, 240).Select(Id).ToArray();
+		string[] dependencyIds = Enumerable.Range(0, 16_145).Select(WideId).ToArray();
 		using var harness = new ElementsRpcHarness(invocation =>
 		{
 			if (invocation.Method == "getrawmempool")
@@ -224,9 +265,15 @@ public class ElementsWalletRefreshObservationTests
 			{
 				string requestedId = ExtractRequestedTransactionId(invocation.Parameters);
 				int candidateIndex = System.Array.IndexOf(candidateIds, requestedId);
-				string vin = candidateIndex < dependencyIds.Length
-					? $$"""[{"txid":"{{dependencyIds[candidateIndex]}}"}]"""
-					: "[]";
+				string vin = "[]";
+				if (candidateIndex >= 0)
+				{
+					// Contiguous non-overlapping slice of the dependency pool for this candidate.
+					// Even contiguous partition of the dependency pool across all candidates.
+					int sliceStart = candidateIndex * dependencyIds.Length / candidateIds.Length;
+					int sliceEnd = (candidateIndex + 1) * dependencyIds.Length / candidateIds.Length;
+					vin = $$"""[{{string.Join(',', dependencyIds.Skip(sliceStart).Take(sliceEnd - sliceStart).Select(d => $$"""{"txid":"{{d}}"}"""))}}]""";
+				}
 				return Envelope(invocation.Id, $$"""{"txid":"{{requestedId}}","vin":{{vin}}}""");
 			}
 			return RefreshCapBaseResult(invocation);
@@ -239,7 +286,7 @@ public class ElementsWalletRefreshObservationTests
 			null,
 			CancellationToken.None));
 
-		Assert.Equal(64, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
+		Assert.Equal(240, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
 		Assert.DoesNotContain(
 			harness.Handler.Parameters,
 			parameters => IsRawFetch(parameters));
@@ -342,11 +389,12 @@ public class ElementsWalletRefreshObservationTests
 	[Fact]
 	public async Task SkippedTipBlockCoinbaseRefillsSupportedCapInSourceOrderAsync()
 	{
-		// CONTROLLED-REGTEST-REFRESH-COINBASE-FILTER-001: 63 accepted supported IDs leave one open
-		// supported slot. The tip block leads with a canonical generation row (exactly one coinbase
-		// input, zero previous IDs) that must be skipped entirely — absent from Candidates, never
-		// raw-fetched — so the following supported spend refills the 64th slot. Every supported row
-		// shares one valid dependency, which must be fetched exactly once.
+		// CONTROLLED-REGTEST-REFRESH-COINBASE-FILTER-001: 63 accepted supported IDs are followed by a
+		// tip block whose leading row is a canonical generation row (exactly one coinbase input, zero
+		// previous IDs) that must be skipped entirely — absent from Candidates, never raw-fetched — so
+		// the following supported spend is admitted next in source order, never blocked by the skipped
+		// coinbase consuming supported capacity. Every supported row shares one valid dependency, which
+		// must be fetched exactly once.
 		string[] acceptedIds = Enumerable.Range(0x01, 63).Select(Id).ToArray();
 		string coinbaseId = Id(0x80);
 		string spendId = Id(0x81);
@@ -706,6 +754,43 @@ public class ElementsWalletRefreshObservationTests
 		Assert.Equal(6, harness.Handler.Methods.Count(method => method == "getblock"));
 	}
 
+	[Fact]
+	public async Task DeepRescanSelectsConfirmedPaymentBelowTheFormerSixtyFourCandidateBoundAsync()
+	{
+		// Regression for the live-demo finding: the bounded deep-rescan walk reached the funding
+		// block, but the former 64-candidate selection cap stopped before the confirmed payment. The
+		// rescan window here holds more than 64 distinct non-coinbase transactions newest-first — 30
+		// blocks of 3 (heights 200 down to 171 = 90) — and the target payment sits at height 170, the
+		// 91st distinct candidate, below the former 64-candidate selection point. With the raised
+		// MaxRefreshSelectedCandidates bound the walk still descends to the payment block and the
+		// payment IS now selected; under the old cap it was dropped.
+		const int tip = 200;
+		const int anchor = 150;
+		const int paymentHeight = 170;
+		const int denseTopHeight = 200;
+		const int denseBottomHeight = 171;
+		string paymentId = Id(0x7B);
+		string paymentBlockHash = DeepBlockHash(paymentHeight);
+		using var harness = new ElementsRpcHarness(
+			DenseDeepRescanResult(tip, paymentHeight, paymentId, denseTopHeight, denseBottomHeight));
+
+		using ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(),
+			PeggedAsset,
+			[],
+			null,
+			CancellationToken.None,
+			anchor);
+
+		// 90 dense-window transactions plus the deep payment: every one is selected, none dropped at 64.
+		Assert.Equal(91, observation.Candidates.Count);
+		ElementsWalletRefreshCandidate payment = observation.Candidates[^1];
+		Assert.Equal(paymentId, payment.TransactionId);
+		Assert.Equal(paymentBlockHash, payment.BlockHash);
+		Assert.Equal((uint)paymentHeight, payment.BlockHeight);
+		Assert.Equal(1, RawFetchCount(harness, paymentId));
+	}
+
 	private static int RawFetchCount(ElementsRpcHarness harness, string transactionId) =>
 		harness.Handler.Parameters.Count(parameters =>
 			IsRawFetch(parameters) && StringComparer.Ordinal.Equals(ExtractRequestedTransactionId(parameters), transactionId));
@@ -720,6 +805,11 @@ public class ElementsWalletRefreshObservationTests
 		$"{{\"tx\":[{string.Join(',', transactionIds.Select(static id => JsonSerializer.Serialize(id)))}]}}";
 
 	private static string Id(int byteValue) => new string(byteValue.ToString("x2")[0], 62) + byteValue.ToString("x2");
+
+	// A valid, distinct, nonzero lowercase 32-byte transaction ID for any non-negative index, unlike
+	// Id(int) which is only a valid 64-character identifier for byte-sized inputs. Used where a test
+	// needs more than 256 distinct IDs (for example the 16_145-dependency raw-cap regression).
+	private static string WideId(int index) => (index + 1).ToString("x16").PadLeft(63, '0') + "d";
 
 	private static string RefreshOrderingResult(RpcInvocation invocation) => invocation.Method switch
 	{
@@ -797,6 +887,70 @@ public class ElementsWalletRefreshObservationTests
 		"getrawtransaction" when IsVerbose(invocation) => Envelope(invocation.Id, VerboseTransactionResult(invocation)),
 		"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize("010203")),
 		_ => throw new System.InvalidOperationException($"Unexpected RPC method '{invocation.Method}' with parameters '{invocation.Parameters}'."),
+	};
+
+	// A deterministic, ordinal-distinct, nonzero lowercase 32-byte transaction ID for the (height,
+	// index) dense-window filler transactions, disjoint from the payment ID and from every block hash.
+	private static string DenseTransactionId(int height, int index) =>
+		(height * 16 + index).ToString("x8").PadLeft(63, '1') + "e";
+
+	// A rescan window denser than the former 64-candidate selection cap: every height in
+	// [denseBottomHeight, denseTopHeight] carries three distinct non-coinbase filler transactions, and
+	// the block at paymentHeight carries only the confirmed payment. The newest-first walk therefore
+	// accumulates 3 × (denseTopHeight - denseBottomHeight + 1) distinct candidates before reaching the
+	// payment, so the payment sits below the former 64-candidate selection point.
+	private static Func<RpcInvocation, string> DenseDeepRescanResult(
+		int tip,
+		int paymentHeight,
+		string paymentId,
+		int denseTopHeight,
+		int denseBottomHeight) => invocation =>
+	{
+		switch (invocation.Method)
+		{
+			case "getnodegeneration":
+				return Envelope(invocation.Id, GenerationResult(StartupId, 9, tip, DeepBlockHash(tip)));
+			case "getnetworkinfo":
+				return Envelope(invocation.Id, NetworkResult());
+			case "getblockchaininfo":
+				return Envelope(
+					invocation.Id,
+					$$"""{"chain":"elementsregtest","blocks":{{tip}},"headers":{{tip}},"bestblockhash":"{{DeepBlockHash(tip)}}","initialblockdownload":false,"pruned":false,"trim_headers":false,"warnings":""}""");
+			case "getsidechaininfo":
+				return Envelope(invocation.Id, SidechainResult());
+			case "getblockhash" when invocation.Parameters == "[0]":
+				return Envelope(invocation.Id, JsonSerializer.Serialize(GenesisBlockHash));
+			case "getblockhash":
+				return Envelope(invocation.Id, JsonSerializer.Serialize(DeepBlockHash(int.Parse(ExtractRequestedHeight(invocation.Parameters)))));
+			case "getrawmempool":
+				return Envelope(invocation.Id, "[]");
+			case "getblock":
+			{
+				for (int height = denseTopHeight; height >= denseBottomHeight; height--)
+				{
+					if (invocation.Parameters.Contains(DeepBlockHash(height), System.StringComparison.Ordinal))
+					{
+						return Envelope(
+							invocation.Id,
+							BlockResult(
+								DenseTransactionId(height, 0),
+								DenseTransactionId(height, 1),
+								DenseTransactionId(height, 2)));
+					}
+				}
+				if (invocation.Parameters.Contains(DeepBlockHash(paymentHeight), System.StringComparison.Ordinal))
+				{
+					return Envelope(invocation.Id, BlockResult(paymentId));
+				}
+				return Envelope(invocation.Id, BlockResult());
+			}
+			case "getrawtransaction" when IsVerbose(invocation):
+				return Envelope(invocation.Id, VerboseTransactionResult(invocation));
+			case "getrawtransaction":
+				return Envelope(invocation.Id, JsonSerializer.Serialize("010203"));
+			default:
+				throw new System.InvalidOperationException($"Unexpected RPC method '{invocation.Method}' with parameters '{invocation.Parameters}'.");
+		}
 	};
 
 	private static string ExtractRequestedHeight(string parameters)

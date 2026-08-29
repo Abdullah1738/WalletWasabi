@@ -13,7 +13,9 @@ internal sealed class LiquidWalletFactsWireV1UnpreparedRequestFrame : IDisposabl
 	private const int PreviousTransactionCountOffset = 68;
 	private const int CandidateFixedLength = 12;
 	private const int MaximumDescriptorLength = 16_384;
-	private const int MaximumCandidateCount = 4_096;
+	// Mirror of LiquidWalletFactsWireV1StructuralRequestCodec.MaximumCandidateCount, sized to
+	// ElementsRpcClient.MaxRefreshSelectedCandidates (8_192) so the selection cap is the only gate.
+	private const int MaximumCandidateCount = 8_192;
 	private const int MaximumPreviousTransactionCount = 16_384;
 	private const int MaximumTransactionLength = 4_194_304;
 	private const int MaximumAggregateTransactionLength = 67_108_864;

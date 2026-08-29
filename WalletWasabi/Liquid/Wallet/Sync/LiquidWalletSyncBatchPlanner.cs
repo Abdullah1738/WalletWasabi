@@ -11,7 +11,9 @@ namespace WalletWasabi.Liquid.Wallet.Sync;
 /// </summary>
 internal static class LiquidWalletSyncBatchPlanner
 {
-	internal const int MaximumRequestCount = 100;
+	// One request per refresh-selected candidate; sized to ElementsRpcClient.MaxRefreshSelectedCandidates
+	// (8_192) so a full bounded rescan window passes and the selection cap is the only gate.
+	internal const int MaximumRequestCount = 8_192;
 
 	/// <summary>
 	/// One caller-named fetch intent: a transaction identifier plus an optional
@@ -28,7 +30,7 @@ internal static class LiquidWalletSyncBatchPlanner
 		{
 			throw new ArgumentOutOfRangeException(
 				nameof(intents),
-				"Between one and one hundred raw transaction fetch intents are required.");
+				$"Between one and {MaximumRequestCount} raw transaction fetch intents are required.");
 		}
 
 		var requests = new ElementsRawTransactionRequest[count];
