@@ -351,7 +351,7 @@ internal sealed class LiquidWalletRefreshCommandService
 		internal static Dependencies Production { get; } = new(
 			static (session, captured, suppliedId, cancellationToken) => session.RpcClient.GetWalletRefreshObservationAsync(
 				captured.Owner.NodeExpectation, session.Manifest.RequiredFeeAssetId,
-				captured.AcceptedTransactionIds, suppliedId, session.Manifest, cancellationToken),
+				captured.AcceptedTransactionIds, suppliedId, session.Manifest, cancellationToken, captured.MinConfirmedHeight),
 			static request => LiquidWalletNativeFactsObserver.TryObserve(
 				request.SourceEpoch, request.NetworkClass, request.LastIndex, request.Descriptor,
 				request.Slip77, request.Candidates, out LiquidWalletObservationBatch? batch) && batch is not null

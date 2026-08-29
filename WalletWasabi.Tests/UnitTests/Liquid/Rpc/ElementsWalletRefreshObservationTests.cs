@@ -597,6 +597,115 @@ public class ElementsWalletRefreshObservationTests
 		Assert.Equal(1, RawFetchCount(harness, candidateId));
 	}
 
+	[Fact]
+	public async Task FreshWalletNullAnchorRescansFullBoundedWindowAndDiscoversDeepConfirmedPaymentAsync()
+	{
+		// A fresh wallet (no confirmation, null anchor) walks the whole bounded window from the tip
+		// (height 100) down to the rescan floor 100 - 1440 + 1 clamped to 0, so a confirmed external
+		// payment at height 20 — far below the recent six-block window (95..100) — is discovered.
+		const int tip = 100;
+		const int paymentHeight = 20;
+		string paymentId = Id(0x77);
+		string paymentBlockHash = DeepBlockHash(paymentHeight);
+		using var harness = new ElementsRpcHarness(DeepRescanResult(tip, paymentHeight, paymentId));
+
+		using ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(),
+			PeggedAsset,
+			[],
+			null,
+			CancellationToken.None);
+
+		ElementsWalletRefreshCandidate candidate = Assert.Single(observation.Candidates);
+		Assert.Equal(paymentId, candidate.TransactionId);
+		Assert.Equal(paymentBlockHash, candidate.BlockHash);
+		Assert.Equal((uint)paymentHeight, candidate.BlockHeight);
+		Assert.Equal(1, RawFetchCount(harness, paymentId));
+		// The walk covered every height from the tip down to the floor (0), not just the recent window.
+		Assert.Equal(tip + 1, harness.Handler.Methods.Count(method => method == "getblock"));
+	}
+
+	[Fact]
+	public async Task WalletWithAnchorAboveRescanFloorScansOnlyTheGapAsync()
+	{
+		// The wallet already holds a confirmation at height 80 (its confirmed-history high-water),
+		// below the recent six-block window (95..100). Only the gap from the tip down to the anchor
+		// is walked: a confirmed payment at height 90 is discovered, and no height below the anchor
+		// is scanned.
+		const int tip = 100;
+		const int anchor = 80;
+		const int paymentHeight = 90;
+		string paymentId = Id(0x78);
+		string paymentBlockHash = DeepBlockHash(paymentHeight);
+		using var harness = new ElementsRpcHarness(DeepRescanResult(tip, paymentHeight, paymentId));
+
+		using ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(),
+			PeggedAsset,
+			[],
+			null,
+			CancellationToken.None,
+			anchor);
+
+		ElementsWalletRefreshCandidate candidate = Assert.Single(observation.Candidates);
+		Assert.Equal(paymentId, candidate.TransactionId);
+		Assert.Equal(paymentBlockHash, candidate.BlockHash);
+		Assert.Equal((uint)paymentHeight, candidate.BlockHeight);
+		// Heights 100..80 inclusive: exactly the recent window plus the gap, nothing below the anchor.
+		Assert.Equal(tip - anchor + 1, harness.Handler.Methods.Count(method => method == "getblock"));
+	}
+
+	[Fact]
+	public async Task GapDeeperThanRescanDepthFailsClosedWithoutHangingAsync()
+	{
+		// The wallet's confirmed-history high-water (height 10) sits deeper than MaxRefreshRescanDepth
+		// below the tip (height 2000). The walk is bounded by the rescan floor 2000 - 1440 + 1 = 561,
+		// so it scans exactly 1440 heights (2000..561), never descends toward the anchor, and the deep
+		// payment at height 20 is never discovered: no supported candidates, no raw fetch, no hang.
+		const int tip = 2000;
+		const int anchor = 10;
+		const int paymentHeight = 20;
+		string paymentId = Id(0x79);
+		using var harness = new ElementsRpcHarness(DeepRescanResult(tip, paymentHeight, paymentId));
+
+		using ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(),
+			PeggedAsset,
+			[],
+			null,
+			CancellationToken.None,
+			anchor);
+
+		Assert.Empty(observation.Candidates);
+		Assert.Empty(observation.RawTransactions);
+		Assert.DoesNotContain(harness.Handler.Parameters, IsRawFetch);
+		// The walk stopped at the rescan floor, exactly MaxRefreshRescanDepth heights from the tip.
+		Assert.Equal(1440, harness.Handler.Methods.Count(method => method == "getblock"));
+	}
+
+	[Fact]
+	public async Task NoGapStillScansOnlyTheRecentSixBlocksAsync()
+	{
+		// The wallet's confirmed-history high-water (height 98) sits inside the recent six-block window
+		// (95..100), so there is no gap: the walk is exactly the recent six heights, unchanged.
+		const int tip = 100;
+		const int anchor = 98;
+		string paymentId = Id(0x7A);
+		using var harness = new ElementsRpcHarness(DeepRescanResult(tip, paymentHeight: 30, paymentId));
+
+		using ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(),
+			PeggedAsset,
+			[],
+			null,
+			CancellationToken.None,
+			anchor);
+
+		// The payment at height 30 is below the recent window and there is no gap, so it is not discovered.
+		Assert.Empty(observation.Candidates);
+		Assert.Equal(6, harness.Handler.Methods.Count(method => method == "getblock"));
+	}
+
 	private static int RawFetchCount(ElementsRpcHarness harness, string transactionId) =>
 		harness.Handler.Parameters.Count(parameters =>
 			IsRawFetch(parameters) && StringComparer.Ordinal.Equals(ExtractRequestedTransactionId(parameters), transactionId));
@@ -667,6 +776,34 @@ public class ElementsWalletRefreshObservationTests
 			: invocation.Method == "getrawmempool"
 				? Envelope(invocation.Id, "[]")
 				: RefreshCapBaseResult(invocation);
+
+	// A deterministic, ordinal-distinct, nonzero lowercase 32-byte hash per walked height so the
+	// newest-first deep-rescan walk can address any height from the tip down to the rescan floor.
+	private static string DeepBlockHash(int height) => height.ToString("x8").PadLeft(63, '0') + "f";
+
+	private static Func<RpcInvocation, string> DeepRescanResult(int tip, int paymentHeight, string paymentId) => invocation => invocation.Method switch
+	{
+		"getnodegeneration" => Envelope(invocation.Id, GenerationResult(StartupId, 9, tip, DeepBlockHash(tip))),
+		"getnetworkinfo" => Envelope(invocation.Id, NetworkResult()),
+		"getblockchaininfo" => Envelope(
+			invocation.Id,
+			$$"""{"chain":"elementsregtest","blocks":{{tip}},"headers":{{tip}},"bestblockhash":"{{DeepBlockHash(tip)}}","initialblockdownload":false,"pruned":false,"trim_headers":false,"warnings":""}"""),
+		"getsidechaininfo" => Envelope(invocation.Id, SidechainResult()),
+		"getblockhash" when invocation.Parameters == "[0]" => Envelope(invocation.Id, JsonSerializer.Serialize(GenesisBlockHash)),
+		"getblockhash" => Envelope(invocation.Id, JsonSerializer.Serialize(DeepBlockHash(int.Parse(ExtractRequestedHeight(invocation.Parameters))))),
+		"getrawmempool" => Envelope(invocation.Id, "[]"),
+		"getblock" when invocation.Parameters.Contains(DeepBlockHash(paymentHeight), System.StringComparison.Ordinal) => Envelope(invocation.Id, BlockResult(paymentId)),
+		"getblock" => Envelope(invocation.Id, BlockResult()),
+		"getrawtransaction" when IsVerbose(invocation) => Envelope(invocation.Id, VerboseTransactionResult(invocation)),
+		"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize("010203")),
+		_ => throw new System.InvalidOperationException($"Unexpected RPC method '{invocation.Method}' with parameters '{invocation.Parameters}'."),
+	};
+
+	private static string ExtractRequestedHeight(string parameters)
+	{
+		using JsonDocument document = JsonDocument.Parse(parameters);
+		return document.RootElement[0].GetRawText();
+	}
 	private static string RefreshCapBaseResult(RpcInvocation invocation) => invocation.Method switch
 	{
 		"getnodegeneration" => Envelope(invocation.Id, GenerationResult(StartupId, 9, 42, BestBlockHash)),

@@ -24,6 +24,7 @@ internal sealed class LiquidWalletRefreshStateCapture
 		ulong stateRevision,
 		ulong persistenceGeneration,
 		ulong externalIndexHighWater,
+		uint? minConfirmedHeight,
 		string[] acceptedTransactionIds,
 		IReadOnlyDictionary<string, ulong> acceptedTransactionIdVersions)
 	{
@@ -34,6 +35,7 @@ internal sealed class LiquidWalletRefreshStateCapture
 		StateRevision = stateRevision;
 		PersistenceGeneration = persistenceGeneration;
 		ExternalIndexHighWater = externalIndexHighWater;
+		MinConfirmedHeight = minConfirmedHeight;
 		_acceptedTransactionIds = acceptedTransactionIds;
 		_acceptedTransactionIdVersions = acceptedTransactionIdVersions;
 	}
@@ -45,6 +47,14 @@ internal sealed class LiquidWalletRefreshStateCapture
 	internal ulong StateRevision { get; }
 	internal ulong PersistenceGeneration { get; }
 	internal ulong ExternalIndexHighWater { get; }
+
+	/// <summary>
+	/// The captured confirmed-history high-water anchor for the bounded confirmed-block rescan:
+	/// the lowest confirmed block height the wallet already knew at capture time, or
+	/// <see langword="null"/> when it held no confirmation (a fresh wallet scans the whole
+	/// bounded window from the fenced tip down to the rescan floor).
+	/// </summary>
+	internal uint? MinConfirmedHeight { get; }
 	internal IReadOnlyList<string> AcceptedTransactionIds => _acceptedTransactionIds;
 	internal IReadOnlyDictionary<string, ulong> AcceptedTransactionIdVersions => _acceptedTransactionIdVersions;
 }
@@ -167,6 +177,7 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable
 				owner.StateRevision,
 				owner.PersistenceGeneration,
 				owner.ExternalIndexHighWater,
+				owner.MinConfirmedHeight,
 				acceptedTransactionIds,
 				acceptedVersions);
 		}

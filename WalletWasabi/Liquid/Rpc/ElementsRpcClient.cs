@@ -1851,11 +1851,18 @@ public sealed class ElementsRpcClient : IDisposable
 	/// observation with no retries. Accepted IDs are newest-first with the supplied accepted-send ID
 	/// forced first and ordinal dedupe; mempool IDs are ordinal-sorted; recent blocks are scanned
 	/// newest-first preserving node transaction order. When accepted plus mempool already fill the 64
-	/// supported cap no block is scanned; otherwise at most six recent block heights contribute at
-	/// most 64 + <c>MaxRefreshRecentBlockCount</c> inspection IDs, a bounded over-read so a skipped
-	/// canonical block-only coinbase (exactly one input, that input a coinbase, zero previous IDs — a
-	/// null prevout the native previous-set stage can never reference) never steals supported
-	/// capacity. Inspection IDs are verbose-classified in source order until 64 supported candidates
+	/// supported cap no block is scanned; otherwise the recent six-block heights are the head of a
+	/// single newest-first walk whose lower bound the bounded confirmed-block rescan extends when the
+	/// wallet's confirmed history has a gap to the fenced tip. <paramref name="minConfirmedHeight"/>
+	/// is the confirmed-history high-water anchor (the lowest confirmed block height the wallet
+	/// already knows, or <see langword="null"/> when it holds none): the walk continues from the
+	/// recent window down to <c>max(anchor, floor)</c>, where the floor is
+	/// <c>max(0, tip - MaxRefreshRescanDepth + 1)</c>; a fresh wallet (null anchor) scans the whole
+	/// bounded window from the tip. A gap deeper than <c>MaxRefreshRescanDepth</c> fails closed. The
+	/// walked heights contribute a bounded over-read inspection ledger so a skipped canonical
+	/// block-only coinbase (exactly one input, that input a coinbase, zero previous IDs — a null
+	/// prevout the native previous-set stage can never reference) never steals supported capacity.
+	/// Inspection IDs are verbose-classified in source order until 64 supported candidates
 	/// are collected; only the canonical block-only coinbase shape is skipped, and any accepted,
 	/// supplied, or mempool coinbase, and any mixed or multi-input coinbase shape, is terminal before
 	/// any raw fetch. Dependency accounting, the global candidate-plus-dependency cap of 100, raw
@@ -1873,7 +1880,8 @@ public sealed class ElementsRpcClient : IDisposable
 		string expectedEffectiveFeeAsset,
 		IReadOnlyList<string> acceptedTransactionIds,
 		string? suppliedAcceptedTransactionId,
-		CancellationToken cancellationToken) =>
+		CancellationToken cancellationToken,
+		uint? minConfirmedHeight = null) =>
 		await GetWalletRefreshObservationGateAsync(
 				expectation,
 				expectedEffectiveFeeAsset,
@@ -1881,6 +1889,7 @@ public sealed class ElementsRpcClient : IDisposable
 				suppliedAcceptedTransactionId,
 				manifest: null,
 				hasGenerationApi: true,
+				minConfirmedHeight,
 				cancellationToken)
 			.ConfigureAwait(false);
 
@@ -1894,7 +1903,8 @@ public sealed class ElementsRpcClient : IDisposable
 		IReadOnlyList<string> acceptedTransactionIds,
 		string? suppliedAcceptedTransactionId,
 		ElementsPublicNetworkManifest manifest,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		uint? minConfirmedHeight = null)
 	{
 		ArgumentNullException.ThrowIfNull(manifest);
 		return await GetWalletRefreshObservationGateAsync(
@@ -1904,6 +1914,7 @@ public sealed class ElementsRpcClient : IDisposable
 				suppliedAcceptedTransactionId,
 				manifest,
 				manifest.HasGenerationApi,
+				minConfirmedHeight,
 				cancellationToken)
 			.ConfigureAwait(false);
 	}
@@ -1915,6 +1926,7 @@ public sealed class ElementsRpcClient : IDisposable
 		string? suppliedAcceptedTransactionId,
 		ElementsPublicNetworkManifest? manifest,
 		bool hasGenerationApi,
+		uint? minConfirmedHeight,
 		CancellationToken cancellationToken)
 	{
 		ArgumentNullException.ThrowIfNull(expectation);
@@ -1933,6 +1945,7 @@ public sealed class ElementsRpcClient : IDisposable
 				suppliedAcceptedTransactionId,
 				manifest,
 				hasGenerationApi,
+				minConfirmedHeight,
 				cancellationToken).ConfigureAwait(false);
 		}
 		finally
@@ -1948,6 +1961,7 @@ public sealed class ElementsRpcClient : IDisposable
 		string? suppliedAcceptedTransactionId,
 		ElementsPublicNetworkManifest? manifest,
 		bool hasGenerationApi,
+		uint? minConfirmedHeight,
 		CancellationToken cancellationToken)
 	{
 		const string acquisition = "wallet refresh observation";
@@ -2022,11 +2036,38 @@ public sealed class ElementsRpcClient : IDisposable
 
 		// Blocks are scanned only when accepted plus mempool left supported capacity open. An ID first
 		// discovered here is a block-only origin; an ID already accepted or in the mempool keeps its
-		// earlier origin even when it also appears in a block.
+		// earlier origin even when it also appears in a block. The recent six-block walk is the head of
+		// a single newest-first walk whose lower bound the bounded confirmed-block rescan extends when
+		// the wallet's confirmed history has a gap to the fenced tip: the rescan floor is
+		// max(0, tip - MaxRefreshRescanDepth + 1), and the walk continues from the recent window down to
+		// the rescan anchor (a fresh wallet with no confirmation scans the whole bounded window from the
+		// tip). A gap deeper than MaxRefreshRescanDepth fails closed; it never scans unbounded history.
+		// The over-read inspection ledger is bounded by the number of walked heights so a skipped
+		// canonical block-only coinbase never steals supported capacity; overflowing the supported or
+		// raw bounds is terminal, never a silent partial import.
 		if (selectedIds.Count < MaxRefreshSelectedCandidates)
 		{
-			int inspectionCapacity = MaxRefreshSelectedCandidates + MaxRefreshRecentBlockCount;
-			int lowestHeight = Math.Max(0, nodeStatus.Blocks - (MaxRefreshRecentBlockCount - 1));
+			int recentLowestHeight = Math.Max(0, nodeStatus.Blocks - (MaxRefreshRecentBlockCount - 1));
+			int rescanFloor = Math.Max(0, nodeStatus.Blocks - (MaxRefreshRescanDepth - 1));
+			int lowestHeight = recentLowestHeight;
+			if (minConfirmedHeight is null)
+			{
+				// Fresh wallet (no confirmation): cover the whole bounded window from the tip.
+				lowestHeight = rescanFloor;
+			}
+			else
+			{
+				long anchor = minConfirmedHeight.Value;
+				if (anchor < recentLowestHeight)
+				{
+					// The confirmed-history high-water sits below the recent window; only the gap
+					// between the recent window and the anchor needs filling, down to the floor.
+					lowestHeight = (int)Math.Max(anchor, rescanFloor);
+				}
+			}
+
+			int walkedHeightCount = nodeStatus.Blocks - lowestHeight + 1;
+			int inspectionCapacity = MaxRefreshSelectedCandidates + walkedHeightCount;
 			for (int height = nodeStatus.Blocks; height >= lowestHeight && selectedIds.Count < inspectionCapacity; height--)
 			{
 				string blockHash = await CallHex32Async("getblockhash", [height], cancellationToken).ConfigureAwait(false);
@@ -2725,6 +2766,13 @@ public sealed class ElementsRpcClient : IDisposable
 
 	private const int MaxRefreshSelectedCandidates = 64;
 	private const int MaxRefreshRecentBlockCount = 6;
+
+	/// <summary>
+	/// The hard bound on how many confirmed blocks a single refresh may walk back from the fenced
+	/// tip when filling the confirmed-history gap (about one day of one-minute blocks). A gap
+	/// deeper than this fails closed; it never scans unbounded history.
+	/// </summary>
+	private const int MaxRefreshRescanDepth = 1440;
 
 	private sealed record RpcRequest(string Jsonrpc, string Id, string Method, object[] Params);
 

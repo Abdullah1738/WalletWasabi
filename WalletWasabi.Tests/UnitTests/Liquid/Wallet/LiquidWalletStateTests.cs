@@ -590,6 +590,31 @@ public class LiquidWalletStateTests
 	}
 
 	[Fact]
+	public void MinConfirmedHeightIsNullForFreshWalletAndTracksLowestConfirmedHeight()
+	{
+		Assert.Null(LiquidWalletState.Empty(PeggedAsset).MinConfirmedHeight);
+
+		LiquidTransactionId deeperId = Tx('a');
+		LiquidOwnedOutput deeperOutput = Output(deeperId, 0, PeggedAsset, 100);
+		LiquidWalletState confirmed = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(deeperId, [], [deeperOutput]))
+			.Confirm(1, deeperId, LiquidConfirmation.Create(BlockHash, 42));
+		Assert.Equal(42u, confirmed.MinConfirmedHeight);
+
+		// A second confirmation at a greater height does not move the high-water (the minimum wins).
+		LiquidTransactionId shallowerId = Tx('b');
+		LiquidOwnedOutput shallowerOutput = Output(shallowerId, 0, PeggedAsset, 200);
+		LiquidWalletState withShallower = confirmed
+			.Apply(2, Delta(shallowerId, [], [shallowerOutput]))
+			.Confirm(3, shallowerId, LiquidConfirmation.Create(ReplacementBlockHash, 90));
+		Assert.Equal(42u, withShallower.MinConfirmedHeight);
+
+		// Unconfirming the deepest row lifts the high-water to the remaining lowest height.
+		LiquidWalletState lifted = withShallower.Unconfirm(4, deeperId, LiquidConfirmation.Create(BlockHash, 42));
+		Assert.Equal(90u, lifted.MinConfirmedHeight);
+	}
+
+	[Fact]
 	public void RejectsUnknownSpendReplayAndRevisionMismatchWithoutMutation()
 	{
 		LiquidWalletState empty = LiquidWalletState.Empty(PeggedAsset);

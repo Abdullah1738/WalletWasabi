@@ -80,6 +80,13 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 	/// <summary>The immutable wallet state this owner projects from (internal-only).</summary>
 	internal LiquidWalletState State => _allocation.State;
 
+	/// <summary>
+	/// The confirmed-history high-water of the projected wallet state (internal-only): the lowest
+	/// confirmed block height the wallet already knows, or <see langword="null"/> when it holds no
+	/// confirmation. This is the refresh deep-rescan trigger anchor.
+	/// </summary>
+	internal uint? MinConfirmedHeight => _allocation.State.MinConfirmedHeight;
+
 	/// <summary>The persisted external receive-index high-water carried by this owner.</summary>
 	internal ulong ExternalIndexHighWater => _allocation.PersistedExternalIndexHighWater;
 

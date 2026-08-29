@@ -225,6 +225,29 @@ internal sealed class LiquidWalletState
 	public int UnspentOutputCount => _unspentOutputs.Count;
 	public int AppliedTransactionCount => _history.Count;
 
+	/// <summary>
+	/// The wallet's confirmed-history high-water: the lowest block height the wallet already
+	/// holds a confirmation for, or <see langword="null"/> when it holds none. Refresh discovery
+	/// uses it as the anchor for the bounded confirmed-block rescan window: anything at or above
+	/// it is potentially already known, so only the gap below it down to the rescan floor needs
+	/// scanning. A fresh wallet (no confirmations) anchors at <see langword="null"/>.
+	/// </summary>
+	internal uint? MinConfirmedHeight
+	{
+		get
+		{
+			uint? minimum = null;
+			foreach (LiquidConfirmation confirmation in _confirmations.Values)
+			{
+				if (minimum is null || confirmation.Height < minimum.Value)
+				{
+					minimum = confirmation.Height;
+				}
+			}
+			return minimum;
+		}
+	}
+
 	internal bool ContainsAppliedTransaction(LiquidTransactionId transactionId)
 	{
 		ArgumentNullException.ThrowIfNull(transactionId);
