@@ -29,11 +29,6 @@ internal static class ElementsReviewedNodeExpectationSource
 			"liquidtestnet",
 			"51",
 			8),
-		new(
-			"71115e296e89e5f9161a74649f3a16fa2bb7ed9cf59d42ec203750b8a54350da",
-			"elementsregtest",
-			"51",
-			0),
 	];
 
 	internal static ElementsNodeExpectation Bind(
@@ -89,7 +84,6 @@ internal static class ElementsReviewedNodeExpectationSource
 		[
 			ElementsPublicNetworkManifest.LiquidMainnet,
 			ElementsPublicNetworkManifest.LiquidTestnet,
-			ElementsPublicNetworkManifest.LiquidControlledRegtest,
 		];
 		RequireInvariant(ReviewedCatalog.Length == admittedManifests.Length, "catalog_count");
 		RequireInvariant(ReviewedCatalog.Select(row => row.ManifestId).Distinct(StringComparer.Ordinal).Count() == ReviewedCatalog.Length, "duplicate_descriptor_manifest");

@@ -745,11 +745,6 @@ internal static class LiquidAddressCodec
 			manifest = ElementsPublicNetworkManifest.LiquidTestnet;
 			return true;
 		}
-		if (TryRecognizeReviewedHrp(hrp, ElementsPublicNetworkManifest.LiquidControlledRegtest, out confidential))
-		{
-			manifest = ElementsPublicNetworkManifest.LiquidControlledRegtest;
-			return true;
-		}
 
 		manifest = null!;
 		confidential = false;
@@ -810,8 +805,7 @@ internal static class LiquidAddressCodec
 		ArgumentNullException.ThrowIfNull(manifest);
 		if (
 			!ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidMainnet) &&
-			!ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidTestnet) &&
-			!IsReviewedControlledRegtestManifest(manifest))
+			!ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidTestnet))
 		{
 			throw new ArgumentException(
 				"A reviewed Liquid public-network manifest is required.",
@@ -819,21 +813,13 @@ internal static class LiquidAddressCodec
 		}
 	}
 
-	private static bool IsReviewedControlledRegtestManifest(ElementsPublicNetworkManifest manifest) =>
-		ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidControlledRegtest) &&
-		manifest.AddressEncoding == new ElementsAddressEncodingProfile(235, 75, 4, "ert", "el");
-
 	private static ElementsPublicNetworkManifest[] OtherManifests(ElementsPublicNetworkManifest manifest)
 	{
 		if (ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidMainnet))
 		{
-			return [ElementsPublicNetworkManifest.LiquidTestnet, ElementsPublicNetworkManifest.LiquidControlledRegtest];
+			return [ElementsPublicNetworkManifest.LiquidTestnet];
 		}
-		if (ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidTestnet))
-		{
-			return [ElementsPublicNetworkManifest.LiquidMainnet, ElementsPublicNetworkManifest.LiquidControlledRegtest];
-		}
-		return [ElementsPublicNetworkManifest.LiquidMainnet, ElementsPublicNetworkManifest.LiquidTestnet];
+		return [ElementsPublicNetworkManifest.LiquidMainnet];
 	}
 
 	private static byte[] Combine(ReadOnlySpan<byte> first, ReadOnlySpan<byte> second)

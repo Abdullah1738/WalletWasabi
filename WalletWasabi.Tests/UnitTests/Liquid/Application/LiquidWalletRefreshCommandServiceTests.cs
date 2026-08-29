@@ -103,39 +103,6 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 	}
 
 	[Fact]
-	public async Task ControlledRegtestManifestMapsToReviewedTestNetworkClassAsync()
-	{
-		using var handler = new RejectingHandler();
-		ElementsPublicNetworkManifest regtest = ElementsPublicNetworkManifest.LiquidControlledRegtest;
-		LiquidAuthenticatedWalletSession session = CreateSession(handler, regtest);
-		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session, regtest);
-		const string candidateId = "4444444444444444444444444444444444444444444444444444444444444444";
-		LiquidWalletObservationBatch batch = NativeBatch(candidateId, regtest);
-		LiquidWalletFactsWireV1DescriptorNetworkClass? observedClass = null;
-		var dependencies = LiquidWalletRefreshCommandService.Dependencies.CreateForTesting(
-			acquireObservationAsync: (capturedSession, _, _, _) =>
-				Task.FromResult(CandidateObservation(capturedSession.StateOwner.NodeExpectation, capturedSession.Manifest, candidateId)),
-			observeNative: request =>
-			{
-				observedClass = request.NetworkClass;
-				return batch;
-			},
-			save: request => LiquidWalletLoadSaveResult.CreateSaved(
-				request.State.Revision, request.NextGeneration, request.ExternalIndexHighWater),
-			publish: (_, _, _) => true,
-			stageObserver: _ => { });
-		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> command =
-			LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
-
-		LiquidWalletUiRefreshResult result = await command(
-			new LiquidWalletUiRefreshRequest(WalletName, LiquidWalletUiRefreshTrigger.Manual, null),
-			CancellationToken.None);
-
-		Assert.Equal(LiquidWalletFactsWireV1DescriptorNetworkClass.Test, observedClass);
-		Assert.Equal(LiquidWalletUiRefreshStatus.Committed, result.Status);
-	}
-
-	[Fact]
 	public async Task UnknownManifestHasNoReviewedDescriptorNetworkClassAsync()
 	{
 		using var handler = new RejectingHandler();

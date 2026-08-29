@@ -16,7 +16,6 @@ public sealed class LiquidWalletManifestCompositionTests
 	[Theory]
 	[InlineData("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b")]
 	[InlineData("e4e7ec03e19ce5f83fd04c586788b724d88052b65ef2480cc93bcd50324f6b20")]
-	[InlineData("71115e296e89e5f9161a74649f3a16fa2bb7ed9cf59d42ec203750b8a54350da")]
 	public async Task FacadeBindsEachReviewedManifestAndRequestCannotOverrideAsync(string manifestId)
 	{
 		using TemporaryDirectory directory = new();

@@ -17,12 +17,10 @@ public sealed class ElementsReviewedNodeExpectationSourceTests
 	private const string MainnetHash = "a9112b9eb2b15a2ef451e8598f326788342f78e6c5fa93c0be96da2d01a3c78b";
 	private const string TestnetScript = "51";
 	private const string TestnetHash = "4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260";
-	private const string ControlledRegtestManifestId = "71115e296e89e5f9161a74649f3a16fa2bb7ed9cf59d42ec203750b8a54350da";
 
 	[Theory]
 	[InlineData("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", MainnetScript, MainnetHash, 100)]
 	[InlineData("e4e7ec03e19ce5f83fd04c586788b724d88052b65ef2480cc93bcd50324f6b20", TestnetScript, TestnetHash, 8)]
-	[InlineData(ControlledRegtestManifestId, TestnetScript, TestnetHash, 0)]
 	public void BindsIndependentReviewedLiteralVector(string manifestId, string script, string expectedHash, int expectedDepth)
 	{
 		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.GetByManifestId(manifestId);
@@ -42,23 +40,6 @@ public sealed class ElementsReviewedNodeExpectationSourceTests
 		Assert.Equal(manifest.ElementsNumericVersion, expectation.Version);
 		Assert.Equal(manifest.ElementsProtocolVersion, expectation.ProtocolVersion);
 		Assert.Equal(manifest.ExpectedSubversion, expectation.Subversion);
-	}
-
-	[Fact]
-	public void ControlledRegtestRowIsLocalDemoOnlyWithIncompleteCtFixture()
-	{
-		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidControlledRegtest;
-		Assert.Equal(ControlledRegtestManifestId, manifest.ManifestId);
-		Assert.Equal("CONTROLLED-REGTEST-MANIFEST-001-LOCAL-DEMO-ONLY-NO-GATE-CREDIT", manifest.ScopeMarker);
-		Assert.Equal("CONTROLLED_REGTEST_CT_FIXTURE_INCOMPLETE", manifest.CtFixtureEligibility);
-
-		ElementsNodeExpectation expectation = ElementsReviewedNodeExpectationSource.Bind(
-			manifest,
-			Profile(manifest.ManifestId, manifest.ChainRpcName));
-		Assert.Equal("elementsregtest", expectation.Chain);
-		Assert.Equal("51", expectation.FedpegScript);
-		Assert.Equal(0, expectation.PeginConfirmationDepth);
-		Assert.False(expectation.EnforcePak);
 	}
 
 	[Fact]
@@ -105,13 +86,12 @@ public sealed class ElementsReviewedNodeExpectationSourceTests
 		Assert.DoesNotContain("RpcClient", source, StringComparison.Ordinal);
 		Assert.DoesNotContain("Json", source, StringComparison.Ordinal);
 		Assert.DoesNotContain("Environment", source, StringComparison.Ordinal);
-		Assert.Equal(3, source.Split("new(\n", StringSplitOptions.None).Length - 1);
+		Assert.Equal(2, source.Split("new(\n", StringSplitOptions.None).Length - 1);
 	}
 
 	[Theory]
 	[InlineData("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", "liquidv1")]
 	[InlineData("e4e7ec03e19ce5f83fd04c586788b724d88052b65ef2480cc93bcd50324f6b20", "liquidtestnet")]
-	[InlineData(ControlledRegtestManifestId, "elementsregtest")]
 	public void CatalogShapeHasExactOrdinalManifestNetworkPairs(string manifestId, string network)
 	{
 		ElementsReviewedNodeExpectationSource.AssertCatalogShape();
@@ -127,7 +107,6 @@ public sealed class ElementsReviewedNodeExpectationSourceTests
 	[Theory]
 	[InlineData("b88244f81daf14b2f47915d430ec41e5402de538020f1e4847e8ddbd6f238e5b", 99)]
 	[InlineData("e4e7ec03e19ce5f83fd04c586788b724d88052b65ef2480cc93bcd50324f6b20", 7)]
-	[InlineData(ControlledRegtestManifestId, 1)]
 	public void OwnerValidationRejectsDepthNotInReviewedCatalog(string manifestId, int wrongDepth)
 	{
 		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.GetByManifestId(manifestId);

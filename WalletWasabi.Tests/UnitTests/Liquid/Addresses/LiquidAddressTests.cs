@@ -80,7 +80,7 @@ public class LiquidAddressTests
 		Assert.Equal(6, InvalidPointRowIds().Count());
 		Assert.Equal(2, ExactNinetyOneRowIds().Count());
 		Assert.Equal(64, ShortProgramDefectRowIds().Count());
-		Assert.Equal(36, SupplementalInvalidAddressRowIds().Count());
+		Assert.Equal(35, SupplementalInvalidAddressRowIds().Count());
 		Assert.Equal(52, MalformedScriptRowIds().Count());
 	}
 
@@ -327,84 +327,6 @@ public class LiquidAddressTests
 
 		AssertProtectedAbsent(canary, messageDiagnostic.ToString());
 		AssertProtectedAbsent(canary, toStringDiagnostic.ToString());
-	}
-
-	[Fact]
-	public void ControlledRegtestWitnessRoundTrips()
-	{
-		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidControlledRegtest;
-		byte[] script = Convert.FromHexString("0014a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3");
-		LiquidAddress unconfidential = LiquidAddress.FromScriptPubKey(manifest, script);
-		Assert.Equal("71115e296e89e5f9161a74649f3a16fa2bb7ed9cf59d42ec203750b8a54350da", unconfidential.NetworkManifestId);
-		Assert.Equal(LiquidAddressKind.WitnessV0KeyHash, unconfidential.Kind);
-		Assert.False(unconfidential.IsConfidential);
-		Assert.StartsWith("ert1", unconfidential.GetCanonicalAddressText(), StringComparison.Ordinal);
-		Assert.Equal(unconfidential, LiquidAddress.Parse(manifest, unconfidential.GetCanonicalAddressText()));
-		AssertProtectedBytes(script, unconfidential.GetScriptPubKey());
-
-		LiquidBlindingPublicKey key = LiquidBlindingPublicKey.Create(Convert.FromHexString(PublicKeyHex));
-		LiquidAddress confidential = LiquidAddress.FromScriptPubKey(manifest, script, key);
-		Assert.True(confidential.IsConfidential);
-		Assert.StartsWith("el1", confidential.GetCanonicalAddressText(), StringComparison.Ordinal);
-		Assert.Equal(confidential, LiquidAddress.Parse(manifest, confidential.GetCanonicalAddressText()));
-		Assert.Equal(unconfidential, LiquidAddress.Parse(manifest, confidential.GetUnconfidentialAddressText()));
-
-		AssertFailure(
-			ElementsPublicNetworkManifest.LiquidMainnet,
-			unconfidential.GetCanonicalAddressText(),
-			LiquidAddressParseFailure.NetworkMismatch);
-		AssertFailure(
-			ElementsPublicNetworkManifest.LiquidTestnet,
-			confidential.GetCanonicalAddressText(),
-			LiquidAddressParseFailure.NetworkMismatch);
-		AssertFailure(
-			manifest,
-			"ex1q2pg4y56524t9wkzetfd4ch27tasxzcnrvarl93",
-			LiquidAddressParseFailure.NetworkMismatch);
-		AssertFailure(
-			manifest,
-			"tex1qjzge9yu5jktf0xyen2dee8v7n7s2rg4rttpweg",
-			LiquidAddressParseFailure.NetworkMismatch);
-	}
-
-	[Fact]
-	public void ControlledRegtestLegacyRoundTrips()
-	{
-		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidControlledRegtest;
-		byte[] script = Convert.FromHexString("76a914101112131415161718191a1b1c1d1e1f2021222388ac");
-		LiquidBlindingPublicKey key = LiquidBlindingPublicKey.Create(Convert.FromHexString(PublicKeyHex));
-		LiquidAddress unconfidential = LiquidAddress.FromScriptPubKey(manifest, script);
-		Assert.Equal(LiquidAddressKind.PayToPubKeyHash, unconfidential.Kind);
-		Assert.Equal(unconfidential, LiquidAddress.Parse(manifest, unconfidential.GetCanonicalAddressText()));
-
-		LiquidAddress confidential = LiquidAddress.FromScriptPubKey(manifest, script, key);
-		Assert.True(confidential.IsConfidential);
-		Assert.Equal(confidential, LiquidAddress.Parse(manifest, confidential.GetCanonicalAddressText()));
-		Assert.Equal(unconfidential, LiquidAddress.Parse(manifest, confidential.GetUnconfidentialAddressText()));
-
-		AssertFailure(
-			ElementsPublicNetworkManifest.LiquidMainnet,
-			unconfidential.GetCanonicalAddressText(),
-			LiquidAddressParseFailure.NetworkMismatch);
-		AssertFailure(
-			ElementsPublicNetworkManifest.LiquidTestnet,
-			confidential.GetCanonicalAddressText(),
-			LiquidAddressParseFailure.NetworkMismatch);
-		AssertFailure(manifest, "PxjLPM1vfXHj9HvzfHfcrE9RtT7oFfUdLW", LiquidAddressParseFailure.NetworkMismatch);
-		AssertFailure(manifest, "FpCrMc7Q5TZ6Nd5DZkGG3TFxe169znJfNS", LiquidAddressParseFailure.NetworkMismatch);
-	}
-
-	[Fact]
-	public void ControlledRegtestFailuresDoNotLeakAddressText()
-	{
-		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidControlledRegtest;
-		string regtestAddress = LiquidAddress.FromScriptPubKey(
-			manifest,
-			Convert.FromHexString("0014a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3")).GetCanonicalAddressText();
-		AssertFailure(
-			ElementsPublicNetworkManifest.LiquidMainnet,
-			regtestAddress,
-			LiquidAddressParseFailure.NetworkMismatch);
 	}
 
 	[Fact]
@@ -766,7 +688,6 @@ public class LiquidAddressTests
 		yield return ["N033"];
 		yield return ["N034"];
 		yield return ["N035"];
-		yield return ["N036"];
 	}
 
 	private static string SupplementalInvalidAddressCase(string rowId) => rowId switch
@@ -806,7 +727,6 @@ public class LiquidAddressTests
 		"N033" => "lq1qqfumuen7l8wthtz45p3ftn58pvrs9xlumvkuu2xet8egzkcklqtes5z32ff4g42k2av9jkjmt3w4uhmqv93xxkypn3dwc9qw5",
 		"N034" => "lq1pqfumuen7l8wthtz45p3ftn58pvrs9xlumvkuu2xet8egzkcklqtesnnnk8gppwwsutwa",
 		"N035" => "tlq1pqfumuen7l8wthtz45p3ftn58pvrs9xlumvkuu2xet8egzkcklqtesnnn7jykyxh9akna",
-		"N036" => "ert1pfees5fana7",
 		_ => throw new InvalidOperationException("An unknown negative address row ID was requested."),
 	};
 
