@@ -231,7 +231,7 @@ public sealed class LiquidWalletSendExecutionCommandService
 				rpcClient,
 				_manifest.PeggedAssetId,
 				walletDataDirectory,
-				(request, ct) => AcquireFundingSourceAsync(rpcClient, _manifest.PeggedAssetId, request, ct),
+				(request, ct) => AcquireFundingSourceAsync(rpcClient, _manifest.PeggedAssetId, session.StateOwner.State, request, ct),
 				(canonicalTransactionIdHex, ct) => ScheduleAcceptedRefreshAsync(recordAcceptedTxid, canonicalWalletId, canonicalTransactionIdHex, ct),
 				ct => ScheduleManualRefreshAsync(canonicalWalletId, ct));
 		}
@@ -275,21 +275,39 @@ public sealed class LiquidWalletSendExecutionCommandService
 		private static async Task<ElementsExpectationBoundRawTransactionBatch> AcquireFundingSourceAsync(
 			ElementsRpcClient rpcClient,
 			string expectedEffectiveFeeAsset,
+			WalletWasabi.Liquid.Wallet.LiquidWalletState walletState,
 			LiquidWalletUiSendExecutionRequest request,
 			CancellationToken cancellationToken)
 		{
+			ArgumentNullException.ThrowIfNull(walletState);
+
 			// Build the raw-transaction requests: one per selected outpoint's candidate
 			// transaction plus one per previous-transaction-id dependency row, deduplicated
-			// and bounded by the RPC surface. The funding source is acquired under the
-			// session's RPC client and effective fee asset before signing; the RPC client
-			// performs its own pre-submit fee-asset and generation observation under the
-			// node-probe lock (no fabricated expectation object).
-			var transactionIds = new SortedSet<string>(StringComparer.Ordinal);
+			// and bounded by the RPC surface. A confirmed candidate carries its recorded
+			// confirmation block hash so the landed funding-batch composition's exact
+			// confirmation-binding check (request block hash == confirmation block hash) is
+			// satisfied; an unconfirmed candidate and every previous-transaction dependency
+			// keep a null block hash. The funding source is acquired under the session's RPC
+			// client and effective fee asset before signing; the RPC client performs its own
+			// pre-submit fee-asset and generation observation under the node-probe lock (no
+			// fabricated expectation object).
+			var candidateBlockHashes = new Dictionary<string, string?>(StringComparer.Ordinal);
 			foreach (string outPointHex in request.SelectedOutPointHexes)
 			{
 				byte[] consensusBytes = Convert.FromHexString(outPointHex);
 				LiquidOutPoint outPoint = LiquidOutPoint.ParseSpendableConsensusBytes(consensusBytes);
-				transactionIds.Add(outPoint.TransactionId.CanonicalRpcHex);
+				string candidateId = outPoint.TransactionId.CanonicalRpcHex;
+				string? blockHash =
+					walletState.TryGetConfirmation(outPoint.TransactionId, out LiquidConfirmation? confirmation)
+						? confirmation?.CanonicalBlockHash
+						: null;
+				candidateBlockHashes[candidateId] = blockHash;
+			}
+
+			var transactionIds = new SortedSet<string>(StringComparer.Ordinal);
+			foreach (string candidateId in candidateBlockHashes.Keys)
+			{
+				transactionIds.Add(candidateId);
 			}
 			foreach (IReadOnlyList<string>? row in request.PreviousTransactionIdsBySelectedInput)
 			{
@@ -310,7 +328,12 @@ public sealed class LiquidWalletSendExecutionCommandService
 			var requests = new List<ElementsRawTransactionRequest>(transactionIds.Count);
 			foreach (string transactionId in transactionIds)
 			{
-				requests.Add(new ElementsRawTransactionRequest(transactionId, BlockHash: null));
+				// Only a selected candidate carries a confirmation block hash; dependency
+				// transactions always fetch with a null block hash.
+				string? blockHash = candidateBlockHashes.TryGetValue(transactionId, out string? candidate)
+					? candidate
+					: null;
+				requests.Add(new ElementsRawTransactionRequest(transactionId, blockHash));
 			}
 
 			return await rpcClient.GetObservedRawTransactionsAsync(

@@ -124,16 +124,21 @@ public class ElementsWalletRefreshObservationTests
 	[Fact]
 	public async Task PreservesCompleteInputsDeduplicatesDependenciesAndFetchesEachRawOnceAsync()
 	{
+		// A mixed coinbase + non-coinbase input row is now terminal/fail-closed (see
+		// CONTROLLED-REGTEST-REFRESH-COINBASE-FILTER-001), so this input-ordering and
+		// dependency-dedupe coverage uses a third distinct previous id in place of the former
+		// coinbase input; the repeated previousA still proves first-occurrence dedupe.
 		string candidateId = Id(0xC0);
 		string previousA = Id(0xC1);
 		string previousB = Id(0xC2);
+		string previousC = Id(0xC3);
 		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
 		{
 			"getrawmempool" => Envelope(invocation.Id, "[]"),
 			"getblock" => Envelope(invocation.Id, BlockResult()),
 			"getrawtransaction" when IsVerbose(invocation) => Envelope(
 				invocation.Id,
-				$$"""{"txid":"{{candidateId}}","vin":[{"txid":"{{previousA}}"},{"txid":"{{previousA}}"},{"coinbase":"00"},{"txid":"{{previousB}}"}]}"""),
+				$$"""{"txid":"{{candidateId}}","vin":[{"txid":"{{previousA}}"},{"txid":"{{previousA}}"},{"txid":"{{previousC}}"},{"txid":"{{previousB}}"}]}"""),
 			_ => RefreshCapBaseResult(invocation),
 		});
 
@@ -147,14 +152,61 @@ public class ElementsWalletRefreshObservationTests
 		ElementsWalletRefreshCandidate candidate = Assert.Single(observation.Candidates);
 		Assert.Equal(4, candidate.Inputs.Count);
 		Assert.Equal(
-			new string?[] { previousA, previousA, null, previousB },
+			new string?[] { previousA, previousA, previousC, previousB },
 			candidate.Inputs.Select(input => input.PreviousTransactionId).ToArray());
-		Assert.Equal([false, false, true, false], candidate.Inputs.Select(input => input.IsCoinbase).ToArray());
-		Assert.Equal([previousA, previousB], candidate.PreviousTransactionIds);
-		Assert.Equal([candidateId, previousA, previousB], observation.RawTransactions.Select(raw => raw.TransactionId).ToArray());
+		Assert.Equal([false, false, false, false], candidate.Inputs.Select(input => input.IsCoinbase).ToArray());
+		Assert.Equal([previousA, previousC, previousB], candidate.PreviousTransactionIds);
+		Assert.Equal([candidateId, previousA, previousB, previousC], observation.RawTransactions.Select(raw => raw.TransactionId).ToArray());
 		Assert.Equal(1, RawFetchCount(harness, candidateId));
 		Assert.Equal(1, RawFetchCount(harness, previousA));
 		Assert.Equal(1, RawFetchCount(harness, previousB));
+		Assert.Equal(1, RawFetchCount(harness, previousC));
+	}
+
+	[Fact]
+	public async Task SupportedCandidateDependingOnSupportedCandidateFetchesEachRawExactlyOnceAsync()
+	{
+		// Supported candidate B depends on supported candidate A: A is a dependency that is itself a
+		// supported candidate, so it must be raw-fetched exactly once (as the candidate, in supported
+		// order) and never again in the dependency loop. The observation must contain each raw ID once
+		// — a duplicate would fail the native staging rawById.Add.
+		string candidateA = Id(0xD5);
+		string candidateB = Id(0xD6);
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getrawmempool" => Envelope(invocation.Id, "[]"),
+			"getblock" => Envelope(invocation.Id, BlockResult()),
+			"getrawtransaction" when IsVerbose(invocation) => Envelope(
+				invocation.Id,
+				ExtractRequestedTransactionId(invocation.Parameters) switch
+				{
+					var requested when requested == candidateB =>
+						$$"""{"txid":"{{candidateB}}","vin":[{"txid":"{{candidateA}}"}]}""",
+					var requested =>
+						$$"""{"txid":"{{requested}}","vin":[]}""",
+				}),
+			_ => RefreshCapBaseResult(invocation),
+		});
+
+		using ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(),
+			PeggedAsset,
+			[candidateA, candidateB],
+			null,
+			CancellationToken.None);
+
+		Assert.Equal([candidateA, candidateB], observation.Candidates.Select(candidate => candidate.TransactionId).ToArray());
+		ElementsWalletRefreshCandidate b = observation.Candidates[1];
+		Assert.Equal([candidateA], b.PreviousTransactionIds);
+		Assert.Equal(
+			new string?[] { candidateA },
+			b.Inputs.Select(input => input.PreviousTransactionId).ToArray());
+		Assert.Equal(
+			[candidateA, candidateB],
+			observation.RawTransactions.Select(raw => raw.TransactionId).ToArray());
+		Assert.Equal(2, observation.RawTransactions.Count);
+		Assert.Equal(1, RawFetchCount(harness, candidateA));
+		Assert.Equal(1, RawFetchCount(harness, candidateB));
 	}
 
 	[Fact]
@@ -286,6 +338,127 @@ public class ElementsWalletRefreshObservationTests
 			PeggedAsset, [candidateId], null, CancellationToken.None));
 		Assert.DoesNotContain(harness.Handler.Parameters, IsRawFetch);
 	}
+
+	[Fact]
+	public async Task SkippedTipBlockCoinbaseRefillsSupportedCapInSourceOrderAsync()
+	{
+		// CONTROLLED-REGTEST-REFRESH-COINBASE-FILTER-001: 63 accepted supported IDs leave one open
+		// supported slot. The tip block leads with a canonical generation row (exactly one coinbase
+		// input, zero previous IDs) that must be skipped entirely — absent from Candidates, never
+		// raw-fetched — so the following supported spend refills the 64th slot. Every supported row
+		// shares one valid dependency, which must be fetched exactly once.
+		string[] acceptedIds = Enumerable.Range(0x01, 63).Select(Id).ToArray();
+		string coinbaseId = Id(0x80);
+		string spendId = Id(0x81);
+		string sharedDependencyId = Id(0xE0);
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getrawmempool" => Envelope(invocation.Id, "[]"),
+			"getblock" when invocation.Parameters.Contains(BestBlockHash, System.StringComparison.Ordinal) => Envelope(
+				invocation.Id,
+				BlockResult(coinbaseId, spendId)),
+			"getblock" => Envelope(invocation.Id, BlockResult()),
+			"getrawtransaction" when IsVerbose(invocation) => Envelope(
+				invocation.Id,
+				ExtractRequestedTransactionId(invocation.Parameters) switch
+				{
+					var requested when requested == coinbaseId =>
+						$$"""{"txid":"{{coinbaseId}}","vin":[{"coinbase":"00"}]}""",
+					var requested =>
+						$$"""{"txid":"{{requested}}","vin":[{"txid":"{{sharedDependencyId}}"}]}""",
+				}),
+			_ => RefreshCapBaseResult(invocation),
+		});
+
+		using ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(),
+			PeggedAsset,
+			acceptedIds,
+			null,
+			CancellationToken.None);
+
+		Assert.Equal(64, observation.Candidates.Count);
+		Assert.Equal(
+			acceptedIds.Concat([spendId]).ToArray(),
+			observation.Candidates.Select(candidate => candidate.TransactionId).ToArray());
+		Assert.DoesNotContain(
+			observation.Candidates.Select(candidate => candidate.TransactionId),
+			id => StringComparer.Ordinal.Equals(id, coinbaseId));
+		Assert.Equal(BestBlockHash, observation.Candidates[63].BlockHash);
+		Assert.Equal(42u, observation.Candidates[63].BlockHeight);
+		Assert.Equal(65, observation.RawTransactions.Count);
+		Assert.Equal(0, RawFetchCount(harness, coinbaseId));
+		Assert.Equal(1, RawFetchCount(harness, spendId));
+		Assert.Equal(1, RawFetchCount(harness, sharedDependencyId));
+	}
+
+	[Theory]
+	[InlineData("accepted", new[] { "candidate" }, null)]
+	[InlineData("supplied", new string[] { }, "candidate")]
+	[InlineData("mempool", new string[] { }, null)]
+	public async Task AcceptedSuppliedOrMempoolCoinbaseFailsBeforeRawFetchAsync(
+		string origin,
+		string[] acceptedMarkers,
+		string? suppliedMarker)
+	{
+		string coinbaseId = Id(0xC9);
+		string[] acceptedIds = acceptedMarkers.Select(_ => coinbaseId).ToArray();
+		string? suppliedId = suppliedMarker is null ? null : coinbaseId;
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getrawmempool" => Envelope(
+				invocation.Id,
+				origin == "mempool" ? $"[{JsonSerializer.Serialize(coinbaseId)}]" : "[]"),
+			"getblock" => Envelope(invocation.Id, BlockResult()),
+			"getrawtransaction" when IsVerbose(invocation) => Envelope(
+				invocation.Id,
+				$$"""{"txid":"{{coinbaseId}}","vin":[{"coinbase":"00"}]}"""),
+			_ => RefreshCapBaseResult(invocation),
+		});
+
+		await Assert.ThrowsAsync<ElementsRpcException>(() => harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(),
+			PeggedAsset,
+			acceptedIds,
+			suppliedId,
+			CancellationToken.None));
+
+		Assert.DoesNotContain(harness.Handler.Parameters, IsRawFetch);
+	}
+
+	[Theory]
+	[InlineData("mixed coinbase and spend inputs")]
+	[InlineData("multiple coinbase inputs")]
+	public async Task BlockDiscoveredNonCanonicalCoinbaseShapeFailsBeforeRawFetchAsync(string malformedShape)
+	{
+		string candidateId = Id(0xCA);
+		string otherId = Id(0xCB);
+		string vin = malformedShape == "mixed coinbase and spend inputs"
+			? $$"""[{"coinbase":"00"},{"txid":"{{otherId}}"}]"""
+			: """[{"coinbase":"00"},{"coinbase":"01"}]""";
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getrawmempool" => Envelope(invocation.Id, "[]"),
+			"getblock" when invocation.Parameters.Contains(BestBlockHash, System.StringComparison.Ordinal) => Envelope(
+				invocation.Id,
+				BlockResult(candidateId)),
+			"getblock" => Envelope(invocation.Id, BlockResult()),
+			"getrawtransaction" when IsVerbose(invocation) => Envelope(
+				invocation.Id,
+				$$"""{"txid":"{{candidateId}}","vin":{{vin}}}"""),
+			_ => RefreshCapBaseResult(invocation),
+		});
+
+		await Assert.ThrowsAsync<ElementsRpcException>(() => harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(),
+			PeggedAsset,
+			[],
+			null,
+			CancellationToken.None));
+
+		Assert.DoesNotContain(harness.Handler.Parameters, IsRawFetch);
+	}
+
 	[Fact]
 	public async Task ExactGenerationDriftFailsAtMempoolAndFinalStatusWithoutRetryAsync()
 	{

@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Runtime.ExceptionServices;
@@ -1578,18 +1579,28 @@ public sealed class ElementsRpcClient : IDisposable
 	}
 
 	/// <summary>
-	/// ORDINARY-WALLET-REFRESH-SUCCESSOR-001 (V3 section 6): one aggregate refresh acquisition that
-	/// holds <c>_probeLock</c> from the first through the final exact generation observation with no
-	/// retries. Accepted IDs are newest-first with the supplied accepted-send ID forced first and
-	/// ordinal dedupe; mempool IDs are ordinal-sorted; at most six recent block heights are processed
-	/// newest-first preserving node transaction order; the selected candidate cap is 64. Every selected
-	/// candidate gets one typed verbose lookup (canonical txid, optional block hash, every input row)
-	/// with coinbase/previous-txid exclusivity and first-occurrence dependency dedupe. The global
-	/// candidate-plus-dependency set is capped at 100 before any raw fetch, and the landed 4 MiB/64 MiB
-	/// raw-byte bounds apply. Any missing, malformed, or conflicting metadata/raw bytes, and any
-	/// generation change after status, fee, mempool, every block hash, every block, every verbose
-	/// lookup, every raw fetch, and the final status, fails the whole acquisition. No managed
-	/// transaction parser, no consensus claim, no wallet mutation.
+	/// ORDINARY-WALLET-REFRESH-SUCCESSOR-001 (V3 section 6) with the
+	/// CONTROLLED-REGTEST-REFRESH-COINBASE-FILTER-001 managed selection repair: one aggregate refresh
+	/// acquisition that holds <c>_probeLock</c> from the first through the final exact generation
+	/// observation with no retries. Accepted IDs are newest-first with the supplied accepted-send ID
+	/// forced first and ordinal dedupe; mempool IDs are ordinal-sorted; recent blocks are scanned
+	/// newest-first preserving node transaction order. When accepted plus mempool already fill the 64
+	/// supported cap no block is scanned; otherwise at most six recent block heights contribute at
+	/// most 64 + <c>MaxRefreshRecentBlockCount</c> inspection IDs, a bounded over-read so a skipped
+	/// canonical block-only coinbase (exactly one input, that input a coinbase, zero previous IDs — a
+	/// null prevout the native previous-set stage can never reference) never steals supported
+	/// capacity. Inspection IDs are verbose-classified in source order until 64 supported candidates
+	/// are collected; only the canonical block-only coinbase shape is skipped, and any accepted,
+	/// supplied, or mempool coinbase, and any mixed or multi-input coinbase shape, is terminal before
+	/// any raw fetch. Dependency accounting, the global candidate-plus-dependency cap of 100, raw
+	/// fetches, the returned candidates, block metadata, and confirmations cover only the final
+	/// supported candidates; skipped rows are never raw-fetched or staged native. A dependency that
+	/// is itself a supported candidate is raw-fetched exactly once as the candidate and never again
+	/// in the dependency loop, so every returned raw transaction ID is unique. Any missing,
+	/// malformed, or conflicting metadata/raw bytes, and any generation change after status, fee,
+	/// mempool, every block hash, every block, every verbose lookup, every raw fetch, and the final
+	/// status, fails the whole acquisition. No managed transaction parser, no consensus claim, no
+	/// wallet mutation.
 	/// </summary>
 	internal async Task<ElementsWalletRefreshObservation> GetWalletRefreshObservationAsync(
 		ElementsNodeExpectation expectation,
@@ -1658,9 +1669,13 @@ public sealed class ElementsRpcClient : IDisposable
 
 		// Deterministic candidate ordering: accepted newest-first with the supplied accepted-send ID
 		// forced first (ordinal dedupe), then ordinal-sorted mempool, then recent blocks newest-first
-		// preserving node transaction order. The aggregate selected cap is 64.
+		// preserving node transaction order. The final supported candidate cap is 64; because a skipped
+		// canonical block-only coinbase must not consume supported capacity, recent-block discovery is a
+		// bounded inspection ledger of at most 64 + MaxRefreshRecentBlockCount IDs (at most one
+		// canonical coinbase can occupy each scanned block).
 		var selectedIds = new List<string>(MaxRefreshSelectedCandidates);
 		var selectedSet = new HashSet<string>(StringComparer.Ordinal);
+		var blockOnlyOriginIds = new HashSet<string>(StringComparer.Ordinal);
 		var blockHashByCandidate = new Dictionary<string, string>(StringComparer.Ordinal);
 		var blockHeightByCandidate = new Dictionary<string, uint>(StringComparer.Ordinal);
 
@@ -1693,35 +1708,50 @@ public sealed class ElementsRpcClient : IDisposable
 			}
 		}
 
-		int lowestHeight = Math.Max(0, nodeStatus.Blocks - (MaxRefreshRecentBlockCount - 1));
-		for (int height = nodeStatus.Blocks; height >= lowestHeight && selectedIds.Count < MaxRefreshSelectedCandidates; height--)
+		// Blocks are scanned only when accepted plus mempool left supported capacity open. An ID first
+		// discovered here is a block-only origin; an ID already accepted or in the mempool keeps its
+		// earlier origin even when it also appears in a block.
+		if (selectedIds.Count < MaxRefreshSelectedCandidates)
 		{
-			string blockHash = await CallHex32Async("getblockhash", [height], cancellationToken).ConfigureAwait(false);
-			await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
-
-			JsonElement blockTransactions = await CallAsync("getblock", [blockHash, 1], cancellationToken).ConfigureAwait(false);
-			await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
-			var blockIds = ParseTypedBlockTransactionIds(blockTransactions, "getblock");
-			foreach (string id in blockIds)
+			int inspectionCapacity = MaxRefreshSelectedCandidates + MaxRefreshRecentBlockCount;
+			int lowestHeight = Math.Max(0, nodeStatus.Blocks - (MaxRefreshRecentBlockCount - 1));
+			for (int height = nodeStatus.Blocks; height >= lowestHeight && selectedIds.Count < inspectionCapacity; height--)
 			{
-				blockHashByCandidate.TryAdd(id, blockHash);
-				blockHeightByCandidate.TryAdd(id, (uint)height);
-				if (selectedIds.Count >= MaxRefreshSelectedCandidates)
+				string blockHash = await CallHex32Async("getblockhash", [height], cancellationToken).ConfigureAwait(false);
+				await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
+
+				JsonElement blockTransactions = await CallAsync("getblock", [blockHash, 1], cancellationToken).ConfigureAwait(false);
+				await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
+				var blockIds = ParseTypedBlockTransactionIds(blockTransactions, "getblock");
+				foreach (string id in blockIds)
 				{
-					break;
-				}
-				if (selectedSet.Add(id))
-				{
-					selectedIds.Add(id);
+					blockHashByCandidate.TryAdd(id, blockHash);
+					blockHeightByCandidate.TryAdd(id, (uint)height);
+					if (selectedIds.Count >= inspectionCapacity)
+					{
+						break;
+					}
+					if (selectedSet.Add(id))
+					{
+						blockOnlyOriginIds.Add(id);
+						selectedIds.Add(id);
+					}
 				}
 			}
 		}
 
-		// One typed verbose lookup per selected candidate with coinbase/previous-txid exclusivity and
-		// first-occurrence dependency dedupe. Conflicting block metadata is terminal.
-		var candidates = new ElementsWalletRefreshCandidate[selectedIds.Count];
+		// One typed verbose lookup per inspection ID in source order with coinbase/previous-txid
+		// exclusivity, until 64 supported candidates are collected. Conflicting block metadata is
+		// terminal. The only skippable coinbase shape is canonical and block-only: the ID was first
+		// added by recent-block scanning, has exactly one input, that input is a coinbase, and it has
+		// zero previous IDs — a null prevout the native previous-set stage can never reference. Such a
+		// row is skipped entirely, before any raw fetch or dependency accounting. Any accepted,
+		// supplied, or mempool coinbase, and any mixed coinbase-plus-spend or multiple-coinbase row,
+		// is terminal/fail-closed, never silently filtered.
+		var supportedCandidates = new List<ElementsWalletRefreshCandidate>(MaxRefreshSelectedCandidates);
+		var supportedIds = new List<string>(MaxRefreshSelectedCandidates);
 		var distinctDependencies = new HashSet<string>(StringComparer.Ordinal);
-		for (int index = 0; index < selectedIds.Count; index++)
+		for (int index = 0; index < selectedIds.Count && supportedIds.Count < MaxRefreshSelectedCandidates; index++)
 		{
 			string candidateId = selectedIds[index];
 			JsonElement verbose = await CallAsync(
@@ -1730,17 +1760,57 @@ public sealed class ElementsRpcClient : IDisposable
 				cancellationToken).ConfigureAwait(false);
 			await EnsureRefreshGenerationAsync(generation, acquisition, cancellationToken).ConfigureAwait(false);
 
-			candidates[index] = ParseVerboseCandidate(
+			var candidateDependencies = new HashSet<string>(StringComparer.Ordinal);
+			ElementsWalletRefreshCandidate candidate = ParseVerboseCandidate(
 				verbose,
 				candidateId,
 				blockHashByCandidate,
 				blockHeightByCandidate,
-				distinctDependencies);
+				candidateDependencies);
+			int coinbaseInputCount = 0;
+			foreach (ElementsWalletRefreshInput input in candidate.Inputs)
+			{
+				if (input.IsCoinbase)
+				{
+					coinbaseInputCount++;
+				}
+			}
+			if (coinbaseInputCount > 0)
+			{
+				if (blockOnlyOriginIds.Contains(candidateId)
+					&& candidate.Inputs.Count == 1
+					&& candidate.PreviousTransactionIds.Count == 0)
+				{
+					continue;
+				}
+
+				// Any other coinbase-carrying row — an accepted, supplied, or mempool origin, or a
+				// mixed or multi-input coinbase shape — is terminal/fail-closed, never filtered.
+				throw InvalidResult(
+					acquisition,
+					"a non-skippable candidate carries a coinbase input");
+			}
+			distinctDependencies.UnionWith(candidateDependencies);
+			supportedCandidates.Add(candidate);
+			supportedIds.Add(candidateId);
 		}
 
-		// Global candidate+dependency cap before any raw fetch. Exceeding it is terminal, never a
-		// reason to silently omit a dependency.
-		int globalRawCount = selectedSet.Count + distinctDependencies.Count;
+		// Global candidate+dependency cap before any raw fetch, over the final supported candidates
+		// only. A supported candidate can itself be a dependency of another supported candidate; such an
+		// ID is raw-fetched exactly once as a candidate, so dependencies already in the supported set are
+		// excluded from both the count and the dependency fetch loop. Exceeding the cap is terminal,
+		// never a reason to silently omit a dependency. Skipped coinbase rows contribute neither a
+		// candidate nor a dependency.
+		var supportedSet = new HashSet<string>(supportedIds, StringComparer.Ordinal);
+		int dependencyRawCount = 0;
+		foreach (string dependencyId in distinctDependencies)
+		{
+			if (!supportedSet.Contains(dependencyId))
+			{
+				dependencyRawCount++;
+			}
+		}
+		int globalRawCount = supportedIds.Count + dependencyRawCount;
 		if (globalRawCount > MaxRawTransactionCount)
 		{
 			throw InvalidResult(
@@ -1748,13 +1818,14 @@ public sealed class ElementsRpcClient : IDisposable
 				"the candidate-plus-dependency transaction limit was exceeded");
 		}
 
-		// Complete raw fetch of every selected candidate and every required distinct dependency under
-		// the landed per-transaction 4 MiB and aggregate 64 MiB bounds.
+		// Complete raw fetch of every supported candidate and every required distinct dependency under
+		// the landed per-transaction 4 MiB and aggregate 64 MiB bounds. Skipped coinbases are never
+		// raw-fetched or passed native.
 		var rawTransactions = new List<ElementsWalletRefreshRawTransaction>(globalRawCount);
 		long aggregateBytes = 0;
 		try
 		{
-			foreach (string id in selectedIds)
+			foreach (string id in supportedIds)
 			{
 				blockHashByCandidate.TryGetValue(id, out string? blockHash);
 				byte[] bytes = await FetchRefreshRawTransactionAsync(
@@ -1772,6 +1843,12 @@ public sealed class ElementsRpcClient : IDisposable
 			}
 			foreach (string id in distinctDependencies.OrderBy(static d => d, StringComparer.Ordinal))
 			{
+				// A dependency that is itself a supported candidate was already raw-fetched in the
+				// candidate loop above; every global raw ID is fetched exactly once.
+				if (supportedSet.Contains(id))
+				{
+					continue;
+				}
 				byte[] bytes = await FetchRefreshRawTransactionAsync(
 					id,
 					null,
@@ -1812,7 +1889,7 @@ public sealed class ElementsRpcClient : IDisposable
 				expectedEffectiveFeeAsset.CanonicalRpcHex,
 				nodeStatus,
 				generation),
-			candidates,
+			[.. supportedCandidates],
 			[.. rawTransactions]);
 	}
 
