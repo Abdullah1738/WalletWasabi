@@ -192,16 +192,54 @@ internal sealed class LiquidWalletRefreshCommandService
 			LiquidWalletObservationBatch nativeBatch = _dependencies.ObserveNative(
 				new NativeObservationRequest(sourceEpoch, networkClass, lastIndex, descriptor, slip77, structural));
 
+			// Recent-block discovery on public networks stages every non-coinbase
+			// transaction; only the native observation can prove wallet relevance.
+			// A Confirm row is emitted only for a candidate whose transaction the
+			// native batch actually observed as relevant — at least one owned output,
+			// or at least one input that spends a wallet unspent outpoint (mirroring
+			// the sync session's skip rule: zero owned outputs AND zero wallet spends
+			// means not this wallet's transaction). A candidate that is merely
+			// confirmed (has a BlockHash) but unrelated to the wallet produces an
+			// empty delta, is skipped by the sync session's commit, and must never
+			// reach LiquidWalletState.Confirm, which rejects non-applied
+			// transactions. This preserves confirmation of genuinely-owned
+			// transactions while failing closed on unrelated testnet traffic.
+			var relevantTransactionIds = new HashSet<LiquidTransactionId>();
+			foreach (LiquidWalletTransactionObservation transaction in nativeBatch.GetTransactions())
+			{
+				bool spendsWalletOutpoint = false;
+				if (transaction.OwnedOutputCount == 0)
+				{
+					foreach (LiquidOutPoint input in transaction.GetInputs())
+					{
+						if (captured.State.ContainsUnspent(input))
+						{
+							spendsWalletOutpoint = true;
+							break;
+						}
+					}
+				}
+				if (transaction.OwnedOutputCount > 0 || spendsWalletOutpoint)
+				{
+					relevantTransactionIds.Add(
+						LiquidTransactionId.ParseConsensusBytes(transaction.GetTransactionIdConsensusBytes()));
+				}
+			}
 			var confirmations = new List<LiquidWalletSyncConfirmation>();
 			foreach (LiquidWalletSyncBatchPlanner.FetchIntent intent in derivation.Intents)
 			{
 				ElementsWalletRefreshCandidate candidate = candidateById[intent.TransactionId];
 				if (candidate.BlockHash is not null && candidate.BlockHeight is uint height)
 				{
-					confirmations.Add(LiquidWalletSyncConfirmation.Create(
-						LiquidWalletSyncConfirmationKind.Confirm,
-						LiquidTransactionId.ParseRpcHex(candidate.TransactionId),
-						LiquidConfirmation.Create(candidate.BlockHash, height)));
+					LiquidTransactionId candidateTransactionId =
+						LiquidTransactionId.ParseRpcHex(candidate.TransactionId);
+					if (relevantTransactionIds.Contains(candidateTransactionId))
+					{
+						confirmations.Add(LiquidWalletSyncConfirmation.Create(
+							LiquidWalletSyncConfirmationKind.Confirm,
+							candidateTransactionId,
+							LiquidConfirmation.Create(candidate.BlockHash, height)));
+					}
 				}
 			}
 			LiquidWalletSyncResult committed = LiquidWalletSyncSession.Open(

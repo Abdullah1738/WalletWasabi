@@ -353,6 +353,135 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 		Assert.Same(session.PublicHandoff, session.PublicHandoff);
 	}
 
+	[Fact]
+	public async Task ConfirmedUnrelatedCandidateProducesNoConfirmRowAndCommitDoesNotThrowAsync()
+	{
+		using var handler = new RejectingHandler();
+		LiquidAuthenticatedWalletSession session = CreateSession(handler);
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session);
+		// A candidate that is confirmed (has block hash and height) but that the
+		// native observation reports as having zero owned outputs and spending no
+		// wallet outpoint is unrelated to the wallet. The refresh must NOT emit a
+		// Confirm row for it; the sync session skips the empty delta, and the
+		// commit must not throw "Only an applied Liquid wallet transaction can be
+		// confirmed". This is the regression test for the unconditional
+		// Confirm-row design flaw.
+		const string unrelatedId = "3333333333333333333333333333333333333333333333333333333333333333";
+		ElementsWalletRefreshObservation rpcObservation = ConfirmedCandidateObservation(
+			session.StateOwner.NodeExpectation,
+			session.Manifest,
+			unrelatedId);
+		// Native batch: one transaction observation with zero owned outputs and
+		// only non-wallet inputs (a '5' previous txid outpoint the wallet state
+		// does not contain), so it is irrelevant.
+		LiquidWalletObservationBatch irrelevantBatch = IrrelevantNativeBatch(unrelatedId);
+		var dependencies = LiquidWalletRefreshCommandService.Dependencies.CreateForTesting(
+			acquireObservationAsync: (capturedSession, captured, suppliedId, cancellationToken) =>
+				Task.FromResult(rpcObservation),
+			observeNative: _ => irrelevantBatch,
+			save: request => LiquidWalletLoadSaveResult.CreateSaved(
+				request.State.Revision,
+				request.NextGeneration,
+				request.ExternalIndexHighWater),
+			publish: (_, _, _) => true,
+			stageObserver: _ => { });
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> command =
+			LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
+
+		LiquidWalletUiRefreshResult result = await command(
+			new LiquidWalletUiRefreshRequest(WalletName, LiquidWalletUiRefreshTrigger.Manual, null),
+			CancellationToken.None);
+
+		Assert.Equal(LiquidWalletUiRefreshStatus.Committed, result.Status);
+		Assert.Equal(1, result.CandidateCount);
+		// Zero applied: the unrelated transaction's empty delta was skipped.
+		Assert.Equal(0, result.AppliedTransactionCount);
+		// No Confirm row was emitted, so the commit revision did not advance
+		// (base revision 0 is preserved through the save fence).
+		Assert.Equal(0UL, result.ResultRevision);
+	}
+
+	[Fact]
+	public async Task ConfirmedOwnedCandidateReceivesConfirmRowAsync()
+	{
+		using var handler = new RejectingHandler();
+		LiquidAuthenticatedWalletSession session = CreateSession(handler);
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session);
+		// A confirmed candidate that pays the wallet (>= 1 owned output) is
+		// wallet-relevant and MUST receive its Confirm row. This guards the fix
+		// against weakening confirmation of genuinely-owned transactions.
+		const string ownedId = "4444444444444444444444444444444444444444444444444444444444444444";
+		ElementsWalletRefreshObservation rpcObservation = ConfirmedCandidateObservation(
+			session.StateOwner.NodeExpectation,
+			session.Manifest,
+			ownedId);
+		LiquidWalletObservationBatch ownedBatch = NativeBatch(ownedId, session.Manifest);
+		var dependencies = LiquidWalletRefreshCommandService.Dependencies.CreateForTesting(
+			acquireObservationAsync: (capturedSession, captured, suppliedId, cancellationToken) =>
+				Task.FromResult(rpcObservation),
+			observeNative: _ => ownedBatch,
+			save: request => LiquidWalletLoadSaveResult.CreateSaved(
+				request.State.Revision,
+				request.NextGeneration,
+				request.ExternalIndexHighWater),
+			publish: (_, _, _) => true,
+			stageObserver: _ => { });
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> command =
+			LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
+
+		LiquidWalletUiRefreshResult result = await command(
+			new LiquidWalletUiRefreshRequest(WalletName, LiquidWalletUiRefreshTrigger.Manual, null),
+			CancellationToken.None);
+
+		Assert.Equal(LiquidWalletUiRefreshStatus.Committed, result.Status);
+		Assert.Equal(1, result.CandidateCount);
+		Assert.Equal(1, result.AppliedTransactionCount);
+		// One Apply (revision 0 -> 1) plus one Confirm row (revision 1 -> 2):
+		// the owned transaction's confirmation advanced the revision past the
+		// apply, proving the Confirm row was emitted and committed.
+		Assert.Equal(2UL, result.ResultRevision);
+	}
+
+	private static ElementsWalletRefreshObservation ConfirmedCandidateObservation(
+		ElementsNodeExpectation expectation,
+		ElementsPublicNetworkManifest manifest,
+		string candidateId)
+	{
+		ElementsWalletRefreshObservation empty = EmptyObservation(expectation, manifest);
+		// The observed node tip is blocks = 1 with bestBlockHash of '2's; bind the
+		// confirmation to that exact tip so EnsureBoundToObservedTip passes.
+		const string tipBlockHash = "2222222222222222222222222222222222222222222222222222222222222222";
+		var candidate = new ElementsWalletRefreshCandidate(
+			candidateId,
+			blockHash: tipBlockHash,
+			blockHeight: 1U,
+			[new ElementsWalletRefreshInput(new string('5', 64))],
+			[new string('5', 64)]);
+		var result = new ElementsWalletRefreshObservation(
+			empty.NodeObservation,
+			[candidate],
+			[
+				new ElementsWalletRefreshRawTransaction(candidateId, [1, 2, 3]),
+				new ElementsWalletRefreshRawTransaction(new string('5', 64), [4, 5, 6]),
+			]);
+		empty.Dispose();
+		return result;
+	}
+
+	private static LiquidWalletObservationBatch IrrelevantNativeBatch(string transactionId)
+	{
+		LiquidTransactionId nativeTransactionId = LiquidTransactionId.ParseRpcHex(transactionId);
+		byte[] witnessBinding = Enumerable.Repeat((byte)7, 32).ToArray();
+		// Zero owned outputs and only a non-wallet input outpoint (previous txid
+		// '5'...5 at index 0) that the empty wallet state does not contain.
+		return LiquidWalletObservationBatch.Create(
+			[LiquidWalletTransactionObservation.Create(
+				nativeTransactionId.ToConsensusBytes(),
+				witnessBinding,
+				[LiquidOutPoint.CreateSpendable(LiquidTransactionId.ParseRpcHex(new string('5', 64)), 0)],
+				[])]);
+	}
+
 	private static LiquidWalletRefreshCommandService.Dependencies Dependencies(
 		Func<LiquidAuthenticatedWalletSession, LiquidWalletRefreshStateCapture, string?, CancellationToken, Task<ElementsWalletRefreshObservation>> acquireObservationAsync,
 		Func<LiquidWalletRefreshCommandService.NativeObservationRequest, LiquidWalletObservationBatch>? observeNative = null,
