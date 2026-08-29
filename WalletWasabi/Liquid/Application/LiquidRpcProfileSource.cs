@@ -164,10 +164,21 @@ internal sealed class LiquidRpcCookieCredentialSource
 				read += count;
 			}
 			string value = new UTF8Encoding(false, true).GetString(bytes, 0, read);
-			int newline = value.IndexOf('\n');
-			if (newline < 0 || newline != value.Length - 1 || value[..newline].IndexOf('\n') >= 0)
+			// Accept exactly one non-empty credential line with no terminator or exactly one
+			// trailing LF or CRLF terminator (Elements writes the cookie with no trailing
+			// newline). Any embedded or additional line terminator, extra blank line, or NUL
+			// remains rejected.
+			if (value.Length == 0 || value.IndexOf('\0') >= 0 || value.IndexOfAnyExcept('\n', '\r') < 0)
 				throw new SecurityException("The RPC cookie must contain exactly one line.");
-			string line = value[..newline];
+			string line = value;
+			if (line.EndsWith('\n'))
+			{
+				line = line[..^1];
+				if (line.EndsWith('\r'))
+					line = line[..^1];
+			}
+			if (line.Length == 0 || line.IndexOfAny('\n', '\r') >= 0)
+				throw new SecurityException("The RPC cookie must contain exactly one line.");
 			int separator = line.IndexOf(':');
 			if (separator <= 0 || separator == line.Length - 1 || line.IndexOf(':', separator + 1) >= 0)
 				throw new SecurityException("The RPC cookie format is invalid.");

@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
+using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
@@ -189,11 +190,12 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 			replayKey = LiquidKeyDomain.DeriveHkdf(replayChildMaterial, salt, ReplayKeyInfo);
 			context = LiquidKeyDomain.DeriveHkdf(replayChildMaterial, salt, ContextKeyInfo);
 
-			LiquidWalletExternalIndexAllocation allocation = LiquidWalletExternalIndexAllocator.Allocate(
+			LiquidWalletExternalIndexAllocation allocation = LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
 				walletDataDirectory,
 				identity.CanonicalWalletId,
 				replayKey,
-				context);
+				context,
+				LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId));
 			NBitcoin.Network descriptorNetwork = ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidMainnet)
 				? NBitcoin.Network.Main
 				: NBitcoin.Network.TestNet;

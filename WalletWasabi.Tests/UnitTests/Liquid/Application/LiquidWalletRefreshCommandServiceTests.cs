@@ -13,6 +13,7 @@ using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Liquid.Transactions;
 using WalletWasabi.Liquid.Wallet;
 using WalletWasabi.Liquid.Wallet.Ui;
+using WalletWasabi.Liquid.WalletFacts.Wire;
 using Xunit;
 #pragma warning disable CA2000
 
@@ -99,6 +100,74 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 		Assert.Equal(1UL, result.ResultRevision);
 		Assert.Equal(1UL, result.ResultGeneration);
 		Assert.True(result.HandoffPublished);
+	}
+
+	[Fact]
+	public async Task ControlledRegtestManifestMapsToReviewedTestNetworkClassAsync()
+	{
+		using var handler = new RejectingHandler();
+		ElementsPublicNetworkManifest regtest = ElementsPublicNetworkManifest.LiquidControlledRegtest;
+		LiquidAuthenticatedWalletSession session = CreateSession(handler, regtest);
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session, regtest);
+		const string candidateId = "4444444444444444444444444444444444444444444444444444444444444444";
+		LiquidWalletObservationBatch batch = NativeBatch(candidateId, regtest);
+		LiquidWalletFactsWireV1DescriptorNetworkClass? observedClass = null;
+		var dependencies = LiquidWalletRefreshCommandService.Dependencies.CreateForTesting(
+			acquireObservationAsync: (capturedSession, _, _, _) =>
+				Task.FromResult(CandidateObservation(capturedSession.StateOwner.NodeExpectation, capturedSession.Manifest, candidateId)),
+			observeNative: request =>
+			{
+				observedClass = request.NetworkClass;
+				return batch;
+			},
+			save: request => LiquidWalletLoadSaveResult.CreateSaved(
+				request.State.Revision, request.NextGeneration, request.ExternalIndexHighWater),
+			publish: (_, _, _) => true,
+			stageObserver: _ => { });
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> command =
+			LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
+
+		LiquidWalletUiRefreshResult result = await command(
+			new LiquidWalletUiRefreshRequest(WalletName, LiquidWalletUiRefreshTrigger.Manual, null),
+			CancellationToken.None);
+
+		Assert.Equal(LiquidWalletFactsWireV1DescriptorNetworkClass.Test, observedClass);
+		Assert.Equal(LiquidWalletUiRefreshStatus.Committed, result.Status);
+	}
+
+	[Fact]
+	public async Task UnknownManifestHasNoReviewedDescriptorNetworkClassAsync()
+	{
+		using var handler = new RejectingHandler();
+		LiquidAuthenticatedWalletSession session = CreateSession(handler);
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session);
+		const string candidateId = "6666666666666666666666666666666666666666666666666666666666666666";
+		// A session whose manifest is none of the reviewed instances (a hand-constructed
+		// schema-2-shaped foreign manifest) must fail closed at the network-class fence,
+		// before any native observation or persistence.
+		ElementsPublicNetworkManifest foreign = CreateForeignManifest();
+		SetField(session, "_manifest", foreign);
+		bool nativeCalled = false;
+		var dependencies = LiquidWalletRefreshCommandService.Dependencies.CreateForTesting(
+			acquireObservationAsync: (capturedSession, _, _, _) =>
+				Task.FromResult(CandidateObservation(capturedSession.StateOwner.NodeExpectation, capturedSession.Manifest, candidateId)),
+			observeNative: _ =>
+			{
+				nativeCalled = true;
+				return NativeBatch(candidateId, foreign);
+			},
+			save: _ => throw new InvalidOperationException("Save must not run for an unreviewed manifest."),
+			publish: (_, _, _) => true,
+			stageObserver: _ => { });
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> command =
+			LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
+
+		InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => command(
+			new LiquidWalletUiRefreshRequest(WalletName, LiquidWalletUiRefreshTrigger.Manual, null),
+			CancellationToken.None));
+
+		Assert.Equal("The refresh manifest has no reviewed descriptor network class.", exception.Message);
+		Assert.False(nativeCalled);
 	}
 
 	[Fact]
@@ -415,16 +484,22 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 			[]);
 	}
 
-	private static LiquidAuthenticatedRuntimeProvider CreateProvider(LiquidAuthenticatedWalletSession session)
+	private static LiquidAuthenticatedRuntimeProvider CreateProvider(LiquidAuthenticatedWalletSession session) =>
+		CreateProvider(session, ElementsPublicNetworkManifest.LiquidMainnet);
+
+	private static LiquidAuthenticatedRuntimeProvider CreateProvider(LiquidAuthenticatedWalletSession session, ElementsPublicNetworkManifest manifest)
 	{
 		var provider = (LiquidAuthenticatedRuntimeProvider)RuntimeHelpers.GetUninitializedObject(typeof(LiquidAuthenticatedRuntimeProvider));
 		SetField(provider, "_gate", new object());
-		SetField(provider, "_manifestSource", new ElementsPublicNetworkManifestSource(ElementsPublicNetworkManifest.LiquidMainnet.ManifestId));
+		SetField(provider, "_manifestSource", new ElementsPublicNetworkManifestSource(manifest.ManifestId));
 		SetField(provider, "_session", session);
 		return provider;
 	}
 
-	private static LiquidAuthenticatedWalletSession CreateSession(RejectingHandler handler)
+	private static LiquidAuthenticatedWalletSession CreateSession(RejectingHandler handler) =>
+		CreateSession(handler, ElementsPublicNetworkManifest.LiquidMainnet);
+
+	private static LiquidAuthenticatedWalletSession CreateSession(RejectingHandler handler, ElementsPublicNetworkManifest manifest)
 	{
 		var session = (LiquidAuthenticatedWalletSession)RuntimeHelpers.GetUninitializedObject(typeof(LiquidAuthenticatedWalletSession));
 		var master = new ExtKey();
@@ -434,10 +509,10 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 		var rpcClient = new ElementsRpcClient(httpClient);
 		SetField(rpcClient, "_ownsHttpClient", true);
 
-		LiquidAuthenticatedWalletStateOwner owner = CreateOwner();
+		LiquidAuthenticatedWalletStateOwner owner = CreateOwner(manifest);
 		var handoff = new LiquidWalletRuntimeHandoff(
 			WalletName,
-			ElementsPublicNetworkManifest.LiquidMainnet.ManifestId,
+			manifest.ManifestId,
 			owner.Balances,
 			owner.SelectableOutputs,
 			owner.History,
@@ -447,19 +522,22 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 		SetField(session, "_refreshGate", new object());
 		SetField(session, "_lifetimeGate", new object());
 		SetField(session, "_acceptedTransactionIds", new List<string>());
-		SetField(session, "<Identity>k__BackingField", CreateIdentity());
+		SetField(session, "<Identity>k__BackingField", CreateIdentity(manifest));
 		SetField(session, "<AuthenticatedMaster>k__BackingField", master);
 		SetField(session, "<Descriptor>k__BackingField", receive.Descriptor);
 		SetField(session, "<LastIndex>k__BackingField", receive.LastIndex);
 		SetField(session, "<SignerKeyAdapter>k__BackingField", adapter);
 		SetField(session, "<RpcClient>k__BackingField", rpcClient);
 		SetField(session, "<WalletDataDirectory>k__BackingField", AppContext.BaseDirectory);
-		SetField(session, "_manifest", ElementsPublicNetworkManifest.LiquidMainnet);
+		SetField(session, "_manifest", manifest);
 		SetField(session, "_snapshot", snapshot);
 		return session;
 	}
 
-	private static LiquidAuthenticatedWalletStateOwner CreateOwner()
+	private static LiquidAuthenticatedWalletStateOwner CreateOwner() =>
+		CreateOwner(ElementsPublicNetworkManifest.LiquidMainnet);
+
+	private static LiquidAuthenticatedWalletStateOwner CreateOwner(ElementsPublicNetworkManifest manifest)
 	{
 		using var handler = new RejectingHandler();
 		var master = new ExtKey();
@@ -472,19 +550,19 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 			persistedGeneration: 0,
 			persistedExternalIndexHighWater: 0,
 			WalletWasabi.Liquid.Wallet.LiquidWalletState.Empty(
-				WalletWasabi.Liquid.Assets.LiquidAssetId.ParseRpcHex(ElementsPublicNetworkManifest.LiquidMainnet.PeggedAssetId)));
+				WalletWasabi.Liquid.Assets.LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId)));
 		SetField(owner, "_allocation", allocation);
 		SetField(owner, "_walletName", WalletName);
-		SetField(owner, "_manifest", ElementsPublicNetworkManifest.LiquidMainnet);
+		SetField(owner, "_manifest", manifest);
 		SetAutoProperty(owner, "StateRevision", 0UL);
 		SetAutoProperty(owner, "PersistenceGeneration", 0UL);
 		SetAutoProperty(owner, "Descriptor", "wpkh(test)");
 		SetAutoProperty(owner, "LastIndex", 0UL);
 		SetAutoProperty(owner, "ReceiveMaterial", CreateReceiveMaterial());
-		SetAutoProperty(owner, "Balances", WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiFacade.CaptureAllocationBalances(WalletName, ElementsPublicNetworkManifest.LiquidMainnet, allocation));
-		SetAutoProperty(owner, "SelectableOutputs", WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiFacade.CaptureSelectableOutputs(WalletName, ElementsPublicNetworkManifest.LiquidMainnet, allocation));
-		SetAutoProperty(owner, "History", WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiFacade.CaptureAllocationHistory(WalletName, ElementsPublicNetworkManifest.LiquidMainnet, allocation));
-		SetAutoProperty(owner, "NodeExpectation", BoundExpectation());
+		SetAutoProperty(owner, "Balances", WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiFacade.CaptureAllocationBalances(WalletName, manifest, allocation));
+		SetAutoProperty(owner, "SelectableOutputs", WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiFacade.CaptureSelectableOutputs(WalletName, manifest, allocation));
+		SetAutoProperty(owner, "History", WalletWasabi.Liquid.Wallet.Ui.LiquidWalletUiFacade.CaptureAllocationHistory(WalletName, manifest, allocation));
+		SetAutoProperty(owner, "NodeExpectation", BoundExpectation(manifest));
 		adapter.Dispose();
 		rpcClient.Dispose();
 		return owner;
@@ -494,9 +572,12 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 		new([0x00, 0x14, .. Enumerable.Repeat((byte)1, 20)], [0x02, .. Enumerable.Repeat((byte)2, 32)]);
 
 	private static ElementsNodeExpectation BoundExpectation() =>
+		BoundExpectation(ElementsPublicNetworkManifest.LiquidMainnet);
+
+	private static ElementsNodeExpectation BoundExpectation(ElementsPublicNetworkManifest manifest) =>
 		ElementsReviewedNodeExpectationSource.Bind(
-			ElementsPublicNetworkManifest.LiquidMainnet,
-			new LiquidRpcProfile("local", new Uri("http://127.0.0.1:18884"), "/tmp/unused", ElementsPublicNetworkManifest.LiquidMainnet.ChainRpcName, ElementsPublicNetworkManifest.LiquidMainnet.ManifestId, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)));
+			manifest,
+			new LiquidRpcProfile("local", new Uri("http://127.0.0.1:18884"), "/tmp/unused", manifest.ChainRpcName, manifest.ManifestId, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)));
 
 	private static object CreateSnapshot(LiquidAuthenticatedWalletStateOwner owner, LiquidWalletRuntimeHandoff handoff)
 	{
@@ -504,7 +585,10 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 		return Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, null, [owner, handoff], null)!;
 	}
 
-	private static LiquidWalletIdentity CreateIdentity()
+	private static LiquidWalletIdentity CreateIdentity() =>
+		CreateIdentity(ElementsPublicNetworkManifest.LiquidMainnet);
+
+	private static LiquidWalletIdentity CreateIdentity(ElementsPublicNetworkManifest manifest)
 	{
 		ConstructorInfo constructor = typeof(LiquidWalletIdentity).GetConstructor(
 			BindingFlags.Instance | BindingFlags.NonPublic,
@@ -512,8 +596,17 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 			[typeof(string), typeof(string), typeof(string), typeof(string)],
 			null)!;
 		return (LiquidWalletIdentity)constructor.Invoke(
-			[WalletName, "/unused/wallet.json", "unused", ElementsPublicNetworkManifest.LiquidMainnet.ManifestId]);
+			[WalletName, "/unused/wallet.json", "unused", manifest.ManifestId]);
 	}
+
+	// A manifest instance that is reference-distinct from every reviewed catalog instance,
+	// so the refresh network-class fence (which matches by reference) rejects it. The
+	// shallow copy preserves every reviewed value while yielding a new reference that
+	// ReferenceEquals never matches.
+	private static ElementsPublicNetworkManifest CreateForeignManifest() =>
+		(ElementsPublicNetworkManifest)typeof(ElementsPublicNetworkManifest)
+			.GetMethod("MemberwiseClone", BindingFlags.Instance | BindingFlags.NonPublic)!
+			.Invoke(ElementsPublicNetworkManifest.LiquidMainnet, null)!;
 
 	private static void SetAutoProperty(object target, string name, object? value) =>
 		SetField(target, $"<{name}>k__BackingField", value);

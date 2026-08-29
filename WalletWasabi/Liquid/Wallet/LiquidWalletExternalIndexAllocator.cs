@@ -1,3 +1,5 @@
+using System.IO;
+using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Wallet.Sync;
 
 namespace WalletWasabi.Liquid.Wallet;
@@ -73,6 +75,44 @@ public static class LiquidWalletExternalIndexAllocator
 				saved.Generation,
 				saved.ExternalIndexHighWater,
 				loadedState);
+		}
+	}
+
+	/// <summary>
+	/// The production-supported first-open seam for a genuinely absent wallet: when no safe
+	/// version of the wallet state file exists at all (no <c>.lwwal</c>, no <c>.new</c>, no
+	/// <c>.old</c>), seals <see cref="LiquidWalletState.Empty"/> under the caller-supplied
+	/// key and network context at generation 0 through the normal atomic write path, then
+	/// performs the ordinary allocation above. Any present on-disk state — corrupt,
+	/// undecryptable under this key/context, or a <c>.new</c>/<c>.old</c> conflict — is
+	/// never converted to empty: this seam runs only on exact absence, inside the same
+	/// <see cref="LiquidWalletLoadSave.GenerationFence"/> as the allocation, so a
+	/// concurrent initializer cannot interleave and every other failure keeps the landed
+	/// fail-closed exception surface.
+	/// </summary>
+	internal static LiquidWalletExternalIndexAllocation AllocateWithFirstOpenInitialization(
+		string walletDataDirectory,
+		string walletName,
+		ReadOnlySpan<byte> key,
+		ReadOnlySpan<byte> externalWalletNetworkContext,
+		LiquidAssetId peggedAssetId)
+	{
+		ArgumentNullException.ThrowIfNull(peggedAssetId);
+		lock (LiquidWalletLoadSave.GenerationFence)
+		{
+			string filePath = LiquidWalletPersistencePaths.GetWalletStateFilePath(walletDataDirectory, walletName);
+			if (!File.Exists(filePath) && !File.Exists(filePath + ".new") && !File.Exists(filePath + ".old"))
+			{
+				LiquidWalletLoadSave.Save(
+					walletDataDirectory,
+					walletName,
+					LiquidWalletState.Empty(peggedAssetId),
+					generation: 0,
+					key,
+					externalWalletNetworkContext);
+			}
+
+			return Allocate(walletDataDirectory, walletName, key, externalWalletNetworkContext);
 		}
 	}
 }

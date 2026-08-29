@@ -77,6 +77,82 @@ public sealed class LiquidRpcProfileSourceTests
 		}
 	}
 
+	// Elements writes the cookie as a single non-empty line with no trailing newline
+	// (src/rpc/request.cpp `file << cookie;`). Acquire must accept exactly one line with
+	// no terminator or exactly one LF/CRLF terminator, and keep rejecting every embedded
+	// or extra line, empty value, NUL, or malformed credential.
+	[Theory]
+	[InlineData("node-user:node-password")]       // no terminator (the Elements writer)
+	[InlineData("node-user:node-password\n")]     // one LF
+	[InlineData("node-user:node-password\r\n")]   // one CRLF
+	public void AcquiresSingleLineCookieWithAnySingleTerminator(string cookieContent)
+	{
+		using var directory = new TemporaryDirectory();
+		LiquidRpcCookieCredentialSource cookies = CreateCookieSource(directory.Path, cookieContent);
+
+		using LiquidRpcAuthenticationLease lease = cookies.Acquire();
+
+		Assert.Equal("node-user", lease.Username.ToString());
+		Assert.Equal("node-password", lease.Password.ToString());
+	}
+
+	[Theory]
+	[InlineData("node-user:node-password\n\n")]          // extra blank line
+	[InlineData("node-user:node-password\r\n\r\n")]      // extra CRLF blank line
+	[InlineData("first:one\nsecond:two")]                // embedded newline
+	[InlineData("first:one\r\nsecond:two")]              // embedded CRLF
+	[InlineData("node-user:node-password\nsecond:two\n")]// trailing second line
+	[InlineData("\n")]                                   // empty line only
+	[InlineData("\r\n")]                                 // empty CRLF line only
+	[InlineData("node-user:node-password\r")]            // stray CR is not a terminator
+	[InlineData("node-user:node-password\rX")]           // embedded CR
+	public void RejectsMultilineOrMalformedCookieLayout(string cookieContent)
+	{
+		using var directory = new TemporaryDirectory();
+		LiquidRpcCookieCredentialSource cookies = CreateCookieSource(directory.Path, cookieContent);
+
+		Assert.Throws<System.Security.SecurityException>(() => cookies.Acquire());
+	}
+
+	[Fact]
+	public void RejectsCookieContainingNul()
+	{
+		using var directory = new TemporaryDirectory();
+		LiquidRpcCookieCredentialSource cookies = CreateCookieSource(directory.Path, "node-user:node\0-password");
+
+		Assert.Throws<System.Security.SecurityException>(() => cookies.Acquire());
+	}
+
+	[Theory]
+	[InlineData(":password")]        // empty username
+	[InlineData("node-user:")]       // empty password
+	[InlineData("no-separator")]     // no colon
+	[InlineData("a:b:c")]            // second colon
+	public void RejectsMalformedCookieCredentials(string cookieContent)
+	{
+		using var directory = new TemporaryDirectory();
+		LiquidRpcCookieCredentialSource cookies = CreateCookieSource(directory.Path, cookieContent);
+
+		Assert.Throws<System.Security.SecurityException>(() => cookies.Acquire());
+	}
+
+	private static LiquidRpcCookieCredentialSource CreateCookieSource(string directory, string cookieContent)
+	{
+		Directory.CreateDirectory(directory);
+		string cookiePath = System.IO.Path.Combine(directory, "elements.cookie");
+		File.WriteAllText(cookiePath, cookieContent, new UTF8Encoding(false));
+		SetOwnerOnly(cookiePath);
+		var profile = new LiquidRpcProfile(
+			"local",
+			new Uri("http://127.0.0.1:18884"),
+			cookiePath,
+			"elementsregtest",
+			"elements-regtest",
+			TimeSpan.FromSeconds(1),
+			TimeSpan.FromSeconds(1));
+		return new LiquidRpcCookieCredentialSource(profile);
+	}
+
 	[System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
 	private static void SetOwnerOnly(string path)
 	{

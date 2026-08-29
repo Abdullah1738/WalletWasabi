@@ -14,6 +14,7 @@ using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Transactions;
 using WalletWasabi.Liquid.Wallet;
+using WalletWasabi.Liquid.Wallet.Sync;
 using WalletWasabi.Liquid.Wallet.Ui;
 using Xunit;
 
@@ -37,6 +38,130 @@ public class LiquidReceiveMaterialTests
 
 		Assert.Equal(expected, actual);
 		Assert.Equal(33, actual.Length);
+	}
+
+	[Fact]
+	public void FirstOpenInitializesPersistsAndReopensEmptyState()
+	{
+		using TemporaryDirectory directory = new();
+		const string walletName = "liquid-wallet";
+		byte[] key = Enumerable.Repeat((byte)0x17, 32).ToArray();
+		byte[] context = Enumerable.Repeat((byte)0x28, 32).ToArray();
+		LiquidAssetId peggedAsset = LiquidAssetId.ParseRpcHex(ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId);
+		string filePath = Path.Combine(directory.Path, walletName + ".lwwal");
+		Assert.False(File.Exists(filePath));
+
+		LiquidWalletExternalIndexAllocation first = LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
+			directory.Path, walletName, key, context, peggedAsset);
+
+		Assert.Equal(0UL, first.Index);
+		Assert.Equal(1UL, first.PersistedGeneration);
+		Assert.Equal(1UL, first.PersistedExternalIndexHighWater);
+		Assert.True(File.Exists(filePath));
+
+		LiquidWalletLoadSaveResult persisted = LiquidWalletLoadSave.Load(directory.Path, walletName, key, context);
+		Assert.Equal(0UL, persisted.State!.Revision);
+		Assert.Equal(1UL, persisted.Generation);
+		Assert.Equal(1UL, persisted.ExternalIndexHighWater);
+		Assert.Equal(
+			peggedAsset.CanonicalRpcHex,
+			persisted.State.PeggedAssetId.CanonicalRpcHex);
+		Assert.Equal(0, persisted.State.AppliedTransactionCount);
+
+		// A reopen performs no re-initialization: it allocates the next index off the
+		// persisted state.
+		LiquidWalletExternalIndexAllocation second = LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
+			directory.Path, walletName, key, context, peggedAsset);
+		Assert.Equal(1UL, second.Index);
+		Assert.Equal(2UL, second.PersistedGeneration);
+	}
+
+	[Fact]
+	public void FirstOpenPreservesAnExistingHealthyState()
+	{
+		using TemporaryDirectory directory = new();
+		const string walletName = "liquid-wallet";
+		byte[] key = Enumerable.Repeat((byte)0x39, 32).ToArray();
+		byte[] context = Enumerable.Repeat((byte)0x4a, 32).ToArray();
+		LiquidAssetId peggedAsset = LiquidAssetId.ParseRpcHex(ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId);
+		LiquidWalletState state = LiquidWalletState.Empty(peggedAsset);
+		_ = LiquidWalletLoadSave.Save(directory.Path, walletName, state, generation: 9, key, context);
+
+		LiquidWalletExternalIndexAllocation allocation = LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
+			directory.Path, walletName, key, context, peggedAsset);
+
+		Assert.Equal(0UL, allocation.Index);
+		Assert.Equal(10UL, allocation.PersistedGeneration);
+	}
+
+	[Theory]
+	[InlineData("corrupt-frame")]
+	[InlineData("wrong-key")]
+	[InlineData("orphaned-new")]
+	[InlineData("orphaned-old")]
+	[InlineData("main-and-old")]
+	public void FirstOpenNeverConvertsPresentStateToEmpty(string scenario)
+	{
+		using TemporaryDirectory directory = new();
+		const string walletName = "liquid-wallet";
+		byte[] key = Enumerable.Repeat((byte)0x5b, 32).ToArray();
+		byte[] context = Enumerable.Repeat((byte)0x6c, 32).ToArray();
+		LiquidAssetId peggedAsset = LiquidAssetId.ParseRpcHex(ElementsPublicNetworkManifest.LiquidTestnet.PeggedAssetId);
+		string filePath = Path.Combine(directory.Path, walletName + ".lwwal");
+
+		switch (scenario)
+		{
+			case "corrupt-frame":
+				// A present file that fails framing must fail closed, never reset.
+				File.WriteAllBytes(filePath, [0xde, 0xad, 0xbe, 0xef]);
+				Assert.Throws<LiquidWalletPersistenceFormatException>(() =>
+					LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
+						directory.Path, walletName, key, context, peggedAsset));
+				Assert.Equal(new byte[] { 0xde, 0xad, 0xbe, 0xef }, File.ReadAllBytes(filePath));
+				break;
+			case "wrong-key":
+				// A present sealed state under another key fails the replay-protection
+				// fence; it must never be replaced by an empty state.
+				{
+					byte[] otherKey = Enumerable.Repeat((byte)0x7d, 32).ToArray();
+					_ = LiquidWalletLoadSave.Save(directory.Path, walletName, LiquidWalletState.Empty(peggedAsset), generation: 4, otherKey, context);
+					Assert.Throws<LiquidWalletReplayProtectionException>(() =>
+						LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
+							directory.Path, walletName, key, context, peggedAsset));
+					Assert.Equal(4UL, LiquidWalletLoadSave.Load(directory.Path, walletName, otherKey, context).Generation);
+				}
+				break;
+			case "orphaned-new":
+				// A partially written state (only .new present) counts as present: no
+				// initialization, the landed read fails closed.
+				File.WriteAllBytes(filePath + ".new", [0x01, 0x02]);
+				Assert.Throws<InvalidOperationException>(() =>
+					LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
+						directory.Path, walletName, key, context, peggedAsset));
+				Assert.False(File.Exists(filePath));
+				Assert.True(File.Exists(filePath + ".new"));
+				break;
+			case "orphaned-old":
+				File.WriteAllBytes(filePath + ".old", [0x03, 0x04]);
+				Assert.Throws<InvalidOperationException>(() =>
+					LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
+						directory.Path, walletName, key, context, peggedAsset));
+				Assert.False(File.Exists(filePath));
+				Assert.True(File.Exists(filePath + ".old"));
+				break;
+			case "main-and-old":
+				// The main/.old conflict resolves to the main file via the landed SafeFile
+				// read path; the healthy main state is loaded, never reset.
+				_ = LiquidWalletLoadSave.Save(directory.Path, walletName, LiquidWalletState.Empty(peggedAsset), generation: 6, key, context);
+				File.WriteAllBytes(filePath + ".old", [0x05, 0x06]);
+				{
+					LiquidWalletExternalIndexAllocation allocation = LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
+						directory.Path, walletName, key, context, peggedAsset);
+					Assert.Equal(0UL, allocation.Index);
+					Assert.Equal(7UL, allocation.PersistedGeneration);
+				}
+				break;
+		}
 	}
 
 	[Fact]

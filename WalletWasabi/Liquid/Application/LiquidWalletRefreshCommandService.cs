@@ -187,7 +187,9 @@ internal sealed class LiquidWalletRefreshCommandService
 				? LiquidWalletFactsWireV1DescriptorNetworkClass.Mainnet
 				: ReferenceEquals(session.Manifest, ElementsPublicNetworkManifest.LiquidTestnet)
 					? LiquidWalletFactsWireV1DescriptorNetworkClass.Test
-					: throw new InvalidOperationException("The refresh manifest has no reviewed descriptor network class.");
+					: ReferenceEquals(session.Manifest, ElementsPublicNetworkManifest.LiquidControlledRegtest)
+						? LiquidWalletFactsWireV1DescriptorNetworkClass.Test
+						: throw new InvalidOperationException("The refresh manifest has no reviewed descriptor network class.");
 			uint lastIndex = checked((uint)session.LastIndex);
 			LiquidWalletObservationBatch nativeBatch = _dependencies.ObserveNative(
 				new NativeObservationRequest(sourceEpoch, networkClass, lastIndex, descriptor, slip77, structural));
