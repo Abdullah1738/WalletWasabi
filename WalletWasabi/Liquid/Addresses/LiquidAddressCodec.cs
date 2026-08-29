@@ -60,10 +60,12 @@ internal static class LiquidAddressCodec
 			return base58.Value;
 		}
 
-		ElementsPublicNetworkManifest otherManifest = OtherManifest(manifest);
-		if (TryParseBase58(otherManifest, encodedAddress) is not null)
+		foreach (ElementsPublicNetworkManifest otherManifest in OtherManifests(manifest))
 		{
-			throw NetworkMismatch();
+			if (!ReferenceEquals(otherManifest, manifest) && TryParseBase58(otherManifest, encodedAddress) is not null)
+			{
+				throw NetworkMismatch();
+			}
 		}
 
 		throw InvalidEncoding();
@@ -733,32 +735,42 @@ internal static class LiquidAddressCodec
 		}
 
 		ReadOnlySpan<char> hrp = encodedAddress.AsSpan(0, separator);
-		if (EqualsOrdinalIgnoreCase(hrp, ElementsPublicNetworkManifest.LiquidMainnet.AddressEncoding.Bech32Hrp))
+		if (TryRecognizeReviewedHrp(hrp, ElementsPublicNetworkManifest.LiquidMainnet, out confidential))
 		{
 			manifest = ElementsPublicNetworkManifest.LiquidMainnet;
-			confidential = false;
 			return true;
 		}
-		if (EqualsOrdinalIgnoreCase(hrp, ElementsPublicNetworkManifest.LiquidMainnet.AddressEncoding.Blech32Hrp))
-		{
-			manifest = ElementsPublicNetworkManifest.LiquidMainnet;
-			confidential = true;
-			return true;
-		}
-		if (EqualsOrdinalIgnoreCase(hrp, ElementsPublicNetworkManifest.LiquidTestnet.AddressEncoding.Bech32Hrp))
+		if (TryRecognizeReviewedHrp(hrp, ElementsPublicNetworkManifest.LiquidTestnet, out confidential))
 		{
 			manifest = ElementsPublicNetworkManifest.LiquidTestnet;
-			confidential = false;
 			return true;
 		}
-		if (EqualsOrdinalIgnoreCase(hrp, ElementsPublicNetworkManifest.LiquidTestnet.AddressEncoding.Blech32Hrp))
+		if (TryRecognizeReviewedHrp(hrp, ElementsPublicNetworkManifest.LiquidControlledRegtest, out confidential))
 		{
-			manifest = ElementsPublicNetworkManifest.LiquidTestnet;
-			confidential = true;
+			manifest = ElementsPublicNetworkManifest.LiquidControlledRegtest;
 			return true;
 		}
 
 		manifest = null!;
+		confidential = false;
+		return false;
+	}
+
+	private static bool TryRecognizeReviewedHrp(
+		ReadOnlySpan<char> hrp,
+		ElementsPublicNetworkManifest reviewed,
+		out bool confidential)
+	{
+		if (EqualsOrdinalIgnoreCase(hrp, reviewed.AddressEncoding.Bech32Hrp))
+		{
+			confidential = false;
+			return true;
+		}
+		if (EqualsOrdinalIgnoreCase(hrp, reviewed.AddressEncoding.Blech32Hrp))
+		{
+			confidential = true;
+			return true;
+		}
 		confidential = false;
 		return false;
 	}
@@ -798,7 +810,8 @@ internal static class LiquidAddressCodec
 		ArgumentNullException.ThrowIfNull(manifest);
 		if (
 			!ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidMainnet) &&
-			!ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidTestnet))
+			!ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidTestnet) &&
+			!IsReviewedControlledRegtestManifest(manifest))
 		{
 			throw new ArgumentException(
 				"A reviewed Liquid public-network manifest is required.",
@@ -806,10 +819,22 @@ internal static class LiquidAddressCodec
 		}
 	}
 
-	private static ElementsPublicNetworkManifest OtherManifest(ElementsPublicNetworkManifest manifest) =>
-		ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidMainnet)
-			? ElementsPublicNetworkManifest.LiquidTestnet
-			: ElementsPublicNetworkManifest.LiquidMainnet;
+	private static bool IsReviewedControlledRegtestManifest(ElementsPublicNetworkManifest manifest) =>
+		ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidControlledRegtest) &&
+		manifest.AddressEncoding == new ElementsAddressEncodingProfile(235, 75, 4, "ert", "el");
+
+	private static ElementsPublicNetworkManifest[] OtherManifests(ElementsPublicNetworkManifest manifest)
+	{
+		if (ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidMainnet))
+		{
+			return [ElementsPublicNetworkManifest.LiquidTestnet, ElementsPublicNetworkManifest.LiquidControlledRegtest];
+		}
+		if (ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidTestnet))
+		{
+			return [ElementsPublicNetworkManifest.LiquidMainnet, ElementsPublicNetworkManifest.LiquidControlledRegtest];
+		}
+		return [ElementsPublicNetworkManifest.LiquidMainnet, ElementsPublicNetworkManifest.LiquidTestnet];
+	}
 
 	private static byte[] Combine(ReadOnlySpan<byte> first, ReadOnlySpan<byte> second)
 	{
