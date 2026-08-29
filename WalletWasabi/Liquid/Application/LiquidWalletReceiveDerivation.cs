@@ -1,5 +1,6 @@
 using System;
 using NBitcoin;
+using WalletWasabi.Liquid.Cryptography;
 
 namespace WalletWasabi.Liquid.Application;
 
@@ -36,7 +37,8 @@ internal sealed class LiquidWalletReceiveDerivation
 			new KeyPath($"{PurposeBranch}h/{CoinTypeBranch}h/{account}h"));
 		ExtPubKey accountPublicKey = accountKey.Neuter();
 		ExtPubKey spendPublicKey = accountPublicKey.Derive(0).Derive((uint)externalIndex);
-		string descriptor = $"elwpkh({accountPublicKey.ToString(network)}/<0;1>/*)";
+		string descriptorBody = $"elwpkh({accountPublicKey.ToString(network)}/<0;1>/*)";
+		string descriptor = LiquidDescriptorChecksum.AppendChecksum(descriptorBody);
 		byte[] scriptPubKey = spendPublicKey.PubKey.WitHash.ScriptPubKey.ToBytes();
 		return new LiquidWalletReceiveDerivation(descriptor, externalIndex, scriptPubKey);
 	}

@@ -413,7 +413,9 @@ public class LiquidReceiveMaterialTests
 		byte[] expectedScript = account.Neuter().Derive(0).Derive(7).PubKey.WitHash.ScriptPubKey.ToBytes();
 
 		Assert.Equal(expectedScript, derivation.ScriptPubKey);
-		Assert.Equal($"elwpkh({account.Neuter().ToString(BitcoinNetwork.TestNet)}/<0;1>/*)", derivation.Descriptor);
+		string descriptorBody = $"elwpkh({account.Neuter().ToString(BitcoinNetwork.TestNet)}/<0;1>/*)";
+		Assert.Equal(descriptorBody + "#" + derivation.Descriptor[^8..], derivation.Descriptor);
+		Assert.Equal(8, derivation.Descriptor.Length - descriptorBody.Length - 1);
 		Assert.Equal(7UL, derivation.LastIndex);
 	}
 
