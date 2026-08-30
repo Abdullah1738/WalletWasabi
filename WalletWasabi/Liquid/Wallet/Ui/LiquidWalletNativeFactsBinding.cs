@@ -89,31 +89,25 @@ internal static unsafe partial class LiquidWalletNativeFactsBinding
 	internal const int StatusOutputCapacityV1 = -10;
 
 	/// <summary>The full native commit the pinned cdylib was built from.</summary>
-	internal const string PinnedNativeCommit = "bd50133a9fbcac5d187757e634c1cc2fc65a10ac";
+	internal const string PinnedNativeCommit = "1e7fe02b52faa9681e31045e2d06cec1de9bbb29";
 
 	/// <summary>
 	/// The SHA-256 of the pinned-commit macOS arm64 cdylib
 	/// (<c>libwasabi_liquid_wallet_facts_v1.dylib</c>) tracked under the production Native/
 	/// directory.
 	/// </summary>
-	internal const string MacOsLibrarySha256 = "642b5e442c52ab2faf101a9c65e6d81b1ee3d86a30a65110abd1783659bde020";
+	internal const string MacOsLibrarySha256 = "d95b02aa4da9a28fb1acc2cb72fab70f007c9cbe6dc4f7cea3f76af13aa77df9";
 
 	/// <summary>
-	/// The SHA-256 of the pinned-commit Linux x86-64 cdylib
-	/// (<c>libwasabi_liquid_wallet_facts_v1.so</c>) tracked under the production Native/
-	/// directory.
-	/// </summary>
-	internal const string LinuxLibrarySha256 = "28ae649ec42bf6e04d9e9b383ef3efc0b3722a45784a629516c1a2b336359990";
-
-	/// <summary>
-	/// The dynamic library file name produced by the pinned native build. The Windows branch is
-	/// forward parity only: no Windows cdylib is built or pinned and
-	/// <see cref="EnsurePinnedNativeArtifact"/> fails closed there.
+	/// The dynamic library file name produced by the pinned native build. Only macOS is
+	/// currently pinned: the Linux cdylib for this commit has not been rebuilt on a Linux host
+	/// yet, so <see cref="EnsurePinnedNativeArtifact"/> fails closed off macOS. The Windows
+	/// branch is forward parity only; no Windows cdylib is built or pinned.
 	/// </summary>
 	internal static string LibraryFileName =>
-		OperatingSystem.IsWindows() ? "wasabi_liquid_wallet_facts_v1.dll" :
+		OperatingSystem.IsMacOS() ? "libwasabi_liquid_wallet_facts_v1.dylib" :
 		OperatingSystem.IsLinux() ? "libwasabi_liquid_wallet_facts_v1.so" :
-		"libwasabi_liquid_wallet_facts_v1.dylib";
+		"wasabi_liquid_wallet_facts_v1.dll";
 
 	/// <summary>
 	/// The production artifact is resolved from this dedicated subdirectory next to the assembly
@@ -273,16 +267,14 @@ internal static unsafe partial class LiquidWalletNativeFactsBinding
 
 		private static string Select()
 		{
-			if (OperatingSystem.IsLinux())
-			{
-				return LinuxLibrarySha256;
-			}
 			if (OperatingSystem.IsMacOS())
 			{
 				return MacOsLibrarySha256;
 			}
+			// The Linux cdylib for this pinned commit has not been rebuilt on a Linux host yet;
+			// fail closed rather than trust a stale artifact from the prior pinned commit.
 			throw new PlatformNotSupportedException(
-				"The pinned native wallet-facts cdylib is tracked for macOS and Linux only.");
+				"The pinned native wallet-facts cdylib is tracked for macOS only on this commit.");
 		}
 	}
 }

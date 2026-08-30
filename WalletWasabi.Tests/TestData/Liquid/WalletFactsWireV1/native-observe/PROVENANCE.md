@@ -2,7 +2,7 @@
 
 Native-produced ground-truth fixture for the managed wallet-facts observation binding tests.
 
-- Native authority: wasabi-liquid-native commit `bd50133a9fbcac5d187757e634c1cc2fc65a10ac`.
+- Native authority: wasabi-liquid-native commit `1e7fe02b52faa9681e31045e2d06cec1de9bbb29`.
 - Generator: a scratch cargo harness (throwaway project, not shipped) reusing the fixture
   builder of `crates/wallet-facts-ffi/tests/e2e.rs` at that commit verbatim — same test
   descriptor (`elwpkh([28b3f14e/84'/1'/0']tpubDC2Q4xK4XH72GM7MowNuajyWVbigRLBWKswyP5T88hpPwu5nGqJWnda8zhJEFt71av73Hm8mUMMFSz9acNVzz8b1UbdSHCDXKTbSv5eEytu/<0;1>/*)#u0khc0kg`),

@@ -27,7 +27,7 @@ namespace WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui;
 public class LiquidWalletNativeFactsBindingTests
 {
 	/// <summary>The full native commit the pinned cdylib was built from.</summary>
-	private const string ExpectedPinnedNativeCommit = "bd50133a9fbcac5d187757e634c1cc2fc65a10ac";
+	private const string ExpectedPinnedNativeCommit = "1e7fe02b52faa9681e31045e2d06cec1de9bbb29";
 
 	private static string FramesRoot => Path.Combine(
 		AppContext.BaseDirectory,
@@ -66,10 +66,9 @@ public class LiquidWalletNativeFactsBindingTests
 		byte[] libraryBytes = File.ReadAllBytes(libraryPath);
 		Assert.NotEmpty(libraryBytes);
 		string actual = Convert.ToHexStringLower(SHA256.HashData(libraryBytes));
-		string expected = OperatingSystem.IsLinux()
-			? LiquidWalletNativeFactsBinding.LinuxLibrarySha256
-			: LiquidWalletNativeFactsBinding.MacOsLibrarySha256;
-		Assert.Equal(expected, actual);
+		// Only macOS is pinned on this commit; the Linux cdylib is not yet rebuilt.
+		Assert.True(OperatingSystem.IsMacOS(), "The pinned wallet-facts cdylib is tracked for macOS only on this commit.");
+		Assert.Equal(LiquidWalletNativeFactsBinding.MacOsLibrarySha256, actual);
 
 		// The pin call itself must not throw on a supported platform.
 		LiquidWalletNativeFactsBinding.EnsurePinnedNativeArtifact();
