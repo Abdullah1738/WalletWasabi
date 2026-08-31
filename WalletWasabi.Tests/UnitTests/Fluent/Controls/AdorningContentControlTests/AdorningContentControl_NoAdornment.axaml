@@ -1,0 +1,11 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="WalletWasabi.Tests.UnitTests.Fluent.Controls.AdorningContentControlTests.AdorningContentControl_NoAdornment"
+        xmlns:c="clr-namespace:WalletWasabi.Fluent.Controls;assembly=WalletWasabi.Fluent"
+        Title="AdorningContentControlNoAdornment">
+  <c:AdorningContentControl Name="TargetControl"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+    <Border Width="100" Height="100" />
+  </c:AdorningContentControl>
+</Window>

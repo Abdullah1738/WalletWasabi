@@ -107,7 +107,7 @@ public class AdorningContentControl : ContentControl
 			{
 				IsAdornmentVisible = true;
 			}
-			else if (!Adornment.IsPointerOver)
+			else if (Adornment is null || !Adornment.IsPointerOver)
 			{
 				IsAdornmentVisible = false;
 			}

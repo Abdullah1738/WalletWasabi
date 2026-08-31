@@ -42,9 +42,17 @@
 
       <!-- QR binding of the confidential form. -->
       <AdorningContentControl HorizontalAlignment="Center" VerticalAlignment="Center" ClipToBounds="False">
+        <AdorningContentControl.Adornment>
+          <Panel Margin="5 0 -5 20">
+            <Button Command="{Binding #QrCode.SaveCommand}" CommandParameter="{Binding ConfidentialAddressText}" ToolTip.Tip="Save" Classes="plain icon"
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom">
+              <PathIcon Data="{StaticResource save_regular}" />
+            </Button>
+          </Panel>
+        </AdorningContentControl.Adornment>
         <Viewbox Margin="20" MaxHeight="270" MinHeight="100">
           <PrivacyContentControl Height="264" PrivacyReplacementMode="Icon">
-            <QrCode Matrix="{Binding QrCode^}" />
+            <QrCode x:Name="QrCode" Matrix="{Binding QrCode^}" />
           </PrivacyContentControl>
         </Viewbox>
       </AdorningContentControl>
