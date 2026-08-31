@@ -434,6 +434,43 @@ public class LiquidWalletWiringTests
 		Assert.Null(receivedByClient.PreviousTransactionIdsBySelectedInput[0]);
 	}
 
+	// The open path feeds the runtime handoff's already-produced history into
+	// the model it builds: a wallet opened at a revision presents its retained
+	// history (IsHistoryLoaded true, HistorySnapshot is the handoff's history
+	// at the matching revision) rather than the "not available" state. The
+	// handoff guarantees History.Revision == Balances.Revision, so the model's
+	// pairing fence accepts it unchanged.
+	[Fact]
+	public void OpenWiringPresentsHandoffHistoryAtMatchingRevision()
+	{
+		var handoff = new LiquidWalletRuntimeHandoff(
+			"liquid-history",
+			Manifest.ManifestId,
+			CreateBalances("liquid-history", revision: 9),
+			CreateSelectableOutputs("liquid-history", 9),
+			CreateHistory("liquid-history", revision: 9),
+			CreateReceiveMaterial());
+
+		// Mirror LiquidWalletSession.OpenWalletAsync exactly: build the model
+		// from the handoff's balances + receive material, then feed the
+		// handoff's history.
+		var model = new LiquidWalletModel(
+			handoff.CanonicalWalletId,
+			Manifest,
+			handoff.Balances,
+			handoff.ReceiveMaterial.NextReceiveScriptPubKey,
+			handoff.ReceiveMaterial.NextReceiveBlindingPublicKey);
+
+		Assert.False(model.IsHistoryLoaded);
+		Assert.Null(model.HistorySnapshot);
+
+		model.RefreshHistory(handoff.History);
+
+		Assert.True(model.IsHistoryLoaded);
+		Assert.Same(handoff.History, model.HistorySnapshot);
+		Assert.Equal(handoff.Balances.Revision, model.HistorySnapshot!.Revision);
+	}
+
 	// Builds a LiquidWalletModel over a state with the given balances, with the
 	// shared next-receive script + blinding public key.
 	private static LiquidWalletModel CreateModel(string name, long peggedAtomic, long? issuedAtomic = null)

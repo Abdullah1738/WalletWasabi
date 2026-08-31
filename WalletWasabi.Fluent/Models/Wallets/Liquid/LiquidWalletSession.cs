@@ -217,12 +217,20 @@ public sealed class LiquidWalletSession : IAsyncDisposable
 			LiquidWalletRuntimeHandoff current = client.CurrentHandoff ?? handoff;
 			ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.GetByManifestId(current.NetworkManifestId);
 
-			return new LiquidWalletModel(
+			var model = new LiquidWalletModel(
 				current.CanonicalWalletId,
 				manifest,
 				current.Balances,
 				current.ReceiveMaterial.NextReceiveScriptPubKey,
 				current.ReceiveMaterial.NextReceiveBlindingPublicKey);
+
+			// Feed the already-produced history into the model so a funded
+			// wallet presents its retained history instead of the "not
+			// available" state. The handoff guarantees
+			// History.Revision == Balances.Revision, so the model's pairing
+			// fence accepts it.
+			model.RefreshHistory(current.History);
+			return model;
 		}
 		finally
 		{
