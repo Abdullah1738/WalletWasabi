@@ -48,11 +48,12 @@
           <!-- Liquid transaction history: newest applied first, a complete
                revision-scoped replacement. The list is virtualizing and
                keyboard-navigable with one tab stop and Up/Down row traversal.
-               Transaction reference, asset identity, and amounts are wrapped
-               in PrivacyContentControl (text replacement); status and
-               credit/debit are always text, never color/icon alone. No full
-               transaction id, block hash, address, label, outpoint, or
-               timestamp appears anywhere. -->
+               The full transaction id and the per-asset formatted amounts are
+               shown in full and wrapped in PrivacyContentControl (text
+               replacement); the toggle masks, it never removes. Status and
+               credit/debit are always text, never color/icon alone. No block
+               hash, address, label, outpoint, fee, or timestamp appears
+               anywhere (the retained history does not carry them). -->
           <TextBlock Classes="h8" Margin="0 16 0 4" Text="History" />
 
           <!-- Unloaded / updating state: no prior rows are exposed. -->
@@ -76,14 +77,19 @@
                             AutomationProperties.Name="{Binding AccessibilitySummary}">
                   <DockPanel>
                     <TextBlock DockPanel.Dock="Left" Text="{Binding StatusText}" />
-                    <!-- Display-only redacted reference; never a key/identity. -->
-                    <PrivacyContentControl DockPanel.Dock="Right"
-                                           PrivacyReplacementMode="Text"
-                                           UseOpacity="False"
-                                           MaxPrivacyChars="20">
-                      <TextBlock Classes="monoSpaced" Opacity="0.7"
-                                 Text="{Binding TransactionReference}" />
-                    </PrivacyContentControl>
+                    <!-- Display-only full canonical transaction id; never a key/identity. -->
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4">
+                      <PrivacyContentControl PrivacyReplacementMode="Text"
+                                             UseOpacity="False">
+                        <TextBlock Classes="monoSpaced" Opacity="0.7"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding TransactionId}" />
+                      </PrivacyContentControl>
+                      <AnimatedButton ToolTip.Tip="Copy transaction id"
+                                      Command="{Binding CopyTransactionIdCommand}"
+                                      NormalIcon="{StaticResource copy_regular}"
+                                      ClickIcon="{StaticResource copy_confirmed}" />
+                    </StackPanel>
                   </DockPanel>
 
                   <ItemsControl ItemsSource="{Binding AssetChanges}"
@@ -94,12 +100,10 @@
                           <TextBlock DockPanel.Dock="Left" Text="{Binding DirectionText}" />
                           <PrivacyContentControl DockPanel.Dock="Right"
                                                  PrivacyReplacementMode="Text"
-                                                 UseOpacity="False"
-                                                 MaxPrivacyChars="20">
-                            <StackPanel Orientation="Horizontal">
-                              <TextBlock Classes="monoSpaced" Text="{Binding NetAtomicUnits}" />
-                              <TextBlock Margin="6 0 0 0" Text="{Binding AssetDisplayReference}" />
-                            </StackPanel>
+                                                 UseOpacity="False">
+                            <TextBlock Classes="monoSpaced"
+                                       TextWrapping="Wrap"
+                                       Text="{Binding DisplayAmount}" />
                           </PrivacyContentControl>
                         </DockPanel>
                       </DataTemplate>

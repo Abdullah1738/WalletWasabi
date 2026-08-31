@@ -83,8 +83,8 @@ public static class LiquidWalletUiFacade
 	/// <summary>
 	/// Projects the already-loaded <paramref name="state"/> into an
 	/// immutable display-ready transaction-history snapshot: every retained
-	/// transaction effect, newest applied first, with identity permanently
-	/// redacted to the display-only <see cref="LiquidWalletUiHistoryRow.TransactionReference"/>.
+	/// transaction effect, newest applied first, carrying the full canonical
+	/// transaction id on the display-only <see cref="LiquidWalletUiHistoryRow.TransactionId"/>.
 	/// The <paramref name="state"/> reference is used only for the duration
 	/// of the call and is never stored. It is <see langword="internal"/> —
 	/// not <see langword="public"/> — for exactly the reason the landed

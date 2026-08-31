@@ -43,9 +43,10 @@ public class LiquidWalletUiHistoryTests
 			("IsPeggedAsset", typeof(bool)),
 			("NetAtomicUnits", typeof(long)),
 			("IsCredit", typeof(bool)),
-			("IsDebit", typeof(bool)));
+			("IsDebit", typeof(bool)),
+			("DisplayAmount", typeof(string)));
 		AssertPublicGetOnly(typeof(LiquidWalletUiHistoryRow),
-			("TransactionReference", typeof(string)),
+			("TransactionId", typeof(string)),
 			("IsConfirmed", typeof(bool)),
 			("ConfirmationHeight", typeof(uint?)),
 			("AssetChanges", typeof(IReadOnlyList<LiquidWalletUiHistoryAssetChange>)),
@@ -91,7 +92,7 @@ public class LiquidWalletUiHistoryTests
 				[Output(tx, 0, IssuedAssetA, 500), Output(tx, 1, PeggedAsset, 300)]));
 
 		LiquidWalletUiHistorySnapshot snapshot = Capture(state);
-		LiquidWalletUiHistoryRow row = Assert.Single(snapshot.Rows, r => r.TransactionReference == Reference(tx));
+		LiquidWalletUiHistoryRow row = Assert.Single(snapshot.Rows, r => r.TransactionId == TxId(tx));
 		// Canonical ascending asset order: A (0a0a…) < B (0b0b…) < pegged (6f02…).
 		Assert.Equal(3, row.AssetChanges.Count);
 
@@ -136,9 +137,9 @@ public class LiquidWalletUiHistoryTests
 		LiquidWalletUiHistorySnapshot snapshot = Capture(state);
 		Assert.Equal(3, snapshot.Rows.Count);
 		// Newest applied first: C, B, A — NOT sorted by confirmation height.
-		Assert.Equal(Reference(txC), snapshot.Rows[0].TransactionReference);
-		Assert.Equal(Reference(txB), snapshot.Rows[1].TransactionReference);
-		Assert.Equal(Reference(txA), snapshot.Rows[2].TransactionReference);
+		Assert.Equal(TxId(txC), snapshot.Rows[0].TransactionId);
+		Assert.Equal(TxId(txB), snapshot.Rows[1].TransactionId);
+		Assert.Equal(TxId(txA), snapshot.Rows[2].TransactionId);
 		Assert.True(snapshot.Rows[0].IsConfirmed);
 		Assert.Equal(5u, snapshot.Rows[0].ConfirmationHeight);
 		Assert.False(snapshot.Rows[1].IsConfirmed);
@@ -172,7 +173,7 @@ public class LiquidWalletUiHistoryTests
 		Assert.Equal(2, snapshot.Rows.Count);
 		// txB: spent 500 A, created 500 A -> net zero -> dropped -> zero changes.
 		LiquidWalletUiHistoryRow zeroRow = snapshot.Rows[0];
-		Assert.Equal(Reference(txB), zeroRow.TransactionReference);
+		Assert.Equal(TxId(txB), zeroRow.TransactionId);
 		Assert.False(zeroRow.HasBalanceChange);
 		Assert.Empty(zeroRow.AssetChanges);
 		Assert.NotNull(zeroRow.AssetChanges);
@@ -183,11 +184,12 @@ public class LiquidWalletUiHistoryTests
 		Assert.Empty(empty.Rows);
 	}
 
-	// Required evidence §5: permanent identity redaction. The reference is
-	// exactly 8hex…8hex; the full txid and block hash never appear. Two
-	// transaction ids sharing the exposed ends produce two rows, not merged.
+	// Required evidence §5: full retained identity is shown. The row carries
+	// the full canonical transaction id verbatim (no redaction); the block
+	// hash is still never retained. Two distinct transaction ids remain two
+	// distinct rows.
 	[Fact]
-	public void IdentityIsPermanentlyRedacted()
+	public void RowCarriesFullTransactionId()
 	{
 		LiquidTransactionId txA = Tx('a');
 		string fullId = txA.CanonicalRpcHex;
@@ -199,27 +201,100 @@ public class LiquidWalletUiHistoryTests
 		LiquidWalletUiHistorySnapshot snapshot = Capture(state);
 		LiquidWalletUiHistoryRow row = Assert.Single(snapshot.Rows);
 
-		// Reference is exactly first8 + U+2026 + last8.
-		string expected = string.Concat(fullId.AsSpan(0, 8), "…", fullId.AsSpan(fullId.Length - 8, 8));
-		Assert.Equal(expected, row.TransactionReference);
-		Assert.Equal(17, row.TransactionReference.Length); // 8 + 1 (…) + 8
-		// The full id and block hash never appear in any public string.
-		Assert.DoesNotContain(fullId, row.TransactionReference);
+		// The full canonical transaction id is shown verbatim (64 hex chars).
+		Assert.Equal(fullId, row.TransactionId);
+		Assert.Equal(64, row.TransactionId.Length);
+		// The block hash is never retained in any public string.
 		Assert.DoesNotContain(blockHash, ObjectGraphStrings(snapshot));
 
-		// Two ids sharing the exposed ends remain two rows.
-		string sharedPrefixSuffix = "abcdef12";
-		LiquidTransactionId tx1 = LiquidTransactionId.ParseRpcHex(
-			sharedPrefixSuffix + new string('1', 48) + sharedPrefixSuffix);
-		LiquidTransactionId tx2 = LiquidTransactionId.ParseRpcHex(
-			sharedPrefixSuffix + new string('2', 48) + sharedPrefixSuffix);
+		// Two distinct transaction ids remain two distinct rows.
+		LiquidTransactionId tx1 = Tx('1');
+		LiquidTransactionId tx2 = Tx('2');
 		LiquidWalletState twoState = LiquidWalletState.Empty(PeggedAsset)
 			.Apply(0, Delta(tx1, [], [Output(tx1, 0, PeggedAsset, 10)]))
 			.Apply(1, Delta(tx2, [], [Output(tx2, 0, PeggedAsset, 20)]));
 		LiquidWalletUiHistorySnapshot twoSnapshot = Capture(twoState);
 		Assert.Equal(2, twoSnapshot.Rows.Count);
-		// Same redacted reference, but two distinct rows preserved.
-		Assert.Equal(twoSnapshot.Rows[0].TransactionReference, twoSnapshot.Rows[1].TransactionReference);
+		Assert.NotEqual(twoSnapshot.Rows[0].TransactionId, twoSnapshot.Rows[1].TransactionId);
+		Assert.Equal(TxId(tx2), twoSnapshot.Rows[0].TransactionId);
+		Assert.Equal(TxId(tx1), twoSnapshot.Rows[1].TransactionId);
+	}
+
+	// Required evidence §5b: formatted per-asset display amounts. The pegged
+	// asset renders the signed L-BTC decimal form (1e8 scale, trailing zeros
+	// trimmed); a non-pegged asset renders the signed atomic-unit count plus
+	// the full canonical asset id. The underlying atomic units are never
+	// rescaled or rounded.
+	[Fact]
+	public void AssetChangesCarryFormattedDisplayAmounts()
+	{
+		LiquidTransactionId tx = Tx('a');
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(Tx('f'), [], [Output(Tx('f'), 0, IssuedAssetA, 1_000)]))
+			.Apply(1, Delta(tx,
+				[OutPoint(Tx('f'), 0)],
+				[Output(tx, 0, IssuedAssetA, 400), Output(tx, 1, PeggedAsset, 250)]));
+
+		LiquidWalletUiHistorySnapshot snapshot = Capture(state);
+		LiquidWalletUiHistoryRow row = Assert.Single(snapshot.Rows, r => r.TransactionId == TxId(tx));
+
+		// Canonical ascending asset order: A (0a0a…) then pegged (6f02…).
+		Assert.Equal(2, row.AssetChanges.Count);
+
+		LiquidWalletUiHistoryAssetChange issued = row.AssetChanges[0];
+		Assert.False(issued.IsPeggedAsset);
+		Assert.Equal(-600, issued.NetAtomicUnits);
+		Assert.Equal($"-600 atomic units of {IssuedAssetAHex}", issued.DisplayAmount);
+		Assert.Contains(IssuedAssetAHex, issued.DisplayAmount);
+
+		LiquidWalletUiHistoryAssetChange pegged = row.AssetChanges[1];
+		Assert.True(pegged.IsPeggedAsset);
+		Assert.Equal(250, pegged.NetAtomicUnits);
+		Assert.Equal("0.0000025", pegged.DisplayAmount);
+	}
+
+	// Required evidence §5c: L-BTC decimal formatting. A single created pegged
+	// output yields a credit whose display string is the exact signed L-BTC
+	// decimal form (1e8 scale, trailing zeros trimmed, no rounding).
+	[Theory]
+	[InlineData(1, "0.00000001")]
+	[InlineData(10_000_000, "0.1")]
+	[InlineData(123_456_789, "1.23456789")]
+	[InlineData(100_000_000, "1")]
+	[InlineData(2_100_000_000_000_000, "21000000")]
+	public void PeggedCreditDisplayAmountFormatsLbtcDecimals(long atomicUnits, string expected)
+	{
+		LiquidTransactionId tx = Tx('b');
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(tx, [], [Output(tx, 0, PeggedAsset, atomicUnits)]));
+
+		LiquidWalletUiHistorySnapshot snapshot = Capture(state);
+		LiquidWalletUiHistoryAssetChange change = Assert.Single(snapshot.Rows[0].AssetChanges);
+		Assert.True(change.IsPeggedAsset);
+		Assert.True(change.IsCredit);
+		Assert.Equal(atomicUnits, change.NetAtomicUnits);
+		Assert.Equal(expected, change.DisplayAmount);
+	}
+
+	// Required evidence §5d: a pegged debit (spend) renders the negative L-BTC
+	// decimal form with an explicit leading minus sign.
+	[Theory]
+	[InlineData(1, "-0.00000001")]
+	[InlineData(10_000_000, "-0.1")]
+	[InlineData(2_100_000_000_000_000, "-21000000")]
+	public void PeggedDebitDisplayAmountFormatsNegativeLbtc(long magnitude, string expected)
+	{
+		LiquidTransactionId tx = Tx('c');
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(Tx('f'), [], [Output(Tx('f'), 0, PeggedAsset, magnitude)]))
+			.Apply(1, Delta(tx, [OutPoint(Tx('f'), 0)], []));
+
+		LiquidWalletUiHistorySnapshot snapshot = Capture(state);
+		LiquidWalletUiHistoryAssetChange change = Assert.Single(snapshot.Rows[0].AssetChanges);
+		Assert.True(change.IsPeggedAsset);
+		Assert.True(change.IsDebit);
+		Assert.Equal(-magnitude, change.NetAtomicUnits);
+		Assert.Equal(expected, change.DisplayAmount);
 	}
 
 	// Required evidence §6: confirm then unconfirm advances revisions without
@@ -244,7 +319,7 @@ public class LiquidWalletUiHistoryTests
 
 		Assert.True(afterConfirm.Rows[0].IsConfirmed);
 		Assert.Equal(11u, afterConfirm.Rows[0].ConfirmationHeight);
-		Assert.Equal(beforeConfirm.Rows[0].TransactionReference, afterConfirm.Rows[0].TransactionReference);
+		Assert.Equal(beforeConfirm.Rows[0].TransactionId, afterConfirm.Rows[0].TransactionId);
 		Assert.Equal(
 			beforeConfirm.Rows[0].AssetChanges.Select(c => (c.AssetIdHex, c.NetAtomicUnits)),
 			afterConfirm.Rows[0].AssetChanges.Select(c => (c.AssetIdHex, c.NetAtomicUnits)));
@@ -252,7 +327,7 @@ public class LiquidWalletUiHistoryTests
 
 		Assert.False(afterUnconfirm.Rows[0].IsConfirmed);
 		Assert.Null(afterUnconfirm.Rows[0].ConfirmationHeight);
-		Assert.Equal(afterConfirm.Rows[0].TransactionReference, afterUnconfirm.Rows[0].TransactionReference);
+		Assert.Equal(afterConfirm.Rows[0].TransactionId, afterUnconfirm.Rows[0].TransactionId);
 		Assert.NotEqual(afterConfirm.Revision, afterUnconfirm.Revision);
 	}
 
@@ -268,17 +343,17 @@ public class LiquidWalletUiHistoryTests
 
 		LiquidWalletUiHistorySnapshot before = Capture(state);
 		Assert.Equal(2, before.Rows.Count);
-		Assert.Equal(Reference(txB), before.Rows[0].TransactionReference);
+		Assert.Equal(TxId(txB), before.Rows[0].TransactionId);
 
 		LiquidWalletState rolledBack = state.RollbackLast(2, txB);
 		LiquidWalletUiHistorySnapshot after = Capture(rolledBack);
 		LiquidWalletUiHistoryRow remaining = Assert.Single(after.Rows);
-		Assert.Equal(Reference(txA), remaining.TransactionReference);
+		Assert.Equal(TxId(txA), remaining.TransactionId);
 	}
 
 	// Required evidence §8: persistence round trip at the public entry
 	// point. Save -> Load -> LoadAndCaptureHistory preserves revision, row
-	// order, redacted references, confirmation states/heights, and canonical
+	// order, full transaction ids, confirmation states/heights, and canonical
 	// per-asset changes.
 	[Fact]
 	public void LoadAndCaptureHistoryRoundTripsThroughPersistence()
@@ -306,9 +381,9 @@ public class LiquidWalletUiHistoryTests
 			Assert.Equal(3ul, snapshot.Revision);
 			Assert.Equal(2, snapshot.Rows.Count);
 			// Newest first: txB (unconfirmed), then txA (confirmed at 21).
-			Assert.Equal(Reference(txB), snapshot.Rows[0].TransactionReference);
+			Assert.Equal(TxId(txB), snapshot.Rows[0].TransactionId);
 			Assert.False(snapshot.Rows[0].IsConfirmed);
-			Assert.Equal(Reference(txA), snapshot.Rows[1].TransactionReference);
+			Assert.Equal(TxId(txA), snapshot.Rows[1].TransactionId);
 			Assert.True(snapshot.Rows[1].IsConfirmed);
 			Assert.Equal(21u, snapshot.Rows[1].ConfirmationHeight);
 		}
@@ -388,19 +463,16 @@ public class LiquidWalletUiHistoryTests
 	private static LiquidWalletUiHistorySnapshot Capture(LiquidWalletState state) =>
 		LiquidWalletUiSnapshotProxy.Capture(state);
 
-	private static string Reference(LiquidTransactionId id)
-	{
-		string hex = id.CanonicalRpcHex;
-		return string.Concat(hex.AsSpan(0, 8), "…", hex.AsSpan(hex.Length - 8, 8));
-	}
+	private static string TxId(LiquidTransactionId id) => id.CanonicalRpcHex;
 
-	// Walks the public object graph's string surface to assert redaction.
+	// Walks the public object graph's string surface so a test can assert the
+	// block hash (never retained) appears nowhere in it.
 	private static string ObjectGraphStrings(LiquidWalletUiHistorySnapshot snapshot)
 	{
 		var builder = new System.Text.StringBuilder();
 		foreach (LiquidWalletUiHistoryRow row in snapshot.Rows)
 		{
-			builder.Append(row.TransactionReference).Append('|');
+			builder.Append(row.TransactionId).Append('|');
 			foreach (LiquidWalletUiHistoryAssetChange change in row.AssetChanges)
 			{
 				builder.Append(change.AssetIdHex).Append('|');

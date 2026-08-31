@@ -4,13 +4,14 @@ namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 
 /// <summary>
 /// The immutable Fluent projection of one public Liquid history asset
-/// change: the exact signed atomic units, explicit <c>Credit</c>/
-/// <c>Debit</c> text, <c>L-BTC</c> for the pegged asset, and an abbreviated
-/// issued-asset display reference (first eight + U+2026 + last eight
-/// lowercase hex characters, the same redaction shape as the transaction
-/// reference). Performs no BTC/fiat amount conversion, no rescale, no
-/// rounding, no absolute-value conversion, and no fee/payment
-/// interpretation. Status is text, never color/icon alone.
+/// change: the exact signed atomic units, the formatted display amount, the
+/// full canonical asset id, explicit <c>Credit</c>/<c>Debit</c> text, and
+/// <c>L-BTC</c> for the pegged asset. For the pegged asset the display
+/// amount is the signed L-BTC decimal form; for any other asset it is the
+/// signed atomic-unit count together with the full canonical asset id.
+/// Performs no fiat amount conversion, no rounding, no absolute-value
+/// conversion, and no fee/payment interpretation. Status is text, never
+/// color/icon alone.
 /// </summary>
 public sealed class LiquidHistoryAssetChangeItemViewModel : ViewModelBase
 {
@@ -24,10 +25,12 @@ public sealed class LiquidHistoryAssetChangeItemViewModel : ViewModelBase
 		IsPeggedAsset = change.IsPeggedAsset;
 		IsCredit = change.IsCredit;
 		IsDebit = change.IsDebit;
+		DisplayAmount = change.DisplayAmount;
+		AssetIdHex = change.AssetIdHex;
 		DirectionText = change.IsCredit ? "Credit" : "Debit";
 		AssetDisplayReference = change.IsPeggedAsset
 			? "L-BTC"
-			: Abbreviate(change.AssetIdHex);
+			: change.AssetIdHex;
 	}
 
 	public long NetAtomicUnits { get; }
@@ -35,11 +38,20 @@ public sealed class LiquidHistoryAssetChangeItemViewModel : ViewModelBase
 	public bool IsCredit { get; }
 	public bool IsDebit { get; }
 	public string DirectionText { get; }
-	public string AssetDisplayReference { get; }
 
-	private static string Abbreviate(string canonicalHex) =>
-		string.Concat(
-			canonicalHex.Substring(0, 8),
-			"…",
-			canonicalHex.Substring(canonicalHex.Length - 8, 8));
+	/// <summary>
+	/// The formatted per-asset display amount. For the pegged asset (L-BTC)
+	/// this is the signed decimal form; for any other asset it is the signed
+	/// atomic-unit count and the full canonical asset id.
+	/// </summary>
+	public string DisplayAmount { get; }
+
+	/// <summary>The full canonical lowercase 64-hex asset id.</summary>
+	public string AssetIdHex { get; }
+
+	/// <summary>
+	/// The per-asset display label: <c>L-BTC</c> for the pegged asset,
+	/// otherwise the full canonical asset id.
+	/// </summary>
+	public string AssetDisplayReference { get; }
 }

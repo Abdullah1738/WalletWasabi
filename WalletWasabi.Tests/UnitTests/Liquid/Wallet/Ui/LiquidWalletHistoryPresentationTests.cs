@@ -60,8 +60,10 @@ public class LiquidWalletHistoryPresentationTests
 	private static LiquidSpendKeyReference ExternalKey =>
 		LiquidSpendKeyReference.Create(Convert.FromHexString(PublicKeyHex), LiquidKeyBranch.External, 0);
 
-	// §11: unconfirmed row with a multiasset change projects status text,
-	// redacted reference, and per-asset credit/debit with exact atomic units.
+	// §11: unconfirmed row with a multiasset change projects status text, the
+	// full transaction id, and per-asset credit/debit with the exact formatted
+	// amounts (L-BTC decimals for the pegged asset, atomic units + full asset
+	// id for the issued asset).
 	[Fact]
 	public void UnconfirmedMultiassetRowProjectsTextAndAccessibility()
 	{
@@ -80,33 +82,36 @@ public class LiquidWalletHistoryPresentationTests
 		Assert.True(item.HasBalanceChange);
 		Assert.Equal(2, item.AssetChanges.Count);
 
-		// Normal automation summary: status + redacted reference + each
-		// credit/debit with exact atomic units. No full id anywhere.
+		// The full canonical transaction id is carried verbatim.
+		Assert.Equal(tx.CanonicalRpcHex, item.TransactionId);
+
+		// Normal automation summary: status + full transaction id + each
+		// formatted credit/debit.
 		string summary = item.NormalAccessibilitySummary;
 		Assert.StartsWith("Unconfirmed ", summary);
-		Assert.Contains(row.TransactionReference, summary);
+		Assert.Contains(tx.CanonicalRpcHex, summary);
 		Assert.Contains("Credit", summary);
 		Assert.Contains("Debit", summary);
-		Assert.Contains("250", summary);
-		Assert.Contains("-600", summary);
-		Assert.DoesNotContain(tx.CanonicalRpcHex, summary);
+		Assert.Contains("0.0000025", summary); // 250 atomic units as L-BTC decimals
+		Assert.Contains("-600 atomic units", summary); // issued-asset debit
 
-		// The pegged asset change renders as L-BTC; the issued asset is
-		// abbreviated first8…last8 (never the full asset id).
+		// The pegged asset change renders as L-BTC with the decimal amount; the
+		// issued asset carries the full canonical asset id and atomic units.
 		LiquidHistoryAssetChangeItemViewModel peggedChange =
 			item.AssetChanges.Single(c => c.IsPeggedAsset);
 		Assert.Equal("L-BTC", peggedChange.AssetDisplayReference);
 		Assert.Equal(250, peggedChange.NetAtomicUnits);
 		Assert.Equal("Credit", peggedChange.DirectionText);
+		Assert.Equal("0.0000025", peggedChange.DisplayAmount);
 
 		LiquidHistoryAssetChangeItemViewModel issuedChange =
 			item.AssetChanges.Single(c => !c.IsPeggedAsset);
 		Assert.Equal("Debit", issuedChange.DirectionText);
 		Assert.Equal(-600, issuedChange.NetAtomicUnits);
-		Assert.Equal(
-			string.Concat(IssuedAssetAHex.AsSpan(0, 8), "…", IssuedAssetAHex.AsSpan(IssuedAssetAHex.Length - 8, 8)),
-			issuedChange.AssetDisplayReference);
-		Assert.DoesNotContain(IssuedAssetAHex, issuedChange.AssetDisplayReference);
+		Assert.Equal(IssuedAssetAHex, issuedChange.AssetDisplayReference);
+		Assert.Equal(IssuedAssetAHex, issuedChange.AssetIdHex);
+		Assert.Contains(IssuedAssetAHex, issuedChange.DisplayAmount);
+		Assert.Contains("-600", issuedChange.DisplayAmount);
 	}
 
 	// §11: confirmed row projects "Confirmed at block height N".
@@ -149,7 +154,7 @@ public class LiquidWalletHistoryPresentationTests
 	}
 
 	// §11: privacy mode. The privacy automation summary is exactly status
-	// plus "Liquid transaction details hidden" — no reference, asset, or
+	// plus "Liquid transaction details hidden" — no transaction id, asset, or
 	// amount. The AccessibilitySummary follows the UiConfig privacy flag.
 	[Fact]
 	public void PrivacyModeAutomationSummaryHidesAllDetails()
@@ -163,7 +168,7 @@ public class LiquidWalletHistoryPresentationTests
 
 		LiquidHistoryItemViewModel item = new(uiContext, row);
 		Assert.Equal("Unconfirmed Liquid transaction details hidden", item.PrivateAccessibilitySummary);
-		Assert.DoesNotContain(row.TransactionReference, item.PrivateAccessibilitySummary);
+		Assert.DoesNotContain(row.TransactionId, item.PrivateAccessibilitySummary);
 		Assert.DoesNotContain("9", item.PrivateAccessibilitySummary.Replace("hidden", "")); // no amount digit
 		Assert.DoesNotContain(tx.CanonicalRpcHex, item.PrivateAccessibilitySummary);
 
@@ -172,7 +177,7 @@ public class LiquidWalletHistoryPresentationTests
 	}
 
 	// §11: privacy mode off — the bound AccessibilitySummary is the normal
-	// one with the redacted reference and amounts.
+	// one with the full transaction id and formatted amounts.
 	[Fact]
 	public void PrivacyModeOffAutomationSummaryExposesDetails()
 	{
@@ -185,14 +190,47 @@ public class LiquidWalletHistoryPresentationTests
 
 		LiquidHistoryItemViewModel item = new(uiContext, row);
 		Assert.Equal(item.NormalAccessibilitySummary, item.AccessibilitySummary);
-		Assert.Contains(row.TransactionReference, item.AccessibilitySummary);
-		Assert.Contains("321", item.AccessibilitySummary);
+		Assert.Contains(tx.CanonicalRpcHex, item.AccessibilitySummary);
+		Assert.Contains("0.00000321", item.AccessibilitySummary); // 321 atomic units as L-BTC decimals
 	}
 
-	// §11: full transaction id never appears in any view-model text field,
-	// across every projected row and change.
+	// §11: the privacy toggle masks and unmasks — it never removes. Flipping
+	// the UiConfig privacy flag at runtime swaps the bound accessibility
+	// summary between the private (hidden) and normal (full transaction id +
+	// amounts) forms while the underlying full values stay present.
 	[Fact]
-	public void NoFullTransactionIdAppearsInAnyViewModelText()
+	public void PrivacyToggleMasksAndUnmasksWithoutRemovingDetails()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		LiquidTransactionId tx = Tx('4');
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(tx, [], [Output(tx, 0, PeggedAsset, 4_242)]));
+		LiquidWalletUiHistorySnapshot snapshot = LiquidWalletUiFacade.CaptureHistory("wallet", Manifest, state);
+		LiquidHistoryItemViewModel item = new(uiContext, snapshot.Rows[0]);
+
+		// Privacy off: the full transaction id and amount are exposed.
+		Assert.Equal(item.NormalAccessibilitySummary, item.AccessibilitySummary);
+		Assert.Contains(tx.CanonicalRpcHex, item.AccessibilitySummary);
+		Assert.Contains("0.00004242", item.AccessibilitySummary);
+
+		// Toggle on: the bound summary masks everything (but the row still
+		// carries the full transaction id — it is masked, not removed).
+		uiContext.Services.UiConfig.PrivacyMode = true;
+		Assert.Equal(item.PrivateAccessibilitySummary, item.AccessibilitySummary);
+		Assert.DoesNotContain(tx.CanonicalRpcHex, item.AccessibilitySummary);
+		Assert.Equal(tx.CanonicalRpcHex, item.TransactionId); // still present underneath
+
+		// Toggle back off: the full details are exposed again.
+		uiContext.Services.UiConfig.PrivacyMode = false;
+		Assert.Equal(item.NormalAccessibilitySummary, item.AccessibilitySummary);
+		Assert.Contains(tx.CanonicalRpcHex, item.AccessibilitySummary);
+	}
+
+	// §11: the full transaction id IS shown on every row (privacy off), while
+	// the block hash — which the retained history never carries — appears in
+	// no view-model text field, across every projected row and change.
+	[Fact]
+	public void FullTransactionIdIsShownAndBlockHashNeverAppearsInAnyViewModelText()
 	{
 		UiContext uiContext = BuildUiContext(privacyMode: false);
 		LiquidTransactionId txA = Tx('2');
@@ -204,13 +242,20 @@ public class LiquidWalletHistoryPresentationTests
 		LiquidWalletUiHistorySnapshot snapshot = LiquidWalletUiFacade.CaptureHistory("wallet", Manifest, state);
 
 		string blockHash = new string('6', 64);
+		Assert.Equal(2, snapshot.Rows.Count);
 		foreach (LiquidWalletUiHistoryRow row in snapshot.Rows)
 		{
 			LiquidHistoryItemViewModel item = new(uiContext, row);
+
+			// The full transaction id is shown verbatim and appears in the
+			// normal (privacy-off) summary.
+			Assert.Equal(row.TransactionId, item.TransactionId);
+			Assert.Contains(row.TransactionId, item.NormalAccessibilitySummary);
+
 			string[] allText =
 			[
 				item.StatusText,
-				item.TransactionReference,
+				item.TransactionId,
 				item.EmptyChangeText,
 				item.NormalAccessibilitySummary,
 				item.PrivateAccessibilitySummary,
@@ -218,13 +263,13 @@ public class LiquidWalletHistoryPresentationTests
 				{
 					c.DirectionText,
 					c.AssetDisplayReference,
+					c.DisplayAmount,
 					c.NetAtomicUnits.ToString(),
 				}),
 			];
 			foreach (string text in allText)
 			{
-				Assert.DoesNotContain(txA.CanonicalRpcHex, text);
-				Assert.DoesNotContain(txB.CanonicalRpcHex, text);
+				// The block hash never crosses into any display text.
 				Assert.DoesNotContain(blockHash, text);
 			}
 		}
@@ -281,7 +326,7 @@ public class LiquidWalletHistoryPresentationTests
 
 	// §11: headless privacy mode. With privacy mode on, the row automation
 	// name is exactly status plus "Liquid transaction details hidden"; the
-	// redacted reference, asset identity, and amount do not appear in any
+	// full transaction id, asset identity, and amount do not appear in any
 	// automation name in the rendered history subtree, and the
 	// PrivacyContentControl replacement text carries no hidden child value.
 	[Avalonia.Headless.XUnit.AvaloniaFact]

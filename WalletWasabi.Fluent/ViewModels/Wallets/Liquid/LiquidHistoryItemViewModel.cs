@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Reactive.Linq;
+using System.Windows.Input;
 using ReactiveUI;
 using WalletWasabi.Liquid.Wallet.Ui;
 
@@ -8,14 +9,16 @@ namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 
 /// <summary>
 /// The immutable Fluent projection of one public Liquid history row: the
-/// redacted <see cref="TransactionReference"/> (display-only,
-/// collision-tolerant, never an identity/key/lookup), explicit
-/// <c>Confirmed at block height N</c> or <c>Unconfirmed</c> status text, the
-/// asset-change item list, an explicit <c>No wallet balance change</c> text
-/// for an empty change list, and the normal/private accessibility summaries.
-/// No timestamp, confirmation count, fee, payment, address, label, outpoint,
-/// full transaction id, or block hash is exposed. Status and credit/debit
-/// are text, never color/icon alone.
+/// full canonical <see cref="TransactionId"/> (display-only, never an
+/// identity/key/lookup), explicit <c>Confirmed at block height N</c> or
+/// <c>Unconfirmed</c> status text, the asset-change item list, an explicit
+/// <c>No wallet balance change</c> text for an empty change list, and the
+/// normal/private accessibility summaries. No timestamp, confirmation count,
+/// fee, payment, address, label, outpoint, or block hash is exposed. Status
+/// and credit/debit are text, never color/icon alone. The full transaction
+/// id and amounts are masked by the privacy toggle (via the view's
+/// PrivacyContentControl and the privacy accessibility summary), never
+/// removed.
 /// </summary>
 public sealed class LiquidHistoryItemViewModel : ViewModelBase
 {
@@ -25,7 +28,7 @@ public sealed class LiquidHistoryItemViewModel : ViewModelBase
 		: base(uiContext)
 	{
 		ArgumentNullException.ThrowIfNull(row);
-		TransactionReference = row.TransactionReference;
+		TransactionId = row.TransactionId;
 		IsConfirmed = row.IsConfirmed;
 		ConfirmationHeight = row.ConfirmationHeight;
 		StatusText = row.IsConfirmed && row.ConfirmationHeight is { } height
@@ -33,6 +36,9 @@ public sealed class LiquidHistoryItemViewModel : ViewModelBase
 			: "Unconfirmed";
 		HasBalanceChange = row.HasBalanceChange;
 		EmptyChangeText = row.HasBalanceChange ? "" : "No wallet balance change";
+
+		CopyTransactionIdCommand = ReactiveCommand.CreateFromTask(() =>
+			uiContext.Clipboard.SetTextAsync(TransactionId));
 
 		var changes = new LiquidHistoryAssetChangeItemViewModel[row.AssetChanges.Count];
 		for (int index = 0; index < row.AssetChanges.Count; index++)
@@ -42,11 +48,11 @@ public sealed class LiquidHistoryItemViewModel : ViewModelBase
 
 		AssetChanges = new ReadOnlyCollection<LiquidHistoryAssetChangeItemViewModel>(changes);
 
-		// The row automation name follows privacy mode: off, the redacted
-		// reference and every asset credit/debit; on, exactly status plus
-		// "Liquid transaction details hidden" with no reference, asset
-		// identity, or amount. Driven by the landed UiConfig privacy flag so
-		// the hidden values never enter the accessible subtree.
+		// The row automation name follows privacy mode: off, the full
+		// transaction id and every formatted asset credit/debit; on, exactly
+		// status plus "Liquid transaction details hidden" with no transaction
+		// id, asset identity, or amount. Driven by the landed UiConfig privacy
+		// flag so the hidden values never enter the accessible subtree.
 		PrivateAccessibilitySummary = $"{StatusText} Liquid transaction details hidden";
 		_accessibilitySummary = NormalAccessibilitySummary;
 		uiContext.Services.UiConfig
@@ -56,7 +62,7 @@ public sealed class LiquidHistoryItemViewModel : ViewModelBase
 				privacyMode ? PrivateAccessibilitySummary : NormalAccessibilitySummary);
 	}
 
-	public string TransactionReference { get; }
+	public string TransactionId { get; }
 	public bool IsConfirmed { get; }
 	public uint? ConfirmationHeight { get; }
 	public string StatusText { get; }
@@ -65,25 +71,30 @@ public sealed class LiquidHistoryItemViewModel : ViewModelBase
 	public IReadOnlyList<LiquidHistoryAssetChangeItemViewModel> AssetChanges { get; }
 
 	/// <summary>
+	/// Copies the full canonical transaction id to the clipboard. The id is
+	/// shown (and copyable) in full; privacy mode only masks it visually, it
+	/// does not remove it.
+	/// </summary>
+	public ICommand CopyTransactionIdCommand { get; }
+
+	/// <summary>
 	/// The normal (privacy-mode-off) row automation name: explicit status
-	/// plus the redacted transaction reference and every asset credit/debit
-	/// in atomic units. Never a full transaction id or block hash.
+	/// plus the full transaction id and every formatted asset credit/debit.
+	/// Never a block hash.
 	/// </summary>
 	public string NormalAccessibilitySummary
 	{
 		get
 		{
 			var builder = new System.Text.StringBuilder(StatusText);
-			builder.Append(' ').Append(TransactionReference);
+			builder.Append(' ').Append(TransactionId);
 			foreach (var change in AssetChanges)
 			{
 				builder
 					.Append(' ')
 					.Append(change.DirectionText)
 					.Append(' ')
-					.Append(change.NetAtomicUnits)
-					.Append(' ')
-					.Append(change.AssetDisplayReference);
+					.Append(change.DisplayAmount);
 			}
 
 			if (!HasBalanceChange)
@@ -98,8 +109,7 @@ public sealed class LiquidHistoryItemViewModel : ViewModelBase
 	/// <summary>
 	/// The privacy-mode-on row automation name: exactly status plus
 	/// <c>Liquid transaction details hidden</c>. It contains no transaction
-	/// reference, asset id/reference, amount, wallet path/name, or hidden
-	/// child text.
+	/// id, asset id/reference, amount, wallet path/name, or hidden child text.
 	/// </summary>
 	public string PrivateAccessibilitySummary { get; }
 
