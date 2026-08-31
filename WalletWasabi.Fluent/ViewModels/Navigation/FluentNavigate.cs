@@ -9,6 +9,7 @@ using WalletWasabi.Fluent.Models.Wallets;
 using WalletWasabi.Fluent.ViewModels.AddWallet;
 using WalletWasabi.Fluent.ViewModels.AddWallet.Create;
 using WalletWasabi.Fluent.ViewModels.AddWallet.HardwareWallet;
+using WalletWasabi.Fluent.ViewModels.AddWallet.Liquid;
 using WalletWasabi.Fluent.ViewModels.CoinControl;
 using WalletWasabi.Fluent.ViewModels.Dialogs;
 using WalletWasabi.Fluent.ViewModels.Dialogs.Authorization;
@@ -153,6 +154,25 @@ public partial class FluentNavigate
 		target.To(dialog, navigationMode);
 
 		return new FluentDialog<System.Reactive.Unit>(target.NavigateDialogAsync(dialog, navigationMode));
+	}
+
+	public FluentDialog<System.Reactive.Unit> LiquidAddWalletPage(NavigationTarget navigationTarget = NavigationTarget.DialogScreen, NavigationMode navigationMode = NavigationMode.Normal)
+	{
+		var dialog = new LiquidAddWalletPageViewModel(UiContext);
+		var target = UiContext.Navigate(navigationTarget);
+		target.To(dialog, navigationMode);
+
+		return new FluentDialog<System.Reactive.Unit>(target.NavigateDialogAsync(dialog, navigationMode));
+	}
+
+	public void LiquidWalletNamePage(LiquidWalletCreationMode mode, NavigationTarget navigationTarget = NavigationTarget.DialogScreen, NavigationMode navigationMode = NavigationMode.Normal)
+	{
+		UiContext.Navigate(navigationTarget).To(new LiquidWalletNamePageViewModel(UiContext, mode), navigationMode);
+	}
+
+	public void LiquidRecoveryWordsPage(LiquidWalletCreationMode mode, string walletName, NavigationTarget navigationTarget = NavigationTarget.DialogScreen, NavigationMode navigationMode = NavigationMode.Normal)
+	{
+		UiContext.Navigate(navigationTarget).To(new LiquidRecoveryWordsPageViewModel(UiContext, mode, walletName), navigationMode);
 	}
 
 	public void BugReportLink(NavigationTarget navigationTarget = NavigationTarget.DialogScreen, NavigationMode navigationMode = NavigationMode.Normal)

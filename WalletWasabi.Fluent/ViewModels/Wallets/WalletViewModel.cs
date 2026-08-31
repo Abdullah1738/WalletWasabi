@@ -10,6 +10,7 @@ using System.Windows.Input;
 using NBitcoin;
 using WalletWasabi.Fluent.Extensions;
 using WalletWasabi.Fluent.Infrastructure;
+using WalletWasabi.Fluent.Models.UI;
 using WalletWasabi.Fluent.Models.Transactions;
 using WalletWasabi.Fluent.Models.Wallets;
 using WalletWasabi.Fluent.ViewModels.Navigation;
@@ -93,7 +94,9 @@ public partial class WalletViewModel : RoutableViewModel, IWalletViewModel
 		 WalletModel.Privacy.IsWalletPrivate
 			 .BindTo(this, x => x.AreAllCoinsPrivate);
 
-		 IsMusicBoxVisible = this.WhenAnyValue(
+		 IsMusicBoxVisible = LiquidProductMode.Enabled
+			 ? Observable.Return(false)
+			 : this.WhenAnyValue(
 			 x => x.HasMusicBoxBeenDisplayed,
 			 x => x.IsSelected,
 			 x => x.IsWalletBalanceZero,

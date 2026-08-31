@@ -592,7 +592,13 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 			throw new InvalidDataException("The wallet manifest identity is invalid.");
 		}
 		string root = Path.GetFullPath(_walletDirectories.WalletDirectory) + Path.DirectorySeparatorChar;
-		if (!identity.CanonicalWalletFilePath.StartsWith(root, StringComparison.Ordinal))
+		// macOS and Windows file dialogs return case-normalized paths against an
+		// on-disk wallet directory whose casing may differ; Linux is case-sensitive
+		// and must keep the strict ordinal containment check.
+		StringComparison pathComparison = OperatingSystem.IsLinux()
+			? StringComparison.Ordinal
+			: StringComparison.OrdinalIgnoreCase;
+		if (!identity.CanonicalWalletFilePath.StartsWith(root, pathComparison))
 		{
 			throw new InvalidDataException("The wallet path is outside the configured Liquid wallet directory.");
 		}

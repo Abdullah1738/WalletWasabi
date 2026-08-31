@@ -1,0 +1,73 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:liquid="using:WalletWasabi.Fluent.ViewModels.AddWallet.Liquid"
+             mc:Ignorable="d" d:DesignWidth="428" d:DesignHeight="371"
+             x:DataType="liquid:LiquidRecoveryWordsPageViewModel"
+             x:CompileBindings="True"
+             x:Class="WalletWasabi.Fluent.Views.AddWallet.Liquid.LiquidRecoveryWordsPageView">
+  <ContentArea Title="{Binding Title}"
+               EnableCancel="{Binding EnableCancel}"
+               EnableBack="{Binding EnableBack}"
+               IsBusy="{Binding IsBusy}"
+               EnableNext="True" NextContent="Continue" FocusNext="True"
+               ScrollViewer.HorizontalScrollBarVisibility="Auto">
+    <DockPanel>
+
+      <!-- Create path: display the freshly generated recovery words for backup. -->
+      <Panel IsVisible="{Binding IsCreateMode}" VerticalAlignment="Center" HorizontalAlignment="Center">
+        <DockPanel>
+          <InfoMessage Opacity="0.5" HorizontalAlignment="Center" DockPanel.Dock="Bottom">
+            <TextBlock Text="Write down the recovery words in the correct order and store them in a safe place. You will not be able to see them again." />
+          </InfoMessage>
+          <ItemsControl ItemsSource="{Binding MnemonicWords}">
+            <ItemsControl.Styles>
+              <Style Selector="TextBlock">
+                <Setter Property="FontSize" Value="{DynamicResource FontSizeH6}" />
+                <Setter Property="Height" Value="42" />
+              </Style>
+            </ItemsControl.Styles>
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel MaxHeight="200" Orientation="Vertical" VerticalAlignment="Top" HorizontalAlignment="Center" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Orientation="Horizontal" Margin="40 0 40 0" Width="80">
+                  <TextBlock Text="{Binding Index, Mode=OneWay, StringFormat={}{0}.}" Opacity="0.5" />
+                  <TextBlock Text="{Binding Word}" FontWeight="SemiBold" Margin="5 0 0 0" />
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </DockPanel>
+      </Panel>
+
+      <!-- Recover path: collect the typed recovery words. -->
+      <DockPanel IsVisible="{Binding !IsCreateMode}">
+        <TagsBox DockPanel.Dock="Top"
+                 ItemCountLimit="24"
+                 SuggestionsAreCaseSensitive="False"
+                 RestrictInputToSuggestions="True"
+                 Items="{Binding Mnemonics}"
+                 Suggestions="{Binding Suggestions}"
+                 Watermark="Type in your recovery words in the correct order"
+                 AllowDuplication="True"
+                 EnableCounter="True"
+                 EnableDelete="False">
+          <TagsBox.Styles>
+            <Style Selector="TagsBox AutoCompleteBox">
+              <Setter Property="MinimumPrefixLength" Value="0" />
+            </Style>
+          </TagsBox.Styles>
+          <Interaction.Behaviors>
+            <FocusOnAttachedBehavior />
+          </Interaction.Behaviors>
+        </TagsBox>
+      </DockPanel>
+
+    </DockPanel>
+  </ContentArea>
+</UserControl>

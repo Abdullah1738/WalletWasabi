@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Windows.Input;
 using WalletWasabi.Fluent.Extensions;
 using WalletWasabi.Fluent.Helpers;
+using WalletWasabi.Fluent.Models.UI;
 using WalletWasabi.Fluent.ViewModels.Dialogs.Base;
 using WalletWasabi.Logging;
 
@@ -33,6 +34,8 @@ public partial class AddWalletPageViewModel : DialogViewModelBase<Unit>
 		ImportWalletCommand = ReactiveCommand.CreateFromTask(OnImportWalletAsync);
 
 		RecoverWalletCommand = ReactiveCommand.Create(OnRecoverWallet);
+
+		LiquidWalletCommand = ReactiveCommand.Create(OnLiquidWallet);
 	}
 
 	public ICommand CreateWalletCommand { get; }
@@ -42,6 +45,10 @@ public partial class AddWalletPageViewModel : DialogViewModelBase<Unit>
 	public ICommand ImportWalletCommand { get; }
 
 	public ICommand RecoverWalletCommand { get; }
+
+	public ICommand LiquidWalletCommand { get; }
+
+	public bool IsBtcUiVisible => !LiquidProductMode.Enabled;
 
 	private void OnCreateWallet()
 	{
@@ -91,6 +98,13 @@ public partial class AddWalletPageViewModel : DialogViewModelBase<Unit>
 	private void OnRecoverWallet()
 	{
 		Navigate().To().WalletNamePage(new WalletCreationOptions.RecoverWallet());
+	}
+
+	private void OnLiquidWallet()
+	{
+		// The Liquid surface is strictly parallel: this navigates to the Liquid
+		// add-wallet hub and never touches the BTC creation/recovery options.
+		Navigate().To().LiquidAddWalletPage();
 	}
 
 	protected override void OnNavigatedTo(bool isInHistory, CompositeDisposable disposables)

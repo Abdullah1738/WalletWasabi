@@ -44,12 +44,19 @@ public sealed class LiquidWalletRepository : ReactiveObject, IDisposable
 	}
 
 	/// <summary>
-	/// Removes a closed Liquid wallet by name.
+	/// Removes a closed Liquid wallet by name, disposing the removed model.
+	/// The repository owns the lifetime of every registered
+	/// <see cref="LiquidWalletModel"/> (they are app-lifetime objects created
+	/// on wallet open).
 	/// </summary>
 	public void Remove(string walletName)
 	{
 		ArgumentException.ThrowIfNullOrEmpty(walletName);
-		_wallets.Remove(walletName);
+		if (_wallets.Lookup(walletName) is { HasValue: true, Value: { } removed })
+		{
+			_wallets.Remove(walletName);
+			removed.Dispose();
+		}
 	}
 
 	public void Dispose()

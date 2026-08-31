@@ -74,7 +74,11 @@ internal sealed record LiquidWalletIdentity
 
 		string canonicalPath = Path.GetFullPath(walletFilePath);
 		string canonicalRoot = EnsureTrailingSeparator(Path.GetFullPath(walletDirectory));
-		if (!canonicalPath.StartsWith(canonicalRoot, StringComparison.Ordinal)
+		// See the matching note in LiquidAuthenticatedRuntimeProvider.ValidateIdentity.
+		StringComparison pathComparison = OperatingSystem.IsLinux()
+			? StringComparison.Ordinal
+			: StringComparison.OrdinalIgnoreCase;
+		if (!canonicalPath.StartsWith(canonicalRoot, pathComparison)
 			|| !File.Exists(canonicalPath)
 			|| File.GetAttributes(canonicalPath).HasFlag(FileAttributes.ReparsePoint))
 		{

@@ -1,0 +1,28 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:liquid="using:WalletWasabi.Fluent.ViewModels.AddWallet.Liquid"
+             mc:Ignorable="d" d:DesignWidth="428" d:DesignHeight="371"
+             x:DataType="liquid:LiquidAddWalletPageViewModel"
+             x:CompileBindings="True"
+             x:Class="WalletWasabi.Fluent.Views.AddWallet.Liquid.LiquidAddWalletPageView">
+  <ContentArea Title="{Binding Title}"
+               Caption="Create, recover, or open a Liquid testnet wallet."
+               EnableCancel="{Binding EnableCancel}"
+               EnableBack="{Binding EnableBack}"
+               IsBusy="{Binding IsBusy}"
+               EnableNext="False">
+    <StackPanel Spacing="12" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+      <Button Classes="action" HorizontalAlignment="Stretch"
+              Content="Create a new Liquid wallet"
+              Command="{Binding CreateWalletCommand}" />
+      <Button HorizontalAlignment="Stretch"
+              Content="Recover a Liquid wallet from recovery words"
+              Command="{Binding RecoverWalletCommand}" />
+      <Button HorizontalAlignment="Stretch"
+              Content="Open an existing Liquid wallet file"
+              Command="{Binding OpenWalletCommand}" />
+    </StackPanel>
+  </ContentArea>
+</UserControl>

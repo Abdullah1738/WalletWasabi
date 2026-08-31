@@ -1,5 +1,6 @@
 using WalletWasabi.Fluent.Models.UI;
 using WalletWasabi.Fluent.ViewModels.AddWallet;
+using WalletWasabi.Fluent.ViewModels.AddWallet.Liquid;
 using WalletWasabi.Fluent.ViewModels.HelpAndSupport;
 using WalletWasabi.Fluent.ViewModels.OpenDirectory;
 using WalletWasabi.Fluent.ViewModels.Scheme;
@@ -14,6 +15,7 @@ public static class MainViewModelExtensions
 	{
 		PrivacyModeViewModel.Register(mainViewModel.PrivacyMode);
 		AddWalletPageViewModel.RegisterLazy(() => new AddWalletPageViewModel(uiContext));
+		LiquidAddWalletPageViewModel.RegisterLazy(() => new LiquidAddWalletPageViewModel(uiContext));
 		SettingsPageViewModel.Register(mainViewModel.SettingsPage);
 
 		GeneralSettingsTabViewModel.RegisterLazy(() =>

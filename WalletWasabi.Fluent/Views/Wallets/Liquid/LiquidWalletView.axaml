@@ -12,9 +12,13 @@
                EnableBack="{Binding EnableBack}">
     <DockPanel LastChildFill="True">
 
-      <Button DockPanel.Dock="Bottom" Focusable="False" Content="Receive"
-              Classes="h8 plain activeHyperLink" Command="{Binding ReceiveCommand}" Cursor="Hand"
-              HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0 0 0 0" />
+      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                  HorizontalAlignment="Center" Spacing="16">
+        <Button Focusable="False" Content="Send"
+                Classes="h8 plain activeHyperLink" Command="{Binding SendCommand}" Cursor="Hand" />
+        <Button Focusable="False" Content="Receive"
+                Classes="h8 plain activeHyperLink" Command="{Binding ReceiveCommand}" Cursor="Hand" />
+      </StackPanel>
 
       <ScrollViewer DockPanel.Dock="Top" VerticalScrollBarVisibility="Auto">
         <StackPanel>

@@ -13,7 +13,7 @@
                  EnableBack="{Binding EnableBack}"
                  IsBusy="{Binding IsBusy}"
                  EnableNext="False">
-    <Grid Width="530" MaxHeight="350" ColumnDefinitions="*,*,*" RowDefinitions="*,Auto,*">
+    <Grid Width="530" MaxHeight="420" ColumnDefinitions="*,*,*" RowDefinitions="*,Auto,*,Auto">
       <Grid.Styles>
         <Style Selector="TileButton">
           <Setter Property="Cursor" Value="Hand" />
@@ -61,24 +61,34 @@
                     Classes="action bottomtext"
                     Icon="{StaticResource add_regular}"
                     IsDefault="True"
+                    IsVisible="{Binding IsBtcUiVisible}"
                     Command="{Binding CreateWalletCommand}" />
 
-      <TextBlock Grid.ColumnSpan="3" Grid.Column="0" Grid.Row="1" TextAlignment="Center" Text="or" />
+      <TextBlock Grid.ColumnSpan="3" Grid.Column="0" Grid.Row="1" TextAlignment="Center" Text="or" IsVisible="{Binding IsBtcUiVisible}" />
 
       <TileButton Grid.Row="2" Grid.Column="0" Text="Connect to hardware wallet"
                     Icon="{StaticResource calculator_regular}"
                     Classes="bottomtext"
+                    IsVisible="{Binding IsBtcUiVisible}"
                     Command="{Binding ConnectHardwareWalletCommand}" />
 
       <TileButton Grid.Row="2" Grid.Column="1" Text="Import a wallet"
                     Icon="{StaticResource import_regular}"
                     Classes="bottomtext"
+                    IsVisible="{Binding IsBtcUiVisible}"
                     Command="{Binding ImportWalletCommand}" />
 
       <TileButton Grid.Row="2" Grid.Column="2" Text="Recover a wallet"
                     Icon="{StaticResource recover_arrow_right_regular}"
                     Classes="bottomtext"
+                    IsVisible="{Binding IsBtcUiVisible}"
                     Command="{Binding RecoverWalletCommand}" />
+
+      <!-- Liquid testnet surface: strictly parallel to the BTC flows above. -->
+      <TileButton Grid.Row="3" Grid.ColumnSpan="3" Text="Liquid wallet (testnet)"
+                    Icon="{StaticResource add_regular}"
+                    Classes="bottomtext"
+                    Command="{Binding LiquidWalletCommand}" />
     </Grid>
   </ContentArea>
 </UserControl>

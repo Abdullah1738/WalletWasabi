@@ -1,6 +1,9 @@
+using System.Collections.Generic;
+using System.Reactive;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using ReactiveUI;
 using WalletWasabi.Fluent.Models.Wallets.Liquid;
 using WalletWasabi.Fluent.ViewModels.Navigation;
 using WalletWasabi.Liquid.Wallet.Ui;
@@ -13,15 +16,18 @@ namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 /// — a summary of the selected inputs, the confidential destinations, the
 /// per-asset amounts, and the explicit fee, bound from a
 /// <see cref="LiquidWalletUiSpendPlan"/> produced by
-/// <see cref="LiquidWalletModel.CreateSpendPlan"/>. There is deliberately
-/// no sign command, no broadcast command, no transaction preview, no
-/// fee-rate slider, no coin list, no CoinJoin status, no music box, and no
-/// history table: signing and broadcast are a later slice, and a Liquid
-/// managed wallet has no CoinJoin. The explicit fee is a caller-supplied
-/// atomic-units input denominated in the pegged asset; there is no fee-rate
-/// estimation and no fee-market data source. Fail-closed: any rejection
-/// from the landed load or spend-plan surface surfaces as-is — no retry,
-/// no fallback, no cached-plan substitution.
+/// <see cref="LiquidWalletModel.CreateSpendPlan"/>. The "Sign &amp; broadcast"
+/// action executes one ordinary send through the caller-supplied
+/// <see cref="ExecuteSendCommand"/> delegate (the application session layer's
+/// narrow non-secret surface) and renders the returned status, display
+/// message, and transaction ids; there is deliberately no transaction
+/// preview, no fee-rate slider, no coin list, no CoinJoin status, no music
+/// box, and no history table — a Liquid managed wallet has no CoinJoin. The
+/// explicit fee is a caller-supplied atomic-units input denominated in the
+/// pegged asset; there is no fee-rate estimation and no fee-market data
+/// source. Fail-closed: any rejection from the landed load, spend-plan, or
+/// send-execution surface surfaces as-is — no retry, no fallback, no
+/// cached-plan substitution, and no fabricated success.
 /// </summary>
 [NavigationMetaData(
 	Title = "Send",
@@ -38,6 +44,8 @@ public partial class LiquidSendViewModel : RoutableViewModel
 	[AutoNotify] private LiquidWalletUiSpendPlan? _spendPlan;
 	[AutoNotify] private string _selectedOutPointHexesText = "";
 	[AutoNotify] private long _explicitFeeAtomicUnits;
+	[AutoNotify] private LiquidWalletUiSendExecutionResult? _executionResult;
+	[AutoNotify] private string? _executionErrorText;
 
 	public LiquidSendViewModel(
 		UiContext uiContext,
@@ -57,6 +65,13 @@ public partial class LiquidSendViewModel : RoutableViewModel
 		// caller-supplied at the command call site (key management is
 		// outside this layer); this view model never holds them.
 		BuildPlanCommand = new BuildSpendPlanCommand(this);
+
+		// Executes one ordinary send through the caller-supplied session
+		// delegate and renders the returned result. Key management stays in
+		// the session layer: this command carries only the public,
+		// non-secret request values. Fail-closed: any rejection surfaces
+		// as-is — no fabricated success, no retry, no fallback.
+		SendExecution = ReactiveCommand.CreateFromTask(ExecuteSendPlanAsync);
 	}
 
 	public LiquidWalletModel WalletModel { get; }
@@ -74,6 +89,68 @@ public partial class LiquidSendViewModel : RoutableViewModel
 	public LiquidSendRecipientViewModel Recipient { get; }
 
 	public ICommand BuildPlanCommand { get; }
+
+	/// <summary>
+	/// The "Sign &amp; broadcast" action: builds the non-secret send-execution
+	/// request from the current inputs and invokes <see cref="ExecuteSendCommand"/>,
+	/// binding the returned status, message, and transaction ids as the flow's
+	/// terminal content. Enabled only when the session layer supplied an
+	/// executor at construction.
+	/// </summary>
+	public ICommand ExecuteSendPlanCommand => SendExecution;
+
+	// The typed reactive command behind ExecuteSendPlanCommand: one ordinary
+	// send per invocation, awaited by the caller.
+	public ReactiveCommand<Unit, Unit> SendExecution { get; }
+
+	/// <summary>True when the session layer wired a send-execution delegate.</summary>
+	public bool IsSendExecutionAvailable => ExecuteSendCommand is not null;
+
+	private async Task ExecuteSendPlanAsync(CancellationToken cancellationToken)
+	{
+		ExecutionResult = null;
+		ExecutionErrorText = null;
+
+		if (ExecuteSendCommand is not { } executeSend)
+		{
+			ExecutionErrorText = "The Liquid send execution surface is not wired for this wallet session.";
+			return;
+		}
+
+		string[] selectedOutPointHexes = SelectedOutPointHexesText.Split(
+			['\r', '\n', ' ', ',', ';'],
+			StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+		try
+		{
+			// One null row per selected outpoint: the session executor replaces
+			// them with the previous-transaction-id dependency rows derived from
+			// the open session's current selectable outputs (the same source the
+			// harness send phase uses). The expected revision is the freshness
+			// fence — the snapshot revision this view last rendered.
+			var request = new LiquidWalletUiSendExecutionRequest(
+				WalletModel.Name,
+				selectedOutPointHexes,
+				Recipient.ConfidentialAddressText,
+				Recipient.AssetIdHex,
+				Recipient.AtomicUnits,
+				ExplicitFeeAtomicUnits,
+				Snapshot?.Revision ?? 0,
+				new IReadOnlyList<string>?[selectedOutPointHexes.Length]);
+
+			ExecutionResult = await executeSend(request, cancellationToken).ConfigureAwait(true);
+		}
+		catch (OperationCanceledException)
+		{
+			throw;
+		}
+		catch (Exception ex)
+		{
+			// Fail-closed: the landed rejection surfaces as-is; no success is
+			// fabricated and the plan is left untouched.
+			ExecutionErrorText = ex.Message;
+		}
+	}
 
 	// Builds the exact spend plan from the current inputs and binds it as
 	// the send flow's primary content. The wallet data directory and the

@@ -5,6 +5,7 @@
              xmlns:conv="using:WalletWasabi.Fluent.Converters"
              xmlns:vm="using:WalletWasabi.Fluent.ViewModels.NavBar"
              xmlns:vmw="using:WalletWasabi.Fluent.ViewModels.Wallets"
+             xmlns:vml="using:WalletWasabi.Fluent.ViewModels.Wallets.Liquid"
              x:DataType="vm:NavBarViewModel"
              x:CompileBindings="True"
              mc:Ignorable="d" d:DesignWidth="280" d:DesignHeight="459"
@@ -143,43 +144,78 @@
 
     <!-- Wallet List -->
     <DockPanel MaxWidth="75" LastChildFill="True">
-      <ListBox ItemsSource="{Binding Wallets}"
-               SelectedItem="{Binding SelectedWallet}"
-               Background="Transparent"
-               SelectingItemsControlBehavior.EnableSelectionAnimation="True">
-        <Interaction.Behaviors>
-          <ListBoxReselectingBehavior />
-        </Interaction.Behaviors>
-        <ListBox.ItemsPanel>
-          <ItemsPanelTemplate>
-            <StackPanel />
-          </ItemsPanelTemplate>
-        </ListBox.ItemsPanel>
-        <ListBox.DataTemplates>
-          <DataTemplate DataType="vmw:WalletPageViewModel">
-            <NavBarItem Classes.selected="{Binding IsSelected}">
-              <ToolTip.Tip>
-                <StackPanel>
-                  <TextBlock Text="{Binding Title}" />
-                </StackPanel>
-              </ToolTip.Tip>
-              <Panel>
-                <Ellipse Classes="loadingindicator"
-                         Classes.isLoading="{Binding IsLoading}"
-                         Classes.isLoggedIn="{Binding IsLoggedIn}"
-                         Classes.isCoinjoining="{Binding WalletViewModel.IsCoinJoining}" />
+      <StackPanel>
+        <ListBox ItemsSource="{Binding Wallets}"
+                 SelectedItem="{Binding SelectedWallet}"
+                 Background="Transparent"
+                 SelectingItemsControlBehavior.EnableSelectionAnimation="True">
+          <Interaction.Behaviors>
+            <ListBoxReselectingBehavior />
+          </Interaction.Behaviors>
+          <ListBox.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel />
+            </ItemsPanelTemplate>
+          </ListBox.ItemsPanel>
+          <ListBox.DataTemplates>
+            <DataTemplate DataType="vmw:WalletPageViewModel">
+              <NavBarItem Classes.selected="{Binding IsSelected}">
+                <ToolTip.Tip>
+                  <StackPanel>
+                    <TextBlock Text="{Binding Title}" />
+                  </StackPanel>
+                </ToolTip.Tip>
+                <Panel>
+                  <Ellipse Classes="loadingindicator"
+                           Classes.isLoading="{Binding IsLoading}"
+                           Classes.isLoggedIn="{Binding IsLoggedIn}"
+                           Classes.isCoinjoining="{Binding WalletViewModel.IsCoinJoining}" />
+                  <StackPanel VerticalAlignment="Center" Spacing="2">
+                    <PathIcon Classes="new size24 wallet"
+                              Classes.isfocused="{Binding $parent[ListBoxItem].IsSelected}" />
+                    <LayoutTransformControl>
+                      <FadeOutTextControl Text="{Binding Title}" HorizontalAlignment="Center" FontSize="{StaticResource FontSizeH9}" />
+                    </LayoutTransformControl>
+                  </StackPanel>
+                </Panel>
+              </NavBarItem>
+            </DataTemplate>
+          </ListBox.DataTemplates>
+        </ListBox>
+
+        <!-- Liquid wallet list: parallel to the BTC list, one NavBar item per
+             open Liquid managed wallet. -->
+        <ListBox ItemsSource="{Binding LiquidWallets}"
+                 SelectedItem="{Binding SelectedLiquidWallet}"
+                 Background="Transparent"
+                 SelectingItemsControlBehavior.EnableSelectionAnimation="True">
+          <Interaction.Behaviors>
+            <ListBoxReselectingBehavior />
+          </Interaction.Behaviors>
+          <ListBox.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel />
+            </ItemsPanelTemplate>
+          </ListBox.ItemsPanel>
+          <ListBox.DataTemplates>
+            <DataTemplate DataType="vml:LiquidWalletPageViewModel">
+              <NavBarItem Classes.selected="{Binding IsSelected}">
+                <ToolTip.Tip>
+                  <StackPanel>
+                    <TextBlock Text="{Binding Title}" />
+                  </StackPanel>
+                </ToolTip.Tip>
                 <StackPanel VerticalAlignment="Center" Spacing="2">
-                  <PathIcon Classes="new size24 wallet"
-                            Classes.isfocused="{Binding $parent[ListBoxItem].IsSelected}" />
+                  <PathIcon Data="{Binding IconName, Converter={x:Static conv:NavBarIconConverter.Instance}}" />
                   <LayoutTransformControl>
                     <FadeOutTextControl Text="{Binding Title}" HorizontalAlignment="Center" FontSize="{StaticResource FontSizeH9}" />
                   </LayoutTransformControl>
                 </StackPanel>
-              </Panel>
-            </NavBarItem>
-          </DataTemplate>
-        </ListBox.DataTemplates>
-      </ListBox>
+              </NavBarItem>
+            </DataTemplate>
+          </ListBox.DataTemplates>
+        </ListBox>
+      </StackPanel>
     </DockPanel>
   </DockPanel>
 </UserControl>

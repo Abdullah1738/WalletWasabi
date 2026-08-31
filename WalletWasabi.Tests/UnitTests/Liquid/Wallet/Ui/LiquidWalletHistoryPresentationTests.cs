@@ -19,6 +19,7 @@ using WalletWasabi.Fluent.Models.ClientConfig;
 using WalletWasabi.Fluent.Models.FileSystem;
 using WalletWasabi.Fluent.Models.UI;
 using WalletWasabi.Fluent.Models.Wallets;
+using WalletWasabi.Fluent.Models.Wallets.Liquid;
 using WalletWasabi.Fluent.ViewModels.SearchBar.Sources;
 using WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 using WalletWasabi.Liquid.Amounts;
@@ -485,6 +486,10 @@ public class LiquidWalletHistoryPresentationTests
 			new QrCodeReader(),
 			new UiClipboard(),
 			new WalletRepository(services, amountProvider),
+#pragma warning disable CA2000 // Ownership transfers to the UiContext, which holds it for the app lifetime.
+			new LiquidWalletRepository(),
+#pragma warning restore CA2000
+			BuildLiquidSession(),
 			new CoinjoinModel(services),
 			new HardwareWalletInterface(services),
 			new FileSystemModel(),
@@ -497,6 +502,17 @@ public class LiquidWalletHistoryPresentationTests
 			new HealthMonitor(services, torStatusChecker),
 			new WalletWasabi.Announcements.ReleaseHighlights(),
 			services.Scheme);
+	}
+
+	// The presentation tests never open a wallet, so a session rooted at a fresh
+	// throwaway directory is sufficient (the application client is created lazily
+	// on first open, never here).
+	private static LiquidWalletSession BuildLiquidSession()
+	{
+		string root = Path.Combine(Common.GetWorkDir(), "liquid-session");
+		return new LiquidWalletSession(
+			Path.Combine(root, "appdata"),
+			Path.Combine(root, "wallets"));
 	}
 
 	private static LiquidTransactionId Tx(char value) =>

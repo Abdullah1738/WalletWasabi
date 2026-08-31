@@ -7,6 +7,7 @@ using NBitcoin;
 using WalletWasabi.Fluent.Extensions;
 using WalletWasabi.Fluent.Helpers;
 using WalletWasabi.Fluent.Infrastructure;
+using WalletWasabi.Fluent.Models.UI;
 using WalletWasabi.Fluent.ViewModels.Dialogs.Base;
 using WalletWasabi.Services;
 using WalletWasabi.Fluent.ViewModels.Dialogs.ReleaseHighlights;
@@ -26,7 +27,7 @@ namespace WalletWasabi.Fluent.ViewModels;
 [AppLifetime]
 public partial class MainViewModel : ViewModelBase
 {
-	[AutoNotify] private string _title = "Wasabi Wallet";
+	[AutoNotify] private string _title = LiquidProductMode.Enabled ? "Wasabi Wallet — Liquid (testnet)" : "Wasabi Wallet";
 	[AutoNotify] private WindowState _windowState;
 	[AutoNotify] private bool _isOobeBackgroundVisible;
 	[AutoNotify] private bool _isCoinJoinActive;
@@ -77,7 +78,11 @@ public partial class MainViewModel : ViewModelBase
 				.OfType<WalletViewModel>();
 
 		IsOobeBackgroundVisible = UiContext.ApplicationSettings.Oobe;
-		var isFirstLaunch = !UiContext.WalletRepository.HasWallet || UiContext.ApplicationSettings.Oobe;
+		// A Liquid wallet counts as "has a wallet" for out-of-box purposes: this
+		// build is a Liquid product, and the BTC WalletManager alone would keep
+		// the app on the welcome backdrop forever.
+		var hasAnyWallet = UiContext.WalletRepository.HasWallet || UiContext.LiquidWalletSession.HasAnyWalletFile();
+		var isFirstLaunch = !hasAnyWallet || UiContext.ApplicationSettings.Oobe;
 
 		RxApp.MainThreadScheduler.Schedule(async () =>
 		{
@@ -87,7 +92,7 @@ public partial class MainViewModel : ViewModelBase
 
 				await UiContext.Navigate().To().WelcomePage().GetResultAsync();
 
-				if (UiContext.WalletRepository.HasWallet)
+				if (UiContext.WalletRepository.HasWallet || UiContext.LiquidWalletSession.HasAnyWalletFile())
 				{
 					UiContext.ApplicationSettings.Oobe = false;
 					IsOobeBackgroundVisible = false;

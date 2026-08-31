@@ -2,6 +2,7 @@ using WalletWasabi.Announcements;
 using WalletWasabi.Fluent.Models.ClientConfig;
 using WalletWasabi.Fluent.Models.FileSystem;
 using WalletWasabi.Fluent.Models.Wallets;
+using WalletWasabi.Fluent.Models.Wallets.Liquid;
 using WalletWasabi.Fluent.ViewModels;
 using WalletWasabi.Fluent.ViewModels.Navigation;
 using WalletWasabi.Fluent.ViewModels.SearchBar.Sources;
@@ -18,6 +19,8 @@ public class UiContext
 		QrCodeReader qrCodeReader,
 		UiClipboard clipboard,
 		WalletRepository walletRepository,
+		LiquidWalletRepository liquidWalletRepository,
+		LiquidWalletSession liquidWalletSession,
 		CoinjoinModel coinJoinModel,
 		HardwareWalletInterface hardwareWalletInterface,
 		FileSystemModel fileSystem,
@@ -36,6 +39,8 @@ public class UiContext
 		QrCodeReader = qrCodeReader ?? throw new ArgumentNullException(nameof(qrCodeReader));
 		Clipboard = clipboard ?? throw new ArgumentNullException(nameof(clipboard));
 		WalletRepository = walletRepository ?? throw new ArgumentNullException(nameof(walletRepository));
+		LiquidWalletRepository = liquidWalletRepository ?? throw new ArgumentNullException(nameof(liquidWalletRepository));
+		LiquidWalletSession = liquidWalletSession ?? throw new ArgumentNullException(nameof(liquidWalletSession));
 		CoinjoinModel = coinJoinModel ?? throw new ArgumentNullException(nameof(coinJoinModel));
 		HardwareWalletInterface = hardwareWalletInterface ?? throw new ArgumentNullException(nameof(hardwareWalletInterface));
 		FileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
@@ -54,6 +59,8 @@ public class UiContext
 	public UiClipboard Clipboard { get; }
 	public QrCodeGenerator QrCodeGenerator { get; }
 	public WalletRepository WalletRepository { get; }
+	public LiquidWalletRepository LiquidWalletRepository { get; }
+	public LiquidWalletSession LiquidWalletSession { get; }
 	public CoinjoinModel CoinjoinModel { get; }
 	public QrCodeReader QrCodeReader { get; }
 	public HardwareWalletInterface HardwareWalletInterface { get; }

@@ -38,6 +38,34 @@
               Classes="activeHyperlink"
               Command="{Binding BuildPlanCommand}" />
 
+      <!-- Sign & broadcast: executes one ordinary send through the session
+           layer's narrow send-execution delegate and renders the returned
+           result (status + transaction ids). Visible only when the session
+           wired an executor; fail-closed, no fabricated success. -->
+      <Button Content="Sign &amp; broadcast"
+              Classes="activeHyperlink"
+              Command="{Binding ExecuteSendPlanCommand}"
+              IsVisible="{Binding IsSendExecutionAvailable}" />
+
+      <!-- The landed execution result, verbatim: status, display message,
+           and the local/accepted transaction ids when present. -->
+      <StackPanel IsVisible="{Binding ExecutionResult, Converter={x:Static ObjectConverters.IsNotNull}}" Spacing="4">
+        <TextBlock Text="Send result" Classes="h5" />
+        <TextBlock Classes="monoSpaced" Text="{Binding ExecutionResult.Status, StringFormat='Status: {0}'}" />
+        <TextBlock TextWrapping="Wrap" Text="{Binding ExecutionResult.DisplayMessage}" />
+        <TextBlock Classes="monoSpaced" TextWrapping="Wrap"
+                   Text="{Binding ExecutionResult.LocalTransactionIdHex, StringFormat='Local txid: {0}'}"
+                   IsVisible="{Binding ExecutionResult.LocalTransactionIdHex, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        <TextBlock Classes="monoSpaced" TextWrapping="Wrap"
+                   Text="{Binding ExecutionResult.AcceptedTransactionIdHex, StringFormat='Accepted txid: {0}'}"
+                   IsVisible="{Binding ExecutionResult.AcceptedTransactionIdHex, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+      </StackPanel>
+
+      <!-- A landed rejection surfaces as-is; no success is fabricated. -->
+      <TextBlock TextWrapping="Wrap"
+                 Text="{Binding ExecutionErrorText}"
+                 IsVisible="{Binding ExecutionErrorText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
       <!-- The exact spend plan is the send flow's primary content. -->
       <StackPanel IsVisible="{Binding SpendPlan, Converter={x:Static ObjectConverters.IsNotNull}}" Spacing="8">
         <TextBlock Text="Exact spend plan" Classes="h5" />

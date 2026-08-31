@@ -1,5 +1,6 @@
 using System.Reactive;
 using System.Reactive.Linq;
+using WalletWasabi.Fluent.Models.UI;
 using WalletWasabi.Fluent.ViewModels.Dialogs.Base;
 
 namespace WalletWasabi.Fluent.ViewModels.AddWallet;
@@ -36,6 +37,10 @@ public partial class WelcomePageViewModel : DialogViewModelBase<Unit>
 	}
 
 	public IObservable<bool> CanGoBack { get; }
+
+	public string Subtitle => LiquidProductMode.Enabled
+		? "An easy to use, privacy focused, open source Liquid wallet"
+		: "An easy to use, privacy focused, open source Bitcoin wallet";
 
 	private void OnNext()
 	{

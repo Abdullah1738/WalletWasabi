@@ -18,9 +18,11 @@ namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 /// <see cref="LiquidWalletModel.Balances"/>, the pegged asset (L-BTC) first,
 /// then the issued assets in the landed canonical ascending asset-id-hex
 /// order. The receive action navigates to the confidential-address-native
-/// <see cref="LiquidReceiveViewModel"/>. There is deliberately no send
-/// command, no coin list, no CoinJoin status, no music box, and no history
-/// table — the send flow and the history presentation are later slices.
+/// <see cref="LiquidReceiveViewModel"/>; the send action navigates to the
+/// exact-spend-plan <see cref="LiquidSendViewModel"/>, wired with the
+/// session's narrow send-execution delegate (key management stays in the
+/// session layer). There is deliberately no coin list, no CoinJoin status,
+/// and no music box — a Liquid managed wallet has no CoinJoin.
 /// </summary>
 [AppLifetime]
 public partial class LiquidWalletViewModel : RoutableViewModel
@@ -86,6 +88,18 @@ public partial class LiquidWalletViewModel : RoutableViewModel
 			UiContext.Navigate(NavigationTarget.DialogScreen)
 				.To(new LiquidReceiveViewModel(uiContext, walletModel)));
 
+		// The send action navigates to the exact-spend-plan
+		// LiquidSendViewModel, wired with the session's narrow send-execution
+		// delegate: the session owns the single application client and the
+		// open authenticated session (keys never leave that layer); this view
+		// model only forwards the delegate.
+		SendCommand = ReactiveCommand.Create(() =>
+			UiContext.Navigate(NavigationTarget.DialogScreen)
+				.To(new LiquidSendViewModel(
+					uiContext,
+					walletModel,
+					uiContext.LiquidWalletSession.ExecuteSendAsync)));
+
 		SetupCancel(enableCancel: false, enableCancelOnEscape: false, enableCancelOnPressed: false);
 		EnableBack = true;
 	}
@@ -120,6 +134,8 @@ public partial class LiquidWalletViewModel : RoutableViewModel
 	}
 
 	public ICommand ReceiveCommand { get; }
+
+	public ICommand SendCommand { get; }
 
 	public override string Title { get; protected set; }
 }

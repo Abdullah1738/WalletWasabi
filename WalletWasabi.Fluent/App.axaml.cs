@@ -1,3 +1,4 @@
+using System.IO;
 using System.Linq;
 using System.Reactive.Concurrency;
 using System.Threading.Tasks;
@@ -10,6 +11,7 @@ using WalletWasabi.Announcements;
 using WalletWasabi.Fluent.Models.ClientConfig;
 using WalletWasabi.Fluent.Models.FileSystem;
 using WalletWasabi.Fluent.Models.Wallets;
+using WalletWasabi.Fluent.Models.Wallets.Liquid;
 using WalletWasabi.Fluent.ViewModels;
 using WalletWasabi.Fluent.ViewModels.SearchBar.Sources;
 
@@ -92,6 +94,22 @@ public class App : Application
 		return new WalletRepository(services, amountProvider);
 	}
 
+	private static LiquidWalletRepository CreateLiquidWalletRepository()
+	{
+		return new LiquidWalletRepository();
+	}
+
+	private static LiquidWalletSession CreateLiquidWalletSession(IServices services)
+	{
+		// The Liquid testnet surface keeps its application-data (RPC profile +
+		// staged cookie) and wallet files under a dedicated subtree of the app
+		// data dir, parallel to — never inside — the BTC wallet directory.
+		string liquidRoot = Path.Combine(services.DataDir, "Liquid");
+		return new LiquidWalletSession(
+			Path.Combine(liquidRoot, "appdata"),
+			Path.Combine(liquidRoot, "wallets"));
+	}
+
 	private static HardwareWalletInterface CreateHardwareWalletInterface(IServices services)
 	{
 		return new HardwareWalletInterface(services);
@@ -138,6 +156,8 @@ public class App : Application
 			new QrCodeReader(),
 			new UiClipboard(),
 			CreateWalletRepository(services, amountProvider),
+			CreateLiquidWalletRepository(),
+			CreateLiquidWalletSession(services),
 			new CoinjoinModel(services),
 			CreateHardwareWalletInterface(services),
 			CreateFileSystem(),
