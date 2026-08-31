@@ -54,9 +54,9 @@ public partial class LiquidWalletViewModel : RoutableViewModel
 
 		// The retained transaction history is a complete revision-scoped
 		// replacement: every valid emission replaces the whole visible row
-		// set in snapshot order. The redacted TransactionReference is never
+		// set in snapshot order. The TransactionId is never
 		// used as a DynamicData key, equality identity, or deduplication
-		// input — two rows sharing a reference remain two rows. When history
+		// input — two rows from the same transaction remain two rows. When history
 		// is unloaded (revision-pair fence) the collection exposes no stale
 		// rows.
 		_historyRowsReadOnly = new ReadOnlyObservableCollection<LiquidHistoryItemViewModel>(_historyRows);
