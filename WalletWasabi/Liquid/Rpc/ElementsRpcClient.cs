@@ -23,12 +23,16 @@ namespace WalletWasabi.Liquid.Rpc;
 
 public sealed class ElementsRpcClient : IDisposable
 {
-	private const int MaxRpcResponseBytes = 1024 * 1024;
+	// 8 MiB covers a worst-case single dense confidential transaction in verbose form: rangeproofs
+	// run ~5 KB per output and dozens of outputs plus hex encoding and JSON framing push one
+	// getrawtransaction body past 1 MiB, so the bound is set with headroom above that shape rather
+	// than at an arbitrary round figure. Fail-closed above this bound, before any parsing.
+	private const int MaxRpcResponseBytes = 8 * 1024 * 1024;
 	private const int MaxJsonDepth = 64;
 	private const int MaxJsonTokens = 65536;
 
 	// Sized to the largest string that can appear inside an admissible response (verbose tx hex for
-	// dense confidential transactions, separately bounded by MaxRpcResponseBytes = 1 MiB), minus the
+	// dense confidential transactions, separately bounded by MaxRpcResponseBytes = 8 MiB), minus the
 	// fixed envelope and sibling-field framing of the smallest response that carries it, so the
 	// per-string guard fires before the response-size guard on any in-budget body.
 	private const int MaxJsonStringBytes = MaxRpcResponseBytes - 1024;
@@ -429,7 +433,7 @@ public sealed class ElementsRpcClient : IDisposable
 				parameters,
 				MaxRpcResponseBytes,
 				MaxJsonStringBytes,
-				"the one-megabyte limit",
+				"the eight-megabyte limit",
 				totalTimeout.Token).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)

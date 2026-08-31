@@ -1029,14 +1029,31 @@ public class ElementsRpcClientTests
 	[Fact]
 	public async Task RejectsResponseAboveBoundAsync()
 	{
-		string padding = new('a', 1024 * 1024);
+		string padding = new('a', 8 * 1024 * 1024);
 		using var harness = new ElementsRpcHarness(invocation =>
 			$$"""{"result":{"padding":"{{padding}}"},"error":null,"id":"{{invocation.Id}}"}""");
 
 		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
 			() => harness.Client.GetNodeStatusAsync(CancellationToken.None));
 
-		Assert.Contains("one-megabyte limit", exception.Message, StringComparison.Ordinal);
+		Assert.Contains("eight-megabyte limit", exception.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task AcceptsResponseUnderBoundAsync()
+	{
+		string padding = new('a', 1024 * 1024);
+		using var harness = new ElementsRpcHarness(invocation =>
+			invocation.Method == "getblockchaininfo"
+				? $$"""{"result":{"padding":"{{padding}}"},"error":null,"id":"{{invocation.Id}}"}"""
+				: ValidResult(invocation));
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
+			() => harness.Client.GetNodeStatusAsync(CancellationToken.None));
+
+		// The over-1 MiB body fits under the 8 MiB response cap, so the call gets past the
+		// response-size guard and fails later on result shape, not on size.
+		Assert.DoesNotContain("eight-megabyte limit", exception.Message, StringComparison.Ordinal);
 	}
 
 	[Fact]
@@ -1254,7 +1271,7 @@ public class ElementsRpcClientTests
 	[Fact]
 	public async Task RejectsSubLimitOversizedJsonStringAsync()
 	{
-		// Just above the per-string ceiling (1 MiB minus envelope framing); the per-string guard —
+		// Just above the per-string ceiling (8 MiB minus envelope framing); the per-string guard —
 		// not the response-size guard — is what fails closed.
 		string padding = new('a', MaxJsonStringTestCeiling + 1);
 		using var harness = new ElementsRpcHarness(invocation =>
@@ -2542,7 +2559,7 @@ public class ElementsRpcClientTests
 
 	// Mirror of the per-string JSON ceiling in ElementsRpcClient (MaxRpcResponseBytes - 1024); test
 	// fixtures derive their oversized strings from it so the fail-closed boundary moves with the guard.
-	private const int MaxJsonStringTestCeiling = 1024 * 1024 - 1024;
+	private const int MaxJsonStringTestCeiling = 8 * 1024 * 1024 - 1024;
 
 	// Mirror of the 4 MiB per-transaction raw ceiling in ElementsRpcClient; the oversized fixture
 	// derives its above-ceiling raw hex string from it so the fail-closed boundary moves with the

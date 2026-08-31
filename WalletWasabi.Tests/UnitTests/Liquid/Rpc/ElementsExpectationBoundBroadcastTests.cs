@@ -281,7 +281,7 @@ public class ElementsExpectationBoundBroadcastTests
 			{
 				"non-string" => Envelope(invocation.Id, "42"),
 				"non-json" => "not-json",
-				"oversized" => Envelope(invocation.Id, JsonSerializer.Serialize(new string('a', 1024 * 1024))),
+				"oversized" => Envelope(invocation.Id, JsonSerializer.Serialize(new string('a', 8 * 1024 * 1024))),
 				"id-mismatch" => Envelope("mismatched-id", JsonSerializer.Serialize(AcceptedTransactionId)),
 				_ => throw new InvalidOperationException(),
 			};
