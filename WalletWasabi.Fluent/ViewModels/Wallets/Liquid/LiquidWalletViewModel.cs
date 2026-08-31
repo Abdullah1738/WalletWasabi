@@ -28,6 +28,7 @@ namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 public partial class LiquidWalletViewModel : RoutableViewModel
 {
 	private ReadOnlyObservableCollection<LiquidAssetBalanceItemViewModel>? _balanceRows;
+	private LiquidAssetBalanceItemViewModel? _peggedBalanceRow;
 	private readonly ObservableCollection<LiquidHistoryItemViewModel> _historyRows = new();
 	private readonly ReadOnlyObservableCollection<LiquidHistoryItemViewModel> _historyRowsReadOnly;
 	private bool _isHistoryLoaded;
@@ -48,6 +49,7 @@ public partial class LiquidWalletViewModel : RoutableViewModel
 			.Select(snapshot => snapshot.Balances
 				.Select(balance => new LiquidAssetBalanceItemViewModel(uiContext, balance))
 				.ToArray())
+			.Do(rows => PeggedBalanceRow = rows.FirstOrDefault(row => row.IsPeggedAsset))
 			.ToObservableChangeSet(row => row.AssetIdHex)
 			.Bind(out _balanceRows)
 			.Subscribe();
@@ -107,6 +109,18 @@ public partial class LiquidWalletViewModel : RoutableViewModel
 	public LiquidWalletModel WalletModel { get; }
 
 	public ReadOnlyObservableCollection<LiquidAssetBalanceItemViewModel>? BalanceRows => _balanceRows;
+
+	/// <summary>
+	/// Presentation-only mirror of the pegged (L-BTC) row in
+	/// <see cref="BalanceRows"/> for the balance tile; the tile is the same
+	/// row shown prominently, not an additional balance. Null until a balance
+	/// snapshot carries the pegged asset.
+	/// </summary>
+	public LiquidAssetBalanceItemViewModel? PeggedBalanceRow
+	{
+		get => _peggedBalanceRow;
+		private set => this.RaiseAndSetIfChanged(ref _peggedBalanceRow, value);
+	}
 
 	public ReadOnlyObservableCollection<LiquidHistoryItemViewModel> HistoryRows => _historyRowsReadOnly;
 
