@@ -98,6 +98,11 @@
 			<Link>NativeWalletFacts\libwasabi_liquid_wallet_facts_v1.dylib</Link>
 			<Visible>false</Visible>
 		</None>
+		<None Update="Liquid\Wallet\Ui\Native\libwasabi_liquid_wallet_facts_v1.so">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>NativeWalletFacts\libwasabi_liquid_wallet_facts_v1.so</Link>
+			<Visible>false</Visible>
+		</None>
 		<None Update="Scheme\Wasabilib.scm">
 		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>

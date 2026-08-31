@@ -66,9 +66,12 @@ public class LiquidWalletNativeFactsBindingTests
 		byte[] libraryBytes = File.ReadAllBytes(libraryPath);
 		Assert.NotEmpty(libraryBytes);
 		string actual = Convert.ToHexStringLower(SHA256.HashData(libraryBytes));
-		// Only macOS is pinned on this commit; the Linux cdylib is not yet rebuilt.
-		Assert.True(OperatingSystem.IsMacOS(), "The pinned wallet-facts cdylib is tracked for macOS only on this commit.");
-		Assert.Equal(LiquidWalletNativeFactsBinding.MacOsLibrarySha256, actual);
+		// macOS and Linux are pinned on this commit; any other platform fails closed.
+		string? expected = OperatingSystem.IsMacOS() ? LiquidWalletNativeFactsBinding.MacOsLibrarySha256 :
+			OperatingSystem.IsLinux() ? LiquidWalletNativeFactsBinding.LinuxLibrarySha256 :
+			null;
+		Assert.NotNull(expected);
+		Assert.Equal(expected, actual);
 
 		// The pin call itself must not throw on a supported platform.
 		LiquidWalletNativeFactsBinding.EnsurePinnedNativeArtifact();
