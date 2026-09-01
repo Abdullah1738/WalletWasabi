@@ -39,14 +39,31 @@ public sealed class LiquidWalletSession : IAsyncDisposable
 	private readonly string _applicationDataDirectory;
 	private readonly string _liquidWalletDirectory;
 	private readonly SemaphoreSlim _clientGate = new(1, 1);
+	private readonly Func<LiquidWalletSession, string, string, string, CancellationToken, Task<LiquidWalletModel>> _openCore;
 	private LiquidWalletApplicationClient? _client;
 
 	public LiquidWalletSession(string applicationDataDirectory, string liquidWalletDirectory)
+		: this(applicationDataDirectory, liquidWalletDirectory, openCore: null)
+	{
+	}
+
+	/// <summary>
+	/// Test seam: <paramref name="openCore"/> replaces the production open body
+	/// (client acquisition, authenticated open, refresh-on-open) while keeping
+	/// the surrounding resilience wrapper — the transient node-generation retry
+	/// — under test. Production passes <see langword="null"/> and uses
+	/// <see cref="OpenWalletCoreAsync"/>.
+	/// </summary>
+	internal LiquidWalletSession(
+		string applicationDataDirectory,
+		string liquidWalletDirectory,
+		Func<LiquidWalletSession, string, string, string, CancellationToken, Task<LiquidWalletModel>>? openCore)
 	{
 		ArgumentException.ThrowIfNullOrEmpty(applicationDataDirectory);
 		ArgumentException.ThrowIfNullOrEmpty(liquidWalletDirectory);
 		_applicationDataDirectory = Path.GetFullPath(applicationDataDirectory);
 		_liquidWalletDirectory = Path.GetFullPath(liquidWalletDirectory);
+		_openCore = openCore ?? OpenWalletCoreAsync;
 	}
 
 	private static ElementsPublicNetworkManifest Manifest => ElementsPublicNetworkManifest.LiquidTestnet;
@@ -168,14 +185,27 @@ public sealed class LiquidWalletSession : IAsyncDisposable
 		SetOwnerOnly(walletFile);
 	}
 
+	// The transient node-generation race retries at most this many times after
+	// the first attempt before the error surfaces.
+	private const int TransientGenerationMaxRetries = 2;
+
+	// Small backoff between transient node-generation retries; a testnet block
+	// lands well outside this window, so the retry re-acquires against the new
+	// tip instead of racing the same landing block.
+	private static readonly TimeSpan TransientGenerationRetryDelay = TimeSpan.FromMilliseconds(150);
+
 	/// <summary>
 	/// Opens an existing Liquid wallet file by password, issues one manual
 	/// refresh against the node so a funded wallet shows its balance, and
 	/// returns a populated <see cref="LiquidWalletModel"/>. Fail-closed: a
 	/// missing file, wrong password, unreachable node, or any landed rejection
-	/// surfaces as-is.
+	/// surfaces as-is. The single transient exception is the acquisition-window
+	/// node-generation race (a testnet block landing mid-acquisition): the open
+	/// is retried with a small backoff, and a failed attempt leaves no session
+	/// registered, so an immediate retry — automatic or user-driven — is never
+	/// blocked by a stuck open guard.
 	/// </summary>
-	public async Task<LiquidWalletModel> OpenWalletAsync(
+	public Task<LiquidWalletModel> OpenWalletAsync(
 		string walletName,
 		string walletFilePath,
 		string password,
@@ -185,7 +215,53 @@ public sealed class LiquidWalletSession : IAsyncDisposable
 		ArgumentException.ThrowIfNullOrEmpty(walletFilePath);
 		ArgumentNullException.ThrowIfNull(password);
 
-		LiquidWalletApplicationClient client = await GetOrCreateClientAsync(cancellationToken).ConfigureAwait(false);
+		return RunWithTransientGenerationRetryAsync(
+			() => _openCore(this, walletName, walletFilePath, password, cancellationToken),
+			cancellationToken);
+	}
+
+	/// <summary>
+	/// Runs an open-path acquisition, retrying only the transient
+	/// node-generation race (an <see cref="InvalidOperationException"/> or
+	/// <see cref="WalletWasabi.Liquid.Rpc.ElementsRpcException"/> whose message
+	/// carries the acquisition-window fence text) with a small backoff. Every
+	/// other rejection — wrong password, unreachable node, any landed
+	/// non-transient failure — surfaces on the first attempt, unretried.
+	/// </summary>
+	private static async Task<LiquidWalletModel> RunWithTransientGenerationRetryAsync(
+		Func<Task<LiquidWalletModel>> attempt,
+		CancellationToken cancellationToken)
+	{
+		for (int retriesUsed = 0; ; retriesUsed++)
+		{
+			try
+			{
+				return await attempt().ConfigureAwait(false);
+			}
+			catch (Exception ex) when (retriesUsed < TransientGenerationMaxRetries && IsTransientNodeGenerationRace(ex))
+			{
+				await Task.Delay(TransientGenerationRetryDelay, cancellationToken).ConfigureAwait(false);
+			}
+		}
+	}
+
+	private static bool IsTransientNodeGenerationRace(Exception exception) =>
+		exception is InvalidOperationException or WalletWasabi.Liquid.Rpc.ElementsRpcException
+		&& exception.Message.Contains("node generation changed during the acquisition", StringComparison.Ordinal);
+
+	/// <summary>
+	/// The production open body: acquires the application client, opens the
+	/// authenticated session, and refreshes once so a funded wallet presents
+	/// its current balance and retained history.
+	/// </summary>
+	private static async Task<LiquidWalletModel> OpenWalletCoreAsync(
+		LiquidWalletSession session,
+		string walletName,
+		string walletFilePath,
+		string password,
+		CancellationToken cancellationToken)
+	{
+		LiquidWalletApplicationClient client = await session.GetOrCreateClientAsync(cancellationToken).ConfigureAwait(false);
 
 		char[] passwordChars = password.ToCharArray();
 		try
@@ -199,20 +275,10 @@ public sealed class LiquidWalletSession : IAsyncDisposable
 
 			// Refresh once on open so an already-funded wallet presents its
 			// current balance; the refreshed handoff (when published) replaces
-			// the open-time one. The generation fence can trip when a testnet
-			// block lands mid-acquisition — retry once on that specific race.
-			try
-			{
-				await client.RefreshCommand(
-					new LiquidWalletUiRefreshRequest(walletName, LiquidWalletUiRefreshTrigger.Manual, null),
-					cancellationToken).ConfigureAwait(false);
-			}
-			catch (InvalidOperationException ex) when (ex.Message.Contains("node generation changed during the acquisition", StringComparison.Ordinal))
-			{
-				await client.RefreshCommand(
-					new LiquidWalletUiRefreshRequest(walletName, LiquidWalletUiRefreshTrigger.Manual, null),
-					cancellationToken).ConfigureAwait(false);
-			}
+			// the open-time one.
+			await client.RefreshCommand(
+				new LiquidWalletUiRefreshRequest(walletName, LiquidWalletUiRefreshTrigger.Manual, null),
+				cancellationToken).ConfigureAwait(false);
 
 			LiquidWalletRuntimeHandoff current = client.CurrentHandoff ?? handoff;
 			ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.GetByManifestId(current.NetworkManifestId);
