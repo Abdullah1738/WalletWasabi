@@ -88,11 +88,12 @@ public class LiquidWalletSignerKeyAdapterTests
 			out ECPubKey? publicKey));
 		Assert.NotNull(publicKey);
 
-		// SigVerify takes the 32-byte message in little-endian order; the adapter receives
-		// the digest big-endian and signs it via uint256(lendian: false), so flip for verify.
-		byte[] littleEndianDigest = [.. digest];
-		Array.Reverse(littleEndianDigest);
-		Assert.True(publicKey.SigVerify(parsed, littleEndianDigest));
+		// The native ordinary-PSET signer (ordinary-pset/src/signing.rs) builds its secp256k1
+		// Message from the exact 32 digest bytes it passes across the callback and verifies the
+		// returned signature against that same message. SigVerify's 32-byte message argument is
+		// fed to libsecp256k1 verbatim — the same raw-byte convention — so the signature must
+		// verify against the ORIGINAL digest bytes with no byte-order transformation.
+		Assert.True(publicKey.SigVerify(parsed, digest));
 	}
 
 	// The fail-closed contract is unchanged by the format fix: a non-hex digest, a wrong-length

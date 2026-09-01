@@ -103,9 +103,13 @@ internal sealed class LiquidWalletSignerKeyAdapter : ILiquidWalletSigner, IDispo
 
 		try
 		{
-			// The digest bytes are the big-endian 32-byte sighash; uint256 must not
-			// reinterpret them in little-endian order.
-			uint256 hash = new(digest, lendian: false);
+			// Key.Sign feeds hash.ToBytes() to the secp256k1 signer, and ToBytes() returns the
+			// uint256 limbs little-endian. The native ordinary-PSET signer
+			// (ordinary-pset/src/signing.rs) builds its secp256k1 Message from the exact digest
+			// bytes it passes across the callback and verifies against that same message, so
+			// those exact bytes must reach the signer unchanged. Constructing the uint256
+			// little-endian makes ToBytes() round-trip to the identical callback digest.
+			uint256 hash = new(digest, lendian: true);
 
 			// The native binding validates strict DER plus the trailing AllPlusRangeproof
 			// sighash byte, so the signature crosses the seam as the canonical low-S DER
