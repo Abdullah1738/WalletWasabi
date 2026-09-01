@@ -22,6 +22,13 @@ internal sealed class LiquidWalletSignerKeyAdapter : ILiquidWalletSigner, IDispo
 	private const uint PurposeBranch = 2089617494;
 	private const uint CoinTypeBranch = 1984574463;
 
+	/// <summary>
+	/// The pinned <c>EcdsaSighashType::AllPlusRangeproof</c> trailing sighash byte the native
+	/// ordinary-PSET signer requires after the strict-DER signature
+	/// (<c>ordinary-pset/src/signing.rs</c> appends <c>ORDINARY_SIGHASH_TYPE</c> the same way).
+	/// </summary>
+	private const byte SighashAllPlusRangeproofByte = 0x41;
+
 	private readonly ExtKey _masterKey;
 	private readonly Func<string, (int Account, int Change, int Index)?> _outpointLocator;
 	private readonly byte[] _masterKeyBytes;
@@ -100,9 +107,10 @@ internal sealed class LiquidWalletSignerKeyAdapter : ILiquidWalletSigner, IDispo
 			// reinterpret them in little-endian order.
 			uint256 hash = new(digest, lendian: false);
 
-			// The native binding validates strict DER, so the signature crosses the
-			// seam as the canonical low-S DER encoding rather than a compact form.
-			return Convert.ToHexStringLower(spendKey.Sign(hash).ToDER());
+			// The native binding validates strict DER plus the trailing AllPlusRangeproof
+			// sighash byte, so the signature crosses the seam as the canonical low-S DER
+			// encoding (rather than a compact form) with that byte appended.
+			return Convert.ToHexStringLower([.. spendKey.Sign(hash).ToDER(), SighashAllPlusRangeproofByte]);
 		}
 		finally
 		{
