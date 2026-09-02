@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:liquid="clr-namespace:WalletWasabi.Fluent.ViewModels.Wallets.Liquid"
+             xmlns:views="clr-namespace:WalletWasabi.Fluent.Views.Wallets.Liquid"
              xmlns:ui="clr-namespace:WalletWasabi.Liquid.Wallet.Ui;assembly=WalletWasabi"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:DataType="liquid:LiquidSendViewModel"
@@ -14,16 +15,11 @@
                ScrollViewer.VerticalScrollBarVisibility="Auto">
     <StackPanel Spacing="12">
 
-      <!-- The recipient row: confidential address, asset id, raw atomic-units amount. -->
+      <!-- The recipient row: confidential address, asset dropdown, raw
+           atomic-units amount — one implementation hosted from
+           LiquidSendRecipientView. -->
       <TextBlock Text="Confidential destination" Classes="h5" />
-      <TextBox Watermark="Confidential address"
-               Classes="monoSpaced"
-               Text="{Binding Recipient.ConfidentialAddressText}" />
-      <TextBox Watermark="Asset id (64-char hex)"
-               Classes="monoSpaced"
-               Text="{Binding Recipient.AssetIdHex}" />
-      <TextBox Watermark="Amount (atomic units)"
-               Text="{Binding Recipient.AtomicUnits}" />
+      <views:LiquidSendRecipientView DataContext="{Binding Recipient}" />
 
       <!-- The caller-supplied selected outpoints and the explicit fee. -->
       <TextBlock Text="Selected outpoints (one 72-char hex per line)" Classes="h5" />

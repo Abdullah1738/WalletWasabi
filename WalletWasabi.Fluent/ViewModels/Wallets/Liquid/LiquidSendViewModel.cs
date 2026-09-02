@@ -55,7 +55,7 @@ public partial class LiquidSendViewModel : RoutableViewModel
 	{
 		WalletModel = walletModel;
 		ExecuteSendCommand = executeSendCommand;
-		Recipient = new LiquidSendRecipientViewModel(uiContext);
+		Recipient = new LiquidSendRecipientViewModel(uiContext, walletModel);
 
 		SetupCancel(enableCancel: true, enableCancelOnEscape: true, enableCancelOnPressed: true);
 		EnableBack = true;

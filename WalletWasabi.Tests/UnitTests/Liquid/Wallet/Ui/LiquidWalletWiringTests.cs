@@ -9,6 +9,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.VisualTree;
 using NBitcoin;
 using ReactiveUI;
 using WalletWasabi.Blockchain.Analysis.Clustering;
@@ -490,6 +491,118 @@ public class LiquidWalletWiringTests
 
 		LiquidWalletUiSnapshot snapshot = LiquidWalletUiSnapshot.Capture(name, Manifest, state);
 		return new LiquidWalletModel(name, Manifest, snapshot, ReceiveScript, BlindingKey);
+	}
+
+	// Slice LIQUID-UI-SEND-ASSET-PICKER-001 headless evidence: render the real
+	// LiquidSendView (which hosts the single LiquidSendRecipientView) over a
+	// wallet holding the pegged asset plus one issued asset, and prove the
+	// asset selector is a ComboBox bound from the balance snapshot — the
+	// pegged asset first, the issued asset second — that the default
+	// selection is the pegged asset, and that picking an item drives
+	// Recipient.AssetIdHex (the property the plan/sign path consumes). The
+	// compiled bindings are validated by x:CompileBindings at build; this
+	// asserts the live binding path headlessly.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void SendViewAssetSelectorBindsBalancesAndDrivesAssetIdHex()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using LiquidWalletModel model = CreateModel("liquid-send-picker", peggedAtomic: 5_000, issuedAtomic: 7_500);
+		LiquidSendViewModel send = new(uiContext, model);
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidSendView
+		{
+			DataContext = send,
+		};
+
+		var window = new Avalonia.Controls.Window
+		{
+			Width = 800,
+			Height = 600,
+			Content = view,
+		};
+		window.Show();
+		try
+		{
+			view.Measure(new Avalonia.Size(800, 600));
+			view.Arrange(new Avalonia.Rect(0, 0, 800, 600));
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+			// The asset selector is the only ComboBox in the send view.
+			Avalonia.Controls.ComboBox combo = view.GetVisualDescendants()
+				.OfType<Avalonia.Controls.ComboBox>()
+				.Single();
+
+			// Two options from the snapshot, pegged first then issued in
+			// canonical order; default selection is the pegged asset.
+			var items = combo.Items.Cast<LiquidAssetBalanceItemViewModel>().ToArray();
+			Assert.Equal(2, items.Length);
+			Assert.True(items[0].IsPeggedAsset);
+			Assert.False(items[1].IsPeggedAsset);
+			Assert.Equal(PeggedAsset.CanonicalRpcHex, items[0].AssetIdHex);
+			Assert.Equal(IssuedAssetA.CanonicalRpcHex, items[1].AssetIdHex);
+			Assert.Same(items[0], combo.SelectedItem);
+			Assert.Equal(PeggedAsset.CanonicalRpcHex, send.Recipient.AssetIdHex);
+
+			// Picking the issued asset drives Recipient.AssetIdHex.
+			combo.SelectedItem = items[1];
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.Equal(IssuedAssetA.CanonicalRpcHex, send.Recipient.AssetIdHex);
+		}
+		finally
+		{
+			window.Close();
+		}
+	}
+
+	// The default selection reseeds when a balance refresh drops the held
+	// asset: after the issued asset leaves the balance set, the selection
+	// falls back to the pegged asset and Recipient.AssetIdHex follows.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void SendViewAssetSelectorReseedsSelectionOnBalanceRefresh()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using LiquidWalletModel model = CreateModel("liquid-send-reseed", peggedAtomic: 5_000, issuedAtomic: 7_500);
+		LiquidSendViewModel send = new(uiContext, model);
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidSendView
+		{
+			DataContext = send,
+		};
+
+		var window = new Avalonia.Controls.Window
+		{
+			Width = 800,
+			Height = 600,
+			Content = view,
+		};
+		window.Show();
+		try
+		{
+			view.Measure(new Avalonia.Size(800, 600));
+			view.Arrange(new Avalonia.Rect(0, 0, 800, 600));
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+			Avalonia.Controls.ComboBox combo = view.GetVisualDescendants()
+				.OfType<Avalonia.Controls.ComboBox>()
+				.Single();
+			var items = combo.Items.Cast<LiquidAssetBalanceItemViewModel>().ToArray();
+			combo.SelectedItem = items[1];
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.Equal(IssuedAssetA.CanonicalRpcHex, send.Recipient.AssetIdHex);
+
+			// A refresh that drops the issued asset reseeds to the pegged one.
+			LiquidWalletState peggedOnly = LiquidWalletState.Empty(PeggedAsset)
+				.Apply(0, Delta(Tx('d'), [], [Output(Tx('d'), 0, PeggedAsset, 9_000)]));
+			model.RefreshBalances(LiquidWalletUiSnapshot.Capture("liquid-send-reseed", Manifest, peggedOnly));
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+			Assert.Equal(PeggedAsset.CanonicalRpcHex, send.Recipient.AssetIdHex);
+			var refreshed = combo.Items.Cast<LiquidAssetBalanceItemViewModel>().Single();
+			Assert.True(refreshed.IsPeggedAsset);
+			Assert.Same(refreshed, combo.SelectedItem);
+		}
+		finally
+		{
+			window.Close();
+		}
 	}
 
 	private static LiquidTransactionId Tx(char value) =>

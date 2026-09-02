@@ -3,18 +3,40 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:liquid="clr-namespace:WalletWasabi.Fluent.ViewModels.Wallets.Liquid"
-             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="120"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="160"
              x:DataType="liquid:LiquidSendRecipientViewModel"
              x:CompileBindings="True"
              x:Class="WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidSendRecipientView">
-  <!-- One recipient row: confidential address, asset id, raw atomic-units amount. -->
+  <!-- One recipient row: confidential address, asset dropdown bound from the
+       wallet's balance set, raw atomic-units amount. -->
   <StackPanel Spacing="8">
     <TextBox Watermark="Confidential address"
              Classes="monoSpaced"
              Text="{Binding ConfidentialAddressText}" />
-    <TextBox Watermark="Asset id (64-char hex)"
-             Classes="monoSpaced"
-             Text="{Binding AssetIdHex}" />
+    <!-- The asset selector: one option per held asset, the pegged asset
+         (L-BTC) first, then the issued assets in canonical order; each
+         option shows the asset id hex and the exact atomic-unit balance.
+         An empty balance set leaves the dropdown empty — no fabricated
+         asset. -->
+    <ComboBox ItemsSource="{Binding AssetOptions}"
+              SelectedItem="{Binding SelectedAsset}"
+              HorizontalAlignment="Stretch"
+              HorizontalContentAlignment="Stretch"
+              PlaceholderText="Asset (from wallet balances)">
+      <ComboBox.ItemTemplate>
+        <DataTemplate x:DataType="liquid:LiquidAssetBalanceItemViewModel">
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Right" Margin="8 0 0 0"
+                       Text="L-BTC" IsVisible="{Binding IsPeggedAsset}" />
+            <TextBlock DockPanel.Dock="Right" Classes="monoSpaced"
+                       Text="{Binding AtomicUnits, StringFormat='{}{0} atomic units'}" />
+            <TextBlock DockPanel.Dock="Left" Classes="monoSpaced"
+                       TextTrimming="CharacterEllipsis"
+                       Text="{Binding AssetIdHex}" />
+          </DockPanel>
+        </DataTemplate>
+      </ComboBox.ItemTemplate>
+    </ComboBox>
     <TextBox Watermark="Amount (atomic units)"
              Text="{Binding AtomicUnits}" />
   </StackPanel>
