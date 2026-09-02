@@ -15,9 +15,11 @@
              Text="{Binding ConfidentialAddressText}" />
     <!-- The asset selector: one option per held asset, the pegged asset
          (L-BTC) first, then the issued assets in canonical order; each
-         option shows the asset id hex and the exact atomic-unit balance.
-         An empty balance set leaves the dropdown empty — no fabricated
-         asset. -->
+         option shows the asset id hex and the pegged-aware balance display —
+         the L-BTC decimal form for the pegged asset, the raw atomic-unit
+         count for any issued asset (an issued asset has no known precision —
+         never scaled). An empty balance set leaves the dropdown empty — no
+         fabricated asset. -->
     <ComboBox ItemsSource="{Binding AssetOptions}"
               SelectedItem="{Binding SelectedAsset}"
               HorizontalAlignment="Stretch"
@@ -26,10 +28,8 @@
       <ComboBox.ItemTemplate>
         <DataTemplate x:DataType="liquid:LiquidAssetBalanceItemViewModel">
           <DockPanel>
-            <TextBlock DockPanel.Dock="Right" Margin="8 0 0 0"
-                       Text="L-BTC" IsVisible="{Binding IsPeggedAsset}" />
             <TextBlock DockPanel.Dock="Right" Classes="monoSpaced"
-                       Text="{Binding AtomicUnits, StringFormat='{}{0} atomic units'}" />
+                       Text="{Binding BalanceDisplayText}" />
             <TextBlock DockPanel.Dock="Left" Classes="monoSpaced"
                        TextTrimming="CharacterEllipsis"
                        Text="{Binding AssetIdHex}" />

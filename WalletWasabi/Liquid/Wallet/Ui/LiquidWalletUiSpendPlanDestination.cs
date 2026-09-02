@@ -14,7 +14,8 @@ namespace WalletWasabi.Liquid.Wallet.Ui;
 /// <see langword="true"/>. The projection copies every value out of the
 /// landed internal destination; the internal type never crosses the
 /// assembly boundary. No retry, no fallback, no caching, no filtering, and
-/// no formatting.
+/// no formatting beyond the additive pegged-asset marker the presentation
+/// layer uses to pick its display convention.
 /// </summary>
 public sealed class LiquidWalletUiSpendPlanDestination
 {
@@ -22,11 +23,13 @@ public sealed class LiquidWalletUiSpendPlanDestination
 		string confidentialAddressText,
 		string unconfidentialAddressText,
 		string assetIdHex,
+		bool isPeggedAsset,
 		long atomicUnits)
 	{
 		ConfidentialAddressText = confidentialAddressText;
 		UnconfidentialAddressText = unconfidentialAddressText;
 		AssetIdHex = assetIdHex;
+		IsPeggedAsset = isPeggedAsset;
 		AtomicUnits = atomicUnits;
 		IsConfidential = true;
 	}
@@ -34,6 +37,13 @@ public sealed class LiquidWalletUiSpendPlanDestination
 	public string ConfidentialAddressText { get; }
 	public string UnconfidentialAddressText { get; }
 	public string AssetIdHex { get; }
+
+	/// <summary>
+	/// Whether the destination asset is the wallet's pegged asset (L-BTC).
+	/// Additive presentation flag: the view uses it to pick the L-BTC
+	/// decimal display convention; issued assets stay in atomic units.
+	/// </summary>
+	public bool IsPeggedAsset { get; }
 	public long AtomicUnits { get; }
 	public bool IsConfidential { get; }
 
@@ -50,6 +60,7 @@ public sealed class LiquidWalletUiSpendPlanDestination
 			address.GetCanonicalAddressText(),
 			address.GetUnconfidentialAddressText(),
 			destination.GetAssetId().CanonicalRpcHex,
+			destination.GetAmount()!.IsPeggedAsset,
 			destination.GetAmount()!.AtomicUnits);
 	}
 }

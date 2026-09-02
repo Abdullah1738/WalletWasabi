@@ -605,6 +605,39 @@ public class LiquidWalletWiringTests
 		}
 	}
 
+	// The balance-row display amount is pegged-aware: the pegged asset renders
+	// its protocol-fixed 1e8 L-BTC decimal form, while an issued asset (no
+	// known precision) stays in raw atomic units. This is the string the
+	// wallet-home balance rows and the send asset-picker options render.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void BalanceRowDisplayAmountIsPeggedAware()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using LiquidWalletModel model = CreateModel("liquid-balance-display", peggedAtomic: 123_456, issuedAtomic: 7_500);
+		LiquidWalletViewModel wallet = new(uiContext, model);
+
+		LiquidAssetBalanceItemViewModel pegged = wallet.BalanceRows!.Single(row => row.IsPeggedAsset);
+		LiquidAssetBalanceItemViewModel issued = wallet.BalanceRows!.Single(row => !row.IsPeggedAsset);
+
+		// Pegged: 123_456 atomic units = 0.00123456 L-BTC, Wasabi's fixed
+		// eight-fraction-digit space-grouped form. Issued: raw atomic units.
+		Assert.Equal("0.00 123 456 L-BTC", pegged.BalanceDisplayText);
+		Assert.Equal("7500 atomic units", issued.BalanceDisplayText);
+	}
+
+	// The send-plan asset-amount wrapper renders the pegged explicit fee as an
+	// L-BTC decimal and any issued selected total in raw atomic units.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void SpendPlanAssetAmountDisplayIsPeggedAware()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		LiquidWalletUiAssetAmount peggedFee = LiquidWalletUiAssetAmount.FromTotal(PeggedAsset.CanonicalRpcHex, true, 100);
+		LiquidWalletUiAssetAmount issuedTotal = LiquidWalletUiAssetAmount.FromTotal(IssuedAssetA.CanonicalRpcHex, false, 2_000);
+
+		Assert.Equal("0.00 000 100 L-BTC", new LiquidSpendPlanAssetAmountItemViewModel(uiContext, peggedFee).AmountDisplayText);
+		Assert.Equal("2000 atomic units", new LiquidSpendPlanAssetAmountItemViewModel(uiContext, issuedTotal).AmountDisplayText);
+	}
+
 	private static LiquidTransactionId Tx(char value) =>
 		LiquidTransactionId.ParseRpcHex(new string(value, 64));
 

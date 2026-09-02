@@ -44,18 +44,19 @@
            WalletBalanceTileView.axaml's pattern (CopyableItem +
            PrivacyContentControl around the amount). The tile mirrors the
            pegged row of BalanceRows — no USD BottomContent (a Liquid issued
-           asset set has no per-asset rate). The tile amount carries the exact
-           atomic-unit value and the decimal L-BTC form; every on-chain value
-           is confidential. -->
+           asset set has no per-asset rate). The tile amount shows the
+           decimal L-BTC form (the pegged asset's protocol-fixed 1e8
+           precision, Wasabi's conventional BTC fraction digits) and copies
+           the same; every on-chain value is confidential. -->
       <TileControl Title="BALANCE" Height="140"
                    HorizontalAlignment="Stretch"
                    IsVisible="{Binding PeggedBalanceRow, Converter={x:Static ObjectConverters.IsNotNull}}">
-        <CopyableItem ContentToCopy="{Binding PeggedBalanceRow.AtomicUnits, StringFormat={}{0}}"
+        <CopyableItem ContentToCopy="{Binding PeggedBalanceRow.BalanceDisplayText}"
                       HorizontalContentAlignment="Center">
           <PrivacyContentControl Classes="h3" Margin="4" HorizontalContentAlignment="Center">
             <StackPanel>
               <TextBlock HorizontalAlignment="Center" TextWrapping="Wrap"
-                         Text="{Binding PeggedBalanceRow.AtomicUnits, StringFormat={}{0} L-BTC}" />
+                         Text="{Binding PeggedBalanceRow.BalanceDisplayText}" />
               <TextBlock Classes="monoSpaced" HorizontalAlignment="Center" Opacity="0.6"
                          TextWrapping="Wrap"
                          Text="{Binding PeggedBalanceRow.AssetIdHex}" />
@@ -67,9 +68,11 @@
       <!-- The multiasset balance set: one row per asset, pegged asset (L-BTC)
            first, then issued assets in the landed canonical ascending
            asset-id-hex order. Each row renders the asset id's canonical hex
-           and the exact atomic-unit amount; every value is confidential on
-           chain. The tile above mirrors the pegged row — this list stays the
-           complete per-asset record. -->
+           and the pegged-aware display amount: the L-BTC decimal form for
+           the pegged asset, the raw atomic-unit count for any issued asset
+           (an issued asset has no known precision — never scaled); every
+           value is confidential on chain. The tile above mirrors the pegged
+           row — this list stays the complete per-asset record. -->
       <ItemsControl ItemsSource="{Binding BalanceRows}" Margin="6 0 6 0">
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="liquid:LiquidAssetBalanceItemViewModel">
@@ -77,9 +80,7 @@
               <TextBlock DockPanel.Dock="Left" Classes="monoSpaced"
                          Text="{Binding AssetIdHex}" />
               <TextBlock DockPanel.Dock="Right" Classes="monoSpaced"
-                         Text="{Binding AtomicUnits}" />
-              <TextBlock DockPanel.Dock="Right" Margin="8 0 8 0"
-                         Text="L-BTC" IsVisible="{Binding IsPeggedAsset}" />
+                         Text="{Binding BalanceDisplayText}" />
               <TextBlock DockPanel.Dock="Right" Margin="8 0 0 0"
                          Text="confidential" IsVisible="{Binding IsConfidential}" />
             </DockPanel>

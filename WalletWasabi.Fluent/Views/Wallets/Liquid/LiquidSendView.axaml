@@ -62,28 +62,32 @@
                  Text="{Binding ExecutionErrorText}"
                  IsVisible="{Binding ExecutionErrorText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
 
-      <!-- The exact spend plan is the send flow's primary content. -->
+      <!-- The exact spend plan is the send flow's primary content. Amounts
+           render the pegged-aware display form: the L-BTC decimal for the
+           pegged asset (the explicit fee is always pegged-denominated), the
+           raw atomic-unit count for any issued asset (unknown precision —
+           never scaled). -->
       <StackPanel IsVisible="{Binding SpendPlan, Converter={x:Static ObjectConverters.IsNotNull}}" Spacing="8">
         <TextBlock Text="Exact spend plan" Classes="h5" />
         <TextBlock Classes="monoSpaced" Text="{Binding SpendPlan.SelectedInputCount, StringFormat='Selected inputs: {0}'}" />
         <TextBlock Classes="monoSpaced" Text="{Binding SpendPlan.ConfidentialOutputCount, StringFormat='Confidential outputs: {0}'}" />
         <TextBlock Classes="monoSpaced" Text="{Binding SpendPlan.SourceRevision, StringFormat='Source revision: {0}'}" />
-        <TextBlock Classes="monoSpaced" Text="{Binding SpendPlan.ExplicitFee.AtomicUnits, StringFormat='Explicit fee: {0} atomic units'}" />
+        <TextBlock Classes="monoSpaced" Text="{Binding SpendPlan.ExplicitFee.AmountDisplayText, StringFormat='Explicit fee: {0}'}" />
         <ItemsControl ItemsSource="{Binding SpendPlan.Destinations}">
           <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="ui:LiquidWalletUiSpendPlanDestination">
+            <DataTemplate x:DataType="liquid:LiquidSpendPlanDestinationItemViewModel">
               <StackPanel Spacing="2">
                 <TextBlock Classes="monoSpaced" TextWrapping="Wrap" Text="{Binding ConfidentialAddressText}" />
                 <TextBlock Classes="monoSpaced" Text="{Binding AssetIdHex}" />
-                <TextBlock Classes="monoSpaced" Text="{Binding AtomicUnits, StringFormat='{}{0} atomic units'}" />
+                <TextBlock Classes="monoSpaced" Text="{Binding AmountDisplayText}" />
               </StackPanel>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
         <ItemsControl ItemsSource="{Binding SpendPlan.SelectedTotals}">
           <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="ui:LiquidWalletUiAssetAmount">
-              <TextBlock Classes="monoSpaced" Text="{Binding AtomicUnits, StringFormat='{}{0} atomic units'}" />
+            <DataTemplate x:DataType="liquid:LiquidSpendPlanAssetAmountItemViewModel">
+              <TextBlock Classes="monoSpaced" Text="{Binding AmountDisplayText}" />
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>

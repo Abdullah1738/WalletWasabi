@@ -41,7 +41,7 @@ namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 	Searchable = false)]
 public partial class LiquidSendViewModel : RoutableViewModel
 {
-	[AutoNotify] private LiquidWalletUiSpendPlan? _spendPlan;
+	[AutoNotify] private LiquidSpendPlanItemViewModel? _spendPlan;
 	[AutoNotify] private string _selectedOutPointHexesText = "";
 	[AutoNotify] private long _explicitFeeAtomicUnits;
 	[AutoNotify] private LiquidWalletUiSendExecutionResult? _executionResult;
@@ -166,7 +166,7 @@ public partial class LiquidSendViewModel : RoutableViewModel
 			['\r', '\n', ' ', ',', ';'],
 			StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-		SpendPlan = WalletModel.CreateSpendPlan(
+		SpendPlan = new LiquidSpendPlanItemViewModel(UiContext, WalletModel.CreateSpendPlan(
 			walletDataDir,
 			key,
 			externalWalletNetworkContext,
@@ -175,7 +175,7 @@ public partial class LiquidSendViewModel : RoutableViewModel
 			Recipient.AssetIdHex,
 			Recipient.AtomicUnits,
 			ExplicitFeeAtomicUnits,
-			Snapshot?.Revision);
+			Snapshot?.Revision));
 	}
 
 	// The snapshot revision the UI last rendered — the caller's freshness
