@@ -92,7 +92,7 @@ public class LiquidWalletReplayProtectionTests
 	}
 
 	[Fact]
-	public void ProtectedPayloadV3RoundTripsExternalAndInternalHighWaters()
+	public void ProtectedPayloadV4RoundTripsExternalAndInternalHighWaters()
 	{
 		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
 		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
@@ -108,8 +108,8 @@ public class LiquidWalletReplayProtectionTests
 			Assert.Equal(11ul, opened.ExternalIndexHighWater);
 			Assert.Equal(22ul, opened.InternalIndexHighWater);
 			Assert.Equal(4ul, opened.Snapshot.Revision);
-			// The current payload version header is 3.
-			Assert.Equal(3, BinaryPrimitives.ReadUInt16LittleEndian(envelope.AsSpan(10)));
+			// The current payload version header is 4.
+			Assert.Equal(4, BinaryPrimitives.ReadUInt16LittleEndian(envelope.AsSpan(10)));
 		}
 		finally
 		{
@@ -125,7 +125,8 @@ public class LiquidWalletReplayProtectionTests
 	[Theory]
 	[InlineData(1)]
 	[InlineData(2)]
-	public void LegacyPayloadVersionsOpenWithZeroInternalIndexHighWater(ushort legacyPayloadVersion)
+	[InlineData(3)]
+	public void LegacyPayloadVersionsOpenWithEmptyReceiveLabels(ushort legacyPayloadVersion)
 	{
 		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
 		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
@@ -133,15 +134,26 @@ public class LiquidWalletReplayProtectionTests
 		try
 		{
 			envelope = CreateLegacyPayloadEnvelope(
-				CreateReplaySnapshot(), generation: 7, key, context, legacyPayloadVersion, externalIndexHighWater: 5);
+				CreateReplaySnapshot(),
+				generation: 7,
+				key,
+				context,
+				legacyPayloadVersion,
+				externalIndexHighWater: 5,
+				internalIndexHighWater: 6);
 
 			LiquidWalletReplayOpenResult opened =
 				LiquidWalletReplayProtectedPayload.Open(envelope, key, context);
 
 			Assert.Equal(7ul, opened.Generation);
-			Assert.Equal(0ul, opened.InternalIndexHighWater);
-			// v1 carries no external high-water (reads 0); v2 carries it.
-			Assert.Equal(legacyPayloadVersion == 2 ? 5ul : 0ul, opened.ExternalIndexHighWater);
+			// v1/v2 carry no internal high-water (read 0); v3 carries it.
+			Assert.Equal(legacyPayloadVersion == 3 ? 6ul : 0ul, opened.InternalIndexHighWater);
+			// v1 carries no external high-water (reads 0); v2/v3 carry it.
+			Assert.Equal(legacyPayloadVersion >= 2 ? 5ul : 0ul, opened.ExternalIndexHighWater);
+			// v1/v2/v3 all import the receive-label map as empty.
+			Assert.Equal(0, opened.ReceiveLabelCount);
+			Assert.False(opened.TryGetReceiveLabels(0, out _));
+			Assert.Empty(opened.Snapshot.GetReceiveLabels());
 		}
 		finally
 		{
@@ -152,6 +164,99 @@ public class LiquidWalletReplayProtectionTests
 				CryptographicOperations.ZeroMemory(envelope);
 			}
 		}
+	}
+
+	[Fact]
+	public void ReceiveLabelsRoundTripInCanonicalIndexOrder()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		try
+		{
+			LiquidWalletLabelSet savings = LiquidWalletLabelSet.Create(["savings", "vault"]);
+			LiquidWalletLabelSet donation = LiquidWalletLabelSet.Create(["donation"]);
+			// Insert out of index order; the payload must serialize sorted by derivation index.
+			LiquidWalletReplaySnapshot snapshot = WithReceiveLabels(
+				CreateReplaySnapshot(), (7u, savings), (2u, donation));
+
+			LiquidWalletReplayProtectedPayload protectedPayload =
+				LiquidWalletReplayProtectedPayload.Seal(snapshot, 5, key, context, 9, 3);
+			LiquidWalletReplayOpenResult opened = protectedPayload.Open(key, context);
+
+			Assert.Equal(2, opened.ReceiveLabelCount);
+			Assert.True(opened.TryGetReceiveLabels(2, out LiquidWalletLabelSet? atTwo));
+			Assert.True(opened.TryGetReceiveLabels(7, out LiquidWalletLabelSet? atSeven));
+			Assert.Equal(donation, atTwo);
+			Assert.Equal(savings, atSeven);
+			Assert.False(opened.TryGetReceiveLabels(3, out _));
+			// The exported snapshot preserves the label map and re-encodes byte-identically.
+			Assert.Equal(
+				[2u, 7u],
+				opened.Snapshot.GetReceiveLabels().Select(entry => entry.Index));
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(key);
+			CryptographicOperations.ZeroMemory(context);
+		}
+	}
+
+	[Fact]
+	public void ReceiveLabelsEncodeIsCanonicalAcrossInsertionOrder()
+	{
+		LiquidWalletLabelSet alpha = LiquidWalletLabelSet.Create(["alpha"]);
+		LiquidWalletLabelSet beta = LiquidWalletLabelSet.Create(["beta"]);
+		LiquidWalletReplaySnapshot ascending = WithReceiveLabels(
+			CreateReplaySnapshot(), (1u, alpha), (9u, beta));
+		LiquidWalletReplaySnapshot descending = WithReceiveLabels(
+			CreateReplaySnapshot(), (9u, beta), (1u, alpha));
+
+		byte[] ascendingEncoded = LiquidWalletReplayCodec.Encode(ascending);
+		byte[] descendingEncoded = LiquidWalletReplayCodec.Encode(descending);
+		try
+		{
+			Assert.Equal(ascendingEncoded, descendingEncoded);
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(ascendingEncoded);
+			CryptographicOperations.ZeroMemory(descendingEncoded);
+		}
+	}
+
+	[Fact]
+	public void ReceiveLabelsBeyondCapacityRequireRescan()
+	{
+		var entries = new List<(uint, LiquidWalletLabelSet)>();
+		for (uint index = 0; index < LiquidWalletReplayCodec.MaxReceiveLabelEntryCount; index++)
+		{
+			entries.Add((index, LiquidWalletLabelSet.Create(["x"])));
+		}
+		LiquidWalletReplaySnapshot atCapacity = WithReceiveLabels(CreateReplaySnapshot(), entries);
+		Assert.Equal(LiquidWalletReplayCodec.MaxReceiveLabelEntryCount, atCapacity.ReceiveLabelCount);
+
+		// Encoding a snapshot that exceeds the entry ceiling requires a rescan.
+		entries.Add((LiquidWalletReplayCodec.MaxReceiveLabelEntryCount, LiquidWalletLabelSet.Create(["y"])));
+		LiquidWalletReplaySnapshot overCapacity = WithReceiveLabels(CreateReplaySnapshot(), entries);
+		Assert.Throws<LiquidWalletReplayCapacityException>(() => LiquidWalletReplayCodec.Encode(overCapacity));
+	}
+
+	[Fact]
+	public void ReceiveLabelAggregateBytesBeyondCapacityRequireRescan()
+	{
+		// Each set holds one 128-byte label; the aggregate ceiling is below
+		// MaxReceiveLabelEntryCount * 128, so the byte cap binds first.
+		string largeLabel = new('z', LiquidWalletLabelSet.MaximumLabelUtf8ByteCount);
+		uint entryCount = (uint)(LiquidWalletReplayCodec.MaxAggregateReceiveLabelUtf8Bytes /
+			LiquidWalletLabelSet.MaximumLabelUtf8ByteCount);
+		var entries = new List<(uint, LiquidWalletLabelSet)>();
+		for (uint index = 0; index < entryCount + 1; index++)
+		{
+			entries.Add((index, LiquidWalletLabelSet.Create([largeLabel])));
+		}
+
+		LiquidWalletReplaySnapshot snapshot = WithReceiveLabels(CreateReplaySnapshot(), entries);
+		Assert.Throws<LiquidWalletReplayCapacityException>(() => LiquidWalletReplayCodec.Encode(snapshot));
 	}
 
 	[Fact]
@@ -466,6 +571,7 @@ public class LiquidWalletReplayProtectionTests
 				(ulong)deltas.Length,
 				deltas,
 				Array.Empty<LiquidWalletReplayConfirmation>(),
+				Array.Empty<LiquidWalletReceiveLabelEntry>(),
 			]));
 		LiquidWalletReplayConfirmation confirmation = LiquidWalletReplayConfirmation.Create(
 			transactionId,
@@ -478,6 +584,7 @@ public class LiquidWalletReplayProtectionTests
 				Enumerable.Repeat(
 					confirmation,
 					LiquidWalletReplayCodec.MaxConfirmationCount + 1).ToArray(),
+				Array.Empty<LiquidWalletReceiveLabelEntry>(),
 			]));
 		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
 		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
@@ -665,16 +772,18 @@ public class LiquidWalletReplayProtectionTests
 		}
 	}
 
-	// Builds a byte-exact legacy (v1 or v2) envelope: inner prefix generation + canonical length,
-	// the canonical bytes, an external-index high-water only for v2, random padding, sealed under
-	// the supplied legacy payload-version header. No internal high-water is ever written.
+	// Builds a byte-exact legacy (v1, v2, or v3) envelope: inner prefix generation + canonical
+	// length, the canonical bytes, an external-index high-water for v2/v3, an internal-index
+	// high-water only for v3, random padding, sealed under the supplied legacy payload-version
+	// header. No receive-label map is ever written (that field is v4-only).
 	private static byte[] CreateLegacyPayloadEnvelope(
 		LiquidWalletReplaySnapshot snapshot,
 		ulong generation,
 		byte[] key,
 		byte[] context,
 		ushort legacyPayloadVersion,
-		ulong externalIndexHighWater)
+		ulong externalIndexHighWater,
+		ulong internalIndexHighWater = 0)
 	{
 		const int headerLength = 48;
 		const int paddingBucketLength = 4_096;
@@ -682,9 +791,10 @@ public class LiquidWalletReplayProtectionTests
 		const ushort aes256GcmAlgorithm = 1;
 		const int innerPrefixLength = sizeof(ulong) + sizeof(uint);
 
-		byte[] canonical = LiquidWalletReplayCodec.Encode(snapshot);
+		byte[] canonical = LiquidWalletReplayCodec.Encode(snapshot, includeReceiveLabels: false);
 		int innerLength = checked(innerPrefixLength + canonical.Length +
-			(legacyPayloadVersion == 2 ? sizeof(ulong) : 0));
+			(legacyPayloadVersion >= 2 ? sizeof(ulong) : 0) +
+			(legacyPayloadVersion >= 3 ? sizeof(ulong) : 0));
 		int paddedLength = checked(((innerLength + paddingBucketLength - 1) / paddingBucketLength) * paddingBucketLength);
 
 		byte[] plaintext = new byte[paddedLength];
@@ -695,10 +805,15 @@ public class LiquidWalletReplayProtectionTests
 			BinaryPrimitives.WriteUInt64LittleEndian(plaintext, generation);
 			BinaryPrimitives.WriteUInt32LittleEndian(plaintext.AsSpan(sizeof(ulong)), (uint)canonical.Length);
 			canonical.CopyTo(plaintext.AsSpan(innerPrefixLength));
-			if (legacyPayloadVersion == 2)
+			if (legacyPayloadVersion >= 2)
 			{
 				BinaryPrimitives.WriteUInt64LittleEndian(
 					plaintext.AsSpan(innerPrefixLength + canonical.Length), externalIndexHighWater);
+			}
+			if (legacyPayloadVersion >= 3)
+			{
+				BinaryPrimitives.WriteUInt64LittleEndian(
+					plaintext.AsSpan(innerPrefixLength + canonical.Length + sizeof(ulong)), internalIndexHighWater);
 			}
 			RandomNumberGenerator.Fill(plaintext.AsSpan(innerLength));
 
@@ -787,6 +902,26 @@ public class LiquidWalletReplayProtectionTests
 			.Confirm(2, spendId, LiquidConfirmation.Create(OtherBlockHash, 43))
 			.Confirm(3, receiveId, LiquidConfirmation.Create(BlockHash, 42))
 			.ExportReplaySnapshot();
+	}
+
+	// Builds a labeled snapshot by restoring the base snapshot into a state,
+	// applying each (index, labels) binding in order, and re-exporting. This
+	// mirrors exactly how the wallet derives the durable label map.
+	private static LiquidWalletReplaySnapshot WithReceiveLabels(
+		LiquidWalletReplaySnapshot snapshot,
+		params (uint Index, LiquidWalletLabelSet Labels)[] bindings) =>
+		WithReceiveLabels(snapshot, (IEnumerable<(uint, LiquidWalletLabelSet)>)bindings);
+
+	private static LiquidWalletReplaySnapshot WithReceiveLabels(
+		LiquidWalletReplaySnapshot snapshot,
+		IEnumerable<(uint Index, LiquidWalletLabelSet Labels)> bindings)
+	{
+		LiquidWalletState state = LiquidWalletState.RestoreReplaySnapshot(snapshot);
+		foreach ((uint index, LiquidWalletLabelSet labels) in bindings)
+		{
+			state = state.SetReceiveLabels(index, labels);
+		}
+		return state.ExportReplaySnapshot();
 	}
 
 	private static LiquidWalletReplaySnapshot CreateMaximumReplaySnapshot()

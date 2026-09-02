@@ -137,6 +137,25 @@ public static class LiquidWalletUiFacade
 	}
 
 	/// <summary>
+	/// Reads the durable label set bound to one receive (branch-0) derivation
+	/// <paramref name="index"/> from the already-loaded
+	/// <paramref name="state"/>, projected to an immutable list of label
+	/// strings for the Fluent layer. An index with no label projects as an
+	/// empty list (never null). It is <see langword="internal"/> — not
+	/// <see langword="public"/> — for exactly the reason the landed
+	/// <see cref="CaptureBalances"/> is internal: it names the internal
+	/// <see cref="LiquidWalletState"/>. The <paramref name="state"/> reference
+	/// is used only for the duration of the call and is never stored. This
+	/// read performs no I/O, no persistence, and no key derivation.
+	/// </summary>
+	internal static IReadOnlyList<string> ReadReceiveLabels(LiquidWalletState state, uint index)
+	{
+		ArgumentNullException.ThrowIfNull(state);
+		LiquidWalletLabelSet? labels = state.GetReceiveLabels(index);
+		return labels is null ? [] : labels.GetLabels();
+	}
+
+	/// <summary>
 	/// Derives and projects one confidential receive address from the
 	/// caller-supplied next-receive script and blinding public key. The
 	/// caller owns the script and blinding-key derivation (key management

@@ -486,10 +486,15 @@ public class LiquidWalletCoinControlTests
 	[Fact]
 	public void ExactZeroConfirmationProtectedReplayBoundaryProjectsAndSelectsAllOutputs()
 	{
-		const int OutputCount = 119_833;
+		const int OutputCount = 119_832;
+		// The v4 canonical encoding appends a 4-byte receive-label count (empty
+		// here), so the label-free byte model is OutputCount*140 + 568; with the
+		// label field it is 4 bytes larger. Seal then appends the two 8-byte
+		// high-waters before padding to the 4 KiB bucket, so this count is the
+		// largest that still seals under the 16 MiB padded ceiling.
 		Assert.Equal(
-			16_777_188,
-			48 + (13 * 40) + (OutputCount * (118 + 22)));
+			16_777_052,
+			48 + (13 * 40) + (OutputCount * (118 + 22)) + 4);
 		Assert.Equal(16_777_204, LiquidWalletReplayCodec.MaxCanonicalLength);
 
 		LiquidWalletReplaySnapshot source = CreateHighOutputReplaySnapshot(OutputCount, withConfirmation: false);

@@ -48,27 +48,32 @@ internal sealed class LiquidWalletReplaySnapshot
 {
 	private readonly LiquidWalletTransactionDelta[] _deltas;
 	private readonly LiquidWalletReplayConfirmation[] _confirmations;
+	private readonly LiquidWalletReceiveLabelEntry[] _receiveLabels;
 
 	private LiquidWalletReplaySnapshot(
 		LiquidAssetId peggedAssetId,
 		ulong revision,
 		LiquidWalletTransactionDelta[] deltas,
-		LiquidWalletReplayConfirmation[] confirmations)
+		LiquidWalletReplayConfirmation[] confirmations,
+		LiquidWalletReceiveLabelEntry[] receiveLabels)
 	{
 		PeggedAssetId = peggedAssetId;
 		Revision = revision;
 		_deltas = deltas;
 		_confirmations = confirmations;
+		_receiveLabels = receiveLabels;
 	}
 
 	public LiquidAssetId PeggedAssetId { get; }
 	public ulong Revision { get; }
+	public int ReceiveLabelCount => _receiveLabels.Length;
 
 	public static LiquidWalletReplaySnapshot Create(
 		LiquidAssetId peggedAssetId,
 		ulong revision,
 		IEnumerable<LiquidWalletTransactionDelta> deltas,
-		IEnumerable<LiquidWalletReplayConfirmation> confirmations)
+		IEnumerable<LiquidWalletReplayConfirmation> confirmations,
+		IEnumerable<LiquidWalletReceiveLabelEntry>? receiveLabels = null)
 	{
 		ArgumentNullException.ThrowIfNull(peggedAssetId);
 		ArgumentNullException.ThrowIfNull(deltas);
@@ -83,12 +88,17 @@ internal sealed class LiquidWalletReplaySnapshot
 				entry => entry.TransactionId.CanonicalRpcHex,
 				StringComparer.Ordinal)
 			.ToArray();
+		LiquidWalletReceiveLabelEntry[] copiedReceiveLabels = (receiveLabels ?? [])
+			.Select(CloneReceiveLabelEntry)
+			.OrderBy(entry => entry.Index)
+			.ToArray();
 
 		return new LiquidWalletReplaySnapshot(
 			peggedAssetId,
 			revision,
 			copiedDeltas,
-			copiedConfirmations);
+			copiedConfirmations,
+			copiedReceiveLabels);
 	}
 
 	public IReadOnlyList<LiquidWalletTransactionDelta> GetDeltas() =>
@@ -99,7 +109,32 @@ internal sealed class LiquidWalletReplaySnapshot
 		new ReadOnlyCollection<LiquidWalletReplayConfirmation>(
 			_confirmations.Select(CloneConfirmation).ToArray());
 
+	public IReadOnlyList<LiquidWalletReceiveLabelEntry> GetReceiveLabels() =>
+		new ReadOnlyCollection<LiquidWalletReceiveLabelEntry>(
+			_receiveLabels.Select(CloneReceiveLabelEntry).ToArray());
+
+	public bool TryGetReceiveLabels(uint index, out LiquidWalletLabelSet? labels)
+	{
+		foreach (LiquidWalletReceiveLabelEntry entry in _receiveLabels)
+		{
+			if (entry.Index == index)
+			{
+				labels = entry.Labels;
+				return true;
+			}
+		}
+
+		labels = null;
+		return false;
+	}
+
 	public override string ToString() => nameof(LiquidWalletReplaySnapshot);
+
+	private static LiquidWalletReceiveLabelEntry CloneReceiveLabelEntry(LiquidWalletReceiveLabelEntry entry)
+	{
+		ArgumentNullException.ThrowIfNull(entry);
+		return LiquidWalletReceiveLabelEntry.Create(entry.Index, entry.Labels);
+	}
 
 	private static LiquidWalletTransactionDelta CloneDelta(LiquidWalletTransactionDelta delta)
 	{

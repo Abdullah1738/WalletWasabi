@@ -634,7 +634,7 @@ public class LiquidWalletPersistenceHandoffTests
 		ConstructorInfo constructor = Assert.Single(typeof(LiquidWalletReplaySnapshot)
 			.GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance));
 		return Assert.IsType<LiquidWalletReplaySnapshot>(constructor.Invoke(
-			[peggedAsset, revision, deltas, confirmations]));
+			[peggedAsset, revision, deltas, confirmations, Array.Empty<LiquidWalletReceiveLabelEntry>()]));
 	}
 
 	private static byte[] EncodePayloadCore(LiquidWalletReplaySnapshot snapshot)
@@ -646,7 +646,7 @@ public class LiquidWalletPersistenceHandoffTests
 			"EncodeCore",
 			BindingFlags.NonPublic | BindingFlags.Static)
 			?? throw new Xunit.Sdk.XunitException("The replay codec EncodeCore method is required.");
-		return (byte[])encodeCore.Invoke(null, [snapshot])!;
+		return (byte[])encodeCore.Invoke(null, [snapshot, true])!;
 	}
 
 	private static byte[] ResealWithPayload(

@@ -827,6 +827,80 @@ public class LiquidWalletLoadSaveTests
 		Assert.Equal("The Liquid internal change-index space is exhausted.", failure.Message);
 	}
 
+	[Fact]
+	public void SaveLoadRoundTripsReceiveLabels()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletLabelSet savings = LiquidWalletLabelSet.Create(["savings", "vault"]);
+		LiquidWalletLabelSet donation = LiquidWalletLabelSet.Create(["donation"]);
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(Tx('d'), [], [Output(Tx('d'), 0, PeggedAsset, 64)]))
+			.SetReceiveLabels(1, savings)
+			.SetReceiveLabels(5, donation);
+
+		LiquidWalletLoadSave.Save(dir, "label-roundtrip", state, generation: 20, key, context);
+
+		LiquidWalletLoadSaveResult loaded = LiquidWalletLoadSave.Load(dir, "label-roundtrip", key, context);
+		LiquidWalletState restored = Required(loaded.State);
+		Assert.Equal(2, restored.GetReceiveLabels().Count);
+		Assert.Equal(savings, restored.GetReceiveLabels(1));
+		Assert.Equal(donation, restored.GetReceiveLabels(5));
+		Assert.Null(restored.GetReceiveLabels(2));
+	}
+
+	[Fact]
+	public void ReceiveLabelClearSurvivesSaveAndReload()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.SetReceiveLabels(2, LiquidWalletLabelSet.Create(["keep"]))
+			.SetReceiveLabels(7, LiquidWalletLabelSet.Create(["drop"]));
+		LiquidWalletLoadSave.Save(dir, "label-clear", state, generation: 1, key, context);
+
+		// Clear index 7 and persist; the reload must show only index 2.
+		LiquidWalletState cleared = Required(
+			LiquidWalletLoadSave.Load(dir, "label-clear", key, context).State)
+			.SetReceiveLabels(7, LiquidWalletLabelSet.Empty);
+		LiquidWalletLoadSave.Save(dir, "label-clear", cleared, generation: 2, key, context);
+
+		LiquidWalletState reloaded = Required(
+			LiquidWalletLoadSave.Load(dir, "label-clear", key, context).State);
+		Assert.Single(reloaded.GetReceiveLabels());
+		Assert.Equal(LiquidWalletLabelSet.Create(["keep"]), reloaded.GetReceiveLabels(2));
+		Assert.Null(reloaded.GetReceiveLabels(7));
+	}
+
+	[Fact]
+	public void ReceiveLabelSaveUnderStaleGenerationIsRejectedAndRetained()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.SetReceiveLabels(3, LiquidWalletLabelSet.Create(["original"]));
+		LiquidWalletLoadSave.Save(dir, "label-stale", state, generation: 30, key, context);
+		byte[] retained = File.ReadAllBytes(Path.Combine(dir, "label-stale.lwwal"));
+
+		// A writer holding a stale expected generation cannot overwrite the label map.
+		LiquidWalletState relabeled = Required(
+			LiquidWalletLoadSave.Load(dir, "label-stale", key, context).State)
+			.SetReceiveLabels(3, LiquidWalletLabelSet.Create(["overwritten"]));
+		InvalidOperationException failure = Assert.Throws<InvalidOperationException>(() =>
+			LiquidWalletLoadSave.SaveWithExpectedGeneration(
+				dir, "label-stale", relabeled, generation: 31, baseGeneration: 29, key, context));
+		Assert.Equal("The Liquid wallet persistence generation changed during save.", failure.Message);
+
+		// The on-disk bytes and the durable label are untouched by the rejected write.
+		Assert.Equal(retained, File.ReadAllBytes(Path.Combine(dir, "label-stale.lwwal")));
+		LiquidWalletState reloaded = Required(
+			LiquidWalletLoadSave.Load(dir, "label-stale", key, context).State);
+		Assert.Equal(LiquidWalletLabelSet.Create(["original"]), reloaded.GetReceiveLabels(3));
+	}
+
 	private static void AssertFreshChild(string dir, string name, byte[] key, byte[] context, ulong revision, ulong generation, ulong highWater, int applied, int unspent, long balance)
 	{
 		using JsonDocument result = RoslynFreshChildHarness.RunChild(FreshChildAssemblyPath.Value,

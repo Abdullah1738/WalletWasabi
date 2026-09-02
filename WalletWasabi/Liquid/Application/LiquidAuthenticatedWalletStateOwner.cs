@@ -36,7 +36,10 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 			allocation,
 			receiveDerivation?.Descriptor ?? throw new ArgumentNullException(nameof(receiveDerivation)),
 			receiveDerivation.LastIndex,
-			new LiquidWalletUiReceiveMaterial(receiveDerivation.ScriptPubKey, blindingPublicKey),
+			new LiquidWalletUiReceiveMaterial(
+				receiveDerivation.ScriptPubKey,
+				blindingPublicKey,
+				allocation.State.GetReceiveLabels(checked((uint)receiveDerivation.LastIndex))?.GetLabels()),
 			walletName,
 			manifest,
 			nodeExpectation)
@@ -131,11 +134,22 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 			_allocation.PersistedExternalIndexHighWater,
 			_allocation.PersistedInternalIndexHighWater,
 			committedState);
+		// Rebind the durable label set for the current next-receive derivation index
+		// from the committed state. The label map is keyed by the branch-0 index, which
+		// is the same value LastIndex exposes for the next receive address; an unlabeled
+		// index projects an empty label list. Without this the published NextReceiveLabels
+		// would always be empty regardless of any persisted label write.
+		LiquidWalletLabelSet? nextLabels = committedState.GetReceiveLabels(checked((uint)LastIndex));
+		LiquidWalletUiReceiveMaterial reboundReceiveMaterial = new(
+			ReceiveMaterial.NextReceiveScriptPubKey,
+			ReceiveMaterial.NextReceiveBlindingPublicKey,
+			nextLabels?.GetLabels());
+
 		return new LiquidAuthenticatedWalletStateOwner(
 			replacementAllocation,
 			Descriptor,
 			LastIndex,
-			ReceiveMaterial,
+			reboundReceiveMaterial,
 			_walletName,
 			_manifest,
 			NodeExpectation);

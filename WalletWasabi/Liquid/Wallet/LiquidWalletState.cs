@@ -139,7 +139,9 @@ internal sealed class LiquidWalletState
 			_revision = nextRevision;
 		}
 
-		public LiquidWalletState Build(ulong requestedRevision)
+		public LiquidWalletState Build(
+			ulong requestedRevision,
+			SortedDictionary<uint, LiquidWalletLabelSet>? receiveLabels = null)
 		{
 			if (requestedRevision < _revision)
 			{
@@ -162,7 +164,8 @@ internal sealed class LiquidWalletState
 				_appliedTransactionIds,
 				_history,
 				_confirmations,
-				LiquidAssetBalanceMap.FromAmounts(_peggedAssetId, _balances.Values));
+				LiquidAssetBalanceMap.FromAmounts(_peggedAssetId, _balances.Values),
+				receiveLabels);
 		}
 
 		private void AddBalance(LiquidAssetAmount amount)
@@ -199,6 +202,7 @@ internal sealed class LiquidWalletState
 	private readonly List<AppliedDelta> _history;
 	private readonly Dictionary<LiquidTransactionId, LiquidConfirmation> _confirmations;
 	private readonly LiquidAssetBalanceMap _balances;
+	private readonly SortedDictionary<uint, LiquidWalletLabelSet> _receiveLabels;
 
 	private LiquidWalletState(
 		LiquidAssetId peggedAssetId,
@@ -208,7 +212,8 @@ internal sealed class LiquidWalletState
 		HashSet<LiquidTransactionId> appliedTransactionIds,
 		List<AppliedDelta> history,
 		Dictionary<LiquidTransactionId, LiquidConfirmation> confirmations,
-		LiquidAssetBalanceMap balances)
+		LiquidAssetBalanceMap balances,
+		SortedDictionary<uint, LiquidWalletLabelSet>? receiveLabels = null)
 	{
 		PeggedAssetId = peggedAssetId;
 		Revision = revision;
@@ -218,6 +223,7 @@ internal sealed class LiquidWalletState
 		_history = history;
 		_confirmations = confirmations;
 		_balances = balances;
+		_receiveLabels = receiveLabels ?? [];
 	}
 
 	public LiquidAssetId PeggedAssetId { get; }
@@ -294,7 +300,9 @@ internal sealed class LiquidWalletState
 			Revision,
 			_history.Select(applied => applied.Delta),
 			_confirmations.Select(entry =>
-				LiquidWalletReplayConfirmation.Create(entry.Key, entry.Value)));
+				LiquidWalletReplayConfirmation.Create(entry.Key, entry.Value)),
+			_receiveLabels.Select(entry =>
+				LiquidWalletReceiveLabelEntry.Create(entry.Key, entry.Value)));
 
 	public static LiquidWalletState RestoreReplaySnapshot(LiquidWalletReplaySnapshot snapshot)
 	{
@@ -309,8 +317,58 @@ internal sealed class LiquidWalletState
 		{
 			builder.Confirm(confirmation);
 		}
-		return builder.Build(snapshot.Revision);
+		var receiveLabels = new SortedDictionary<uint, LiquidWalletLabelSet>();
+		foreach (LiquidWalletReceiveLabelEntry entry in snapshot.GetReceiveLabels())
+		{
+			receiveLabels[entry.Index] = entry.Labels;
+		}
+		return builder.Build(snapshot.Revision, receiveLabels);
 	}
+
+	/// <summary>
+	/// Returns a new state with <paramref name="labels"/> bound to the receive
+	/// address's external (branch-0) derivation <paramref name="index"/>. An
+	/// empty set removes the entry (an unlabeled index is absent from the map).
+	/// The label map is durable wallet metadata carried by the replay payload;
+	/// it is not a transaction transition, so it does not advance the revision.
+	/// The receiver is never mutated.
+	/// </summary>
+	public LiquidWalletState SetReceiveLabels(uint index, LiquidWalletLabelSet labels)
+	{
+		ArgumentNullException.ThrowIfNull(labels);
+
+		var receiveLabels = new SortedDictionary<uint, LiquidWalletLabelSet>(_receiveLabels);
+		if (labels.IsEmpty)
+		{
+			receiveLabels.Remove(index);
+		}
+		else
+		{
+			receiveLabels[index] = labels;
+		}
+
+		return new LiquidWalletState(
+			PeggedAssetId,
+			Revision,
+			new Dictionary<LiquidOutPoint, LiquidOwnedOutput>(_unspentOutputs),
+			new Dictionary<LiquidOutPoint, LiquidOwnedOutput>(_knownOutputs),
+			new HashSet<LiquidTransactionId>(_appliedTransactionIds),
+			new List<AppliedDelta>(_history),
+			new Dictionary<LiquidTransactionId, LiquidConfirmation>(_confirmations),
+			_balances,
+			receiveLabels);
+	}
+
+	/// <summary>The durable label set bound to a receive derivation index, or null when absent.</summary>
+	public LiquidWalletLabelSet? GetReceiveLabels(uint index) =>
+		_receiveLabels.TryGetValue(index, out LiquidWalletLabelSet? labels) ? labels : null;
+
+	/// <summary>Every receive-label binding in canonical (ascending derivation-index) order.</summary>
+	public IReadOnlyList<LiquidWalletReceiveLabelEntry> GetReceiveLabels() =>
+		new ReadOnlyCollection<LiquidWalletReceiveLabelEntry>(
+			_receiveLabels
+				.Select(entry => LiquidWalletReceiveLabelEntry.Create(entry.Key, entry.Value))
+				.ToArray());
 
 	public LiquidWalletState Apply(ulong expectedRevision, LiquidWalletTransactionDelta delta)
 	{
@@ -381,7 +439,8 @@ internal sealed class LiquidWalletState
 			appliedTransactionIds,
 			history,
 			new Dictionary<LiquidTransactionId, LiquidConfirmation>(_confirmations),
-			balances);
+			balances,
+			new SortedDictionary<uint, LiquidWalletLabelSet>(_receiveLabels));
 	}
 
 	public LiquidWalletState Confirm(
@@ -414,7 +473,8 @@ internal sealed class LiquidWalletState
 			new HashSet<LiquidTransactionId>(_appliedTransactionIds),
 			new List<AppliedDelta>(_history),
 			confirmations,
-			_balances);
+			_balances,
+			new SortedDictionary<uint, LiquidWalletLabelSet>(_receiveLabels));
 	}
 
 	public LiquidWalletState Unconfirm(
@@ -446,7 +506,8 @@ internal sealed class LiquidWalletState
 			new HashSet<LiquidTransactionId>(_appliedTransactionIds),
 			new List<AppliedDelta>(_history),
 			confirmations,
-			_balances);
+			_balances,
+			new SortedDictionary<uint, LiquidWalletLabelSet>(_receiveLabels));
 	}
 
 	public LiquidWalletState RollbackLast(
@@ -509,7 +570,8 @@ internal sealed class LiquidWalletState
 			appliedTransactionIds,
 			history,
 			confirmations,
-			balances);
+			balances,
+			new SortedDictionary<uint, LiquidWalletLabelSet>(_receiveLabels));
 	}
 
 	public LiquidAssetBalanceMap GetBalances() =>

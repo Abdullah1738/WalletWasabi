@@ -341,7 +341,7 @@ public class LiquidReceiveMaterialTests
 		const ushort aes256GcmAlgorithm = 1;
 		const int innerPrefixLength = sizeof(ulong) + sizeof(uint);
 
-		byte[] canonical = LiquidWalletReplayCodec.Encode(snapshot);
+		byte[] canonical = LiquidWalletReplayCodec.Encode(snapshot, includeReceiveLabels: false);
 		int innerLength = checked(innerPrefixLength + canonical.Length);
 		int paddedLength = checked(((innerLength + paddingBucketLength - 1) / paddingBucketLength) * paddingBucketLength);
 

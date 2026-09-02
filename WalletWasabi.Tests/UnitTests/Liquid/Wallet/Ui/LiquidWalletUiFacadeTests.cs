@@ -613,6 +613,46 @@ public class LiquidWalletUiFacadeTests
 		}
 	}
 
+	// The receive-label model half projects the durable label set bound to one
+	// receive derivation index into the public next-receive material the Fluent
+	// layer renders. An empty label set projects as an empty (never null) list.
+	[Fact]
+	public void ReceiveMaterialCarriesNextReceiveLabels()
+	{
+		byte[] script = ReceiveScript;
+		byte[] blinding = BlindingKey;
+
+		LiquidWalletUiReceiveMaterial unlabeled = new(script, blinding);
+		Assert.Empty(unlabeled.NextReceiveLabels);
+		Assert.NotNull(unlabeled.NextReceiveLabels);
+
+		LiquidWalletUiReceiveMaterial labeled = new(script, blinding, ["savings", "vault"]);
+		Assert.Equal(["savings", "vault"], labeled.NextReceiveLabels);
+		// The projection is a defensive copy: mutating the caller's array does not leak in.
+		string[] source = ["temp"];
+		LiquidWalletUiReceiveMaterial copied = new(script, blinding, source);
+		source[0] = "mutated";
+		Assert.Equal(["temp"], copied.NextReceiveLabels);
+	}
+
+	// The facade reads the durable label set bound to one receive derivation
+	// index from an already-loaded state (internal: it names the internal
+	// state). An absent index projects as an empty list.
+	[Fact]
+	public void ReadReceiveLabelsProjectsIndexLabelsFromState()
+	{
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.SetReceiveLabels(0, LiquidWalletLabelSet.Create(["savings", "vault"]))
+			.SetReceiveLabels(4, LiquidWalletLabelSet.Create(["donation"]));
+
+		Assert.Equal(
+			["savings", "vault"],
+			LiquidWalletUiFacade.ReadReceiveLabels(state, 0));
+		Assert.Equal(["donation"], LiquidWalletUiFacade.ReadReceiveLabels(state, 4));
+		Assert.Empty(LiquidWalletUiFacade.ReadReceiveLabels(state, 1));
+		Assert.Throws<ArgumentNullException>(() => LiquidWalletUiFacade.ReadReceiveLabels(null!, 0));
+	}
+
 	private static string GetWorkDir()
 	{
 		string dir = Common.GetWorkDir();

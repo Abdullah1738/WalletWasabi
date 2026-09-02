@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 using WalletWasabi.Liquid.Amounts;
 using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Transactions;
@@ -56,6 +57,13 @@ internal sealed class LiquidWalletReplayOpenResult
 	public ulong InternalIndexHighWater { get; }
 	public LiquidWalletReplaySnapshot Snapshot { get; }
 
+	/// <summary>The number of durable receive-label bindings carried by the payload.</summary>
+	public int ReceiveLabelCount => Snapshot.ReceiveLabelCount;
+
+	/// <summary>The durable label set bound to a receive derivation index, or null when absent.</summary>
+	public bool TryGetReceiveLabels(uint index, out LiquidWalletLabelSet? labels) =>
+		Snapshot.TryGetReceiveLabels(index, out labels);
+
 	public override string ToString() => nameof(LiquidWalletReplayOpenResult);
 }
 
@@ -79,6 +87,11 @@ internal static class LiquidWalletReplayCodec
 	internal const int MaxAggregateCreated = 148_470;
 	internal const int MaxScriptLength = 10_000;
 	internal const int MaxAggregateScriptLength = 16_777_216;
+	// The receive-label map is capacity-bounded like every other collection:
+	// an entry-count ceiling and an aggregate label-byte ceiling, consistent
+	// with the LiquidWalletLabelSet per-set limits.
+	internal const int MaxReceiveLabelEntryCount = 4_096;
+	internal const int MaxAggregateReceiveLabelUtf8Bytes = 262_144;
 
 	private const int AssetIdLength = LiquidAssetId.ConsensusByteLength;
 	private const int TransactionIdLength = LiquidTransactionId.ConsensusByteLength;
@@ -91,18 +104,26 @@ internal static class LiquidWalletReplayCodec
 	private const int ConfirmationLength = TransactionIdLength + BlockHashLength + sizeof(uint);
 	private const int MinimumDeltaLength = TransactionIdLength + sizeof(uint) + sizeof(uint);
 
-	public static byte[] Encode(LiquidWalletReplaySnapshot snapshot)
+	public static byte[] Encode(LiquidWalletReplaySnapshot snapshot) =>
+		Encode(snapshot, includeReceiveLabels: true);
+
+	// The legacy (v1/v2/v3) canonical encoding carries no receive-label map;
+	// the v4 encoding appends it. Only the protected-payload seal uses the
+	// label-carrying form; the legacy test envelope builder uses the
+	// label-free form so a labeled snapshot still yields legacy canonical
+	// bytes.
+	internal static byte[] Encode(LiquidWalletReplaySnapshot snapshot, bool includeReceiveLabels)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
 
-		byte[] encoded = EncodeCore(snapshot);
+		byte[] encoded = EncodeCore(snapshot, includeReceiveLabels);
 		byte[]? canonical = null;
 		try
 		{
 			LiquidWalletReplaySnapshot reconstructed = LiquidWalletState
 				.RestoreReplaySnapshot(snapshot)
 				.ExportReplaySnapshot();
-			canonical = EncodeCore(reconstructed);
+			canonical = EncodeCore(reconstructed, includeReceiveLabels);
 			if (!CryptographicOperations.FixedTimeEquals(encoded, canonical))
 			{
 				throw new InvalidOperationException("The replay cache snapshot is not canonical.");
@@ -123,13 +144,17 @@ internal static class LiquidWalletReplayCodec
 		}
 	}
 
-	private static byte[] EncodeCore(LiquidWalletReplaySnapshot snapshot)
+	private static byte[] EncodeCore(LiquidWalletReplaySnapshot snapshot, bool includeReceiveLabels)
 	{
 
 		IReadOnlyList<LiquidWalletTransactionDelta> deltas = snapshot.GetDeltas();
 		IReadOnlyList<LiquidWalletReplayConfirmation> confirmations = snapshot.GetConfirmations();
+		IReadOnlyList<LiquidWalletReceiveLabelEntry> receiveLabels = includeReceiveLabels
+			? snapshot.GetReceiveLabels()
+			: [];
 		ValidateCapacity(deltas.Count, MaxDeltaCount);
 		ValidateCapacity(confirmations.Count, MaxConfirmationCount);
+		ValidateCapacity(receiveLabels.Count, MaxReceiveLabelEntryCount);
 		if (confirmations.Count > deltas.Count)
 		{
 			throw new ArgumentException(
@@ -185,6 +210,30 @@ internal static class LiquidWalletReplayCodec
 		}
 
 		encodedLength = checked(encodedLength + ((long)confirmations.Count * ConfirmationLength));
+
+		var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+		long aggregateReceiveLabelUtf8Bytes = 0;
+		if (includeReceiveLabels)
+		{
+			encodedLength = checked(encodedLength + sizeof(uint));
+			foreach (LiquidWalletReceiveLabelEntry entry in receiveLabels)
+			{
+				ArgumentNullException.ThrowIfNull(entry, nameof(snapshot));
+				IReadOnlyList<string> entryLabels = entry.Labels.GetLabels();
+				encodedLength = checked(encodedLength + sizeof(uint) + sizeof(uint));
+				foreach (string label in entryLabels)
+				{
+					int labelLength = strictUtf8.GetByteCount(label);
+					aggregateReceiveLabelUtf8Bytes = checked(aggregateReceiveLabelUtf8Bytes + labelLength);
+					if (aggregateReceiveLabelUtf8Bytes > MaxAggregateReceiveLabelUtf8Bytes)
+					{
+						throw new LiquidWalletReplayCapacityException();
+					}
+					encodedLength = checked(encodedLength + sizeof(uint) + labelLength);
+				}
+			}
+		}
+
 		if (encodedLength > MaxCanonicalLength || encodedLength > int.MaxValue)
 		{
 			throw new LiquidWalletReplayCapacityException();
@@ -193,7 +242,7 @@ internal static class LiquidWalletReplayCodec
 		byte[] encoded = new byte[(int)encodedLength];
 		try
 		{
-			EncodeInto(encoded, snapshot, deltas, confirmations);
+			EncodeInto(encoded, snapshot, deltas, confirmations, receiveLabels, includeReceiveLabels, strictUtf8);
 			return encoded;
 		}
 		catch
@@ -207,7 +256,10 @@ internal static class LiquidWalletReplayCodec
 		Span<byte> encoded,
 		LiquidWalletReplaySnapshot snapshot,
 		IReadOnlyList<LiquidWalletTransactionDelta> deltas,
-		IReadOnlyList<LiquidWalletReplayConfirmation> confirmations)
+		IReadOnlyList<LiquidWalletReplayConfirmation> confirmations,
+		IReadOnlyList<LiquidWalletReceiveLabelEntry> receiveLabels,
+		bool includeReceiveLabels,
+		UTF8Encoding strictUtf8)
 	{
 		var writer = new ReplayWriter(encoded);
 		WriteAssetId(ref writer, snapshot.PeggedAssetId);
@@ -266,10 +318,30 @@ internal static class LiquidWalletReplayCodec
 				CryptographicOperations.ZeroMemory(consensusBlockHash);
 			}
 		}
+
+		if (includeReceiveLabels)
+		{
+			writer.WriteUInt32((uint)receiveLabels.Count);
+			foreach (LiquidWalletReceiveLabelEntry entry in receiveLabels)
+			{
+				writer.WriteUInt32(entry.Index);
+				IReadOnlyList<string> entryLabels = entry.Labels.GetLabels();
+				writer.WriteUInt32((uint)entryLabels.Count);
+				foreach (string label in entryLabels)
+				{
+					byte[] labelBytes = strictUtf8.GetBytes(label);
+					writer.WriteUInt32((uint)labelBytes.Length);
+					writer.WriteBytes(labelBytes);
+				}
+			}
+		}
 		writer.EnsureComplete();
 	}
 
-	public static LiquidWalletReplaySnapshot Decode(ReadOnlySpan<byte> encoded)
+	public static LiquidWalletReplaySnapshot Decode(ReadOnlySpan<byte> encoded) =>
+		Decode(encoded, includeReceiveLabels: true);
+
+	internal static LiquidWalletReplaySnapshot Decode(ReadOnlySpan<byte> encoded, bool includeReceiveLabels)
 	{
 		if (encoded.Length > MaxCanonicalLength)
 		{
@@ -350,17 +422,53 @@ internal static class LiquidWalletReplayCodec
 				transactionId,
 				LiquidConfirmation.Create(blockHash, height)));
 		}
+
+		var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+		var receiveLabels = new List<LiquidWalletReceiveLabelEntry>();
+		if (includeReceiveLabels)
+		{
+			int receiveLabelCount = reader.ReadBoundedCount(MaxReceiveLabelEntryCount, sizeof(uint) + sizeof(uint));
+			long aggregateReceiveLabelUtf8Bytes = 0;
+			uint previousIndex = 0;
+			for (int entryIndex = 0; entryIndex < receiveLabelCount; entryIndex++)
+			{
+				uint labelIndex = reader.ReadUInt32();
+				if (entryIndex > 0 && labelIndex <= previousIndex)
+				{
+					throw new InvalidDataException("The replay cache receive-label indices are not strictly increasing.");
+				}
+				previousIndex = labelIndex;
+
+				int labelCount = reader.ReadBoundedCount(LiquidWalletLabelSet.MaximumLabelCount, sizeof(uint));
+				var labels = new string[labelCount];
+				for (int labelEntryIndex = 0; labelEntryIndex < labelCount; labelEntryIndex++)
+				{
+					int labelLength = reader.ReadBoundedCount(LiquidWalletLabelSet.MaximumLabelUtf8ByteCount, sizeof(byte));
+					aggregateReceiveLabelUtf8Bytes = checked(aggregateReceiveLabelUtf8Bytes + labelLength);
+					if (aggregateReceiveLabelUtf8Bytes > MaxAggregateReceiveLabelUtf8Bytes)
+					{
+						throw new InvalidDataException("The replay cache exceeds its aggregate receive-label limit.");
+					}
+					labels[labelEntryIndex] = strictUtf8.GetString(reader.ReadBytes(labelLength));
+				}
+
+				receiveLabels.Add(LiquidWalletReceiveLabelEntry.Create(
+					labelIndex,
+					LiquidWalletLabelSet.Create(labels)));
+			}
+		}
 		reader.EnsureComplete();
 
 		LiquidWalletReplaySnapshot decoded = LiquidWalletReplaySnapshot.Create(
 			peggedAsset,
 			revision,
 			deltas,
-			confirmations);
+			confirmations,
+			receiveLabels);
 		LiquidWalletReplaySnapshot reconstructed = LiquidWalletState
 			.RestoreReplaySnapshot(decoded)
 			.ExportReplaySnapshot();
-		byte[] canonical = EncodeCore(reconstructed);
+		byte[] canonical = EncodeCore(reconstructed, includeReceiveLabels);
 		try
 		{
 			if (!CryptographicOperations.FixedTimeEquals(encoded, canonical))
@@ -565,7 +673,8 @@ internal sealed class LiquidWalletReplayProtectedPayload
 	private const ushort EnvelopeVersion = 1;
 	private const ushort LegacyPayloadVersionV1 = 1;
 	private const ushort LegacyPayloadVersionV2 = 2;
-	private const ushort PayloadVersion = 3;
+	private const ushort LegacyPayloadVersionV3 = 3;
+	private const ushort PayloadVersion = 4;
 	private const ushort Aes256GcmAlgorithm = 1;
 	private const int HeaderLength = 48;
 	private const int InnerGenerationLength = sizeof(ulong);
@@ -701,11 +810,14 @@ internal sealed class LiquidWalletReplayProtectedPayload
 			{
 				throw new InvalidDataException();
 			}
+			// v4 carries the receive-label map in the canonical payload; v1/v2/v3 import it as empty.
+			bool includeReceiveLabels = values.PayloadVersion == PayloadVersion;
 			LiquidWalletReplaySnapshot snapshot = LiquidWalletReplayCodec.Decode(
-				plaintext.AsSpan(InnerPrefixLength, (int)canonicalLength));
-			// v1 carries no high-water; v2 carries only the external high-water; v3 carries both.
-			bool hasExternal = values.PayloadVersion is LegacyPayloadVersionV2 or PayloadVersion;
-			bool hasInternal = values.PayloadVersion == PayloadVersion;
+				plaintext.AsSpan(InnerPrefixLength, (int)canonicalLength),
+				includeReceiveLabels);
+			// v1 carries no high-water; v2 carries only the external high-water; v3/v4 carry both.
+			bool hasExternal = values.PayloadVersion is LegacyPayloadVersionV2 or LegacyPayloadVersionV3 or PayloadVersion;
+			bool hasInternal = values.PayloadVersion is LegacyPayloadVersionV3 or PayloadVersion;
 			ulong externalIndexHighWater = hasExternal
 				? BinaryPrimitives.ReadUInt64LittleEndian(
 					plaintext.AsSpan(checked(InnerPrefixLength + (int)canonicalLength), InnerExternalIndexHighWaterLength))
@@ -785,7 +897,7 @@ internal sealed class LiquidWalletReplayProtectedPayload
 		ushort payloadVersion = BinaryPrimitives.ReadUInt16LittleEndian(header[10..]);
 		if (!header[..Magic.Length].SequenceEqual(Magic) ||
 			BinaryPrimitives.ReadUInt16LittleEndian(header[8..]) != EnvelopeVersion ||
-			payloadVersion is not (LegacyPayloadVersionV1 or LegacyPayloadVersionV2 or PayloadVersion) ||
+			payloadVersion is not (LegacyPayloadVersionV1 or LegacyPayloadVersionV2 or LegacyPayloadVersionV3 or PayloadVersion) ||
 			BinaryPrimitives.ReadUInt16LittleEndian(header[12..]) != Aes256GcmAlgorithm ||
 			BinaryPrimitives.ReadUInt16LittleEndian(header[14..]) != 0 ||
 			BinaryPrimitives.ReadUInt64LittleEndian(header[24..]) != 0 ||

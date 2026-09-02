@@ -1461,6 +1461,89 @@ public class LiquidWalletStateTests
 
 
 	[Fact]
+	public void ReceiveLabelsSetClearAndSurviveReplaySnapshotRoundTrip()
+	{
+		LiquidTransactionId receiveId = Tx('a');
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(receiveId, [], [Output(receiveId, 0, PeggedAsset, 42)]));
+		LiquidWalletLabelSet savings = LiquidWalletLabelSet.Create(["savings", "vault"]);
+		LiquidWalletLabelSet donation = LiquidWalletLabelSet.Create(["donation"]);
+
+		// Labels set on receive derivation indices survive the replay snapshot round-trip.
+		LiquidWalletState labeled = state
+			.SetReceiveLabels(3, savings)
+			.SetReceiveLabels(9, donation);
+		Assert.Equal(2, labeled.GetReceiveLabels().Count);
+		Assert.Equal(savings, labeled.GetReceiveLabels(3));
+		Assert.Equal(donation, labeled.GetReceiveLabels(9));
+		Assert.Null(labeled.GetReceiveLabels(0));
+
+		LiquidWalletState restored = LiquidWalletState.RestoreReplaySnapshot(
+			labeled.ExportReplaySnapshot());
+		Assert.Equal(2, restored.GetReceiveLabels().Count);
+		Assert.Equal(savings, restored.GetReceiveLabels(3));
+		Assert.Equal(donation, restored.GetReceiveLabels(9));
+		// The label mutation is a pure projection: the original state is unchanged.
+		Assert.Empty(state.GetReceiveLabels());
+		Assert.Null(state.GetReceiveLabels(3));
+	}
+
+	[Fact]
+	public void ReceiveLabelsClearingWithEmptySetRemovesTheEntry()
+	{
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.SetReceiveLabels(4, LiquidWalletLabelSet.Create(["alpha"]))
+			.SetReceiveLabels(8, LiquidWalletLabelSet.Create(["beta"]));
+		Assert.Equal(2, state.GetReceiveLabels().Count);
+
+		// Clearing index 4 removes only that entry; index 8 survives.
+		LiquidWalletState cleared = state.SetReceiveLabels(4, LiquidWalletLabelSet.Empty);
+		Assert.Single(cleared.GetReceiveLabels());
+		Assert.Null(cleared.GetReceiveLabels(4));
+		Assert.Equal(LiquidWalletLabelSet.Create(["beta"]), cleared.GetReceiveLabels(8));
+
+		// Clearing an absent index is a no-op that preserves the map.
+		LiquidWalletState clearedAgain = cleared.SetReceiveLabels(4, LiquidWalletLabelSet.Empty);
+		Assert.Single(clearedAgain.GetReceiveLabels());
+		Assert.Equal(LiquidWalletLabelSet.Create(["beta"]), clearedAgain.GetReceiveLabels(8));
+
+		// The cleared map round-trips through the replay snapshot.
+		LiquidWalletState restored = LiquidWalletState.RestoreReplaySnapshot(
+			cleared.ExportReplaySnapshot());
+		Assert.Single(restored.GetReceiveLabels());
+		Assert.Null(restored.GetReceiveLabels(4));
+		Assert.Equal(LiquidWalletLabelSet.Create(["beta"]), restored.GetReceiveLabels(8));
+	}
+
+	[Fact]
+	public void ReceiveLabelsAreSortedByIndexAndReplaceExistingEntry()
+	{
+		LiquidWalletLabelSet first = LiquidWalletLabelSet.Create(["first"]);
+		LiquidWalletLabelSet second = LiquidWalletLabelSet.Create(["second"]);
+		// Set out of index order, then replace one entry; the projection stays index-sorted.
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.SetReceiveLabels(12, first)
+			.SetReceiveLabels(2, second)
+			.SetReceiveLabels(12, second);
+
+		IReadOnlyList<LiquidWalletReceiveLabelEntry> entries = state.GetReceiveLabels();
+		Assert.Equal([2u, 12u], entries.Select(entry => entry.Index));
+		Assert.Equal(second, state.GetReceiveLabels(12));
+		Assert.Equal(second, state.GetReceiveLabels(2));
+	}
+
+	[Fact]
+	public void ReceiveLabelEntriesExposeIndexAndLabelSet()
+	{
+		LiquidWalletLabelSet labels = LiquidWalletLabelSet.Create(["one", "two"]);
+		LiquidWalletReceiveLabelEntry entry = LiquidWalletReceiveLabelEntry.Create(5, labels);
+		Assert.Equal(5u, entry.Index);
+		Assert.Equal(labels, entry.Labels);
+		Assert.Throws<ArgumentNullException>(() => LiquidWalletReceiveLabelEntry.Create(5, null!));
+		Assert.Equal(nameof(LiquidWalletReceiveLabelEntry), entry.ToString());
+	}
+
+	[Fact]
 	public void MultiassetBalanceQueryAddsOnlyPermittedAssemblyTypes()
 	{
 		const string LiquidTestNamespacePrefix = "WalletWasabi.Tests.UnitTests.Liquid";
@@ -1495,6 +1578,7 @@ public class LiquidWalletStateTests
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletLabelSetTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletLoadSaveTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletObservationBatchTests",
+			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletReceiveLabelAllocatorTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletReplayProtectionTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletReplaySnapshotTests",
 			"WalletWasabi.Tests.UnitTests.Liquid.Wallet.LiquidWalletStateTests",

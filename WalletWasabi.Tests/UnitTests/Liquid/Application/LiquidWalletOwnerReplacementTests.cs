@@ -80,7 +80,12 @@ public sealed class LiquidWalletOwnerReplacementTests
 		Assert.Equal(nextGeneration, replacement.PersistenceGeneration);
 		Assert.Equal(owner.Descriptor, replacement.Descriptor);
 		Assert.Equal(owner.LastIndex, replacement.LastIndex);
-		Assert.Same(owner.ReceiveMaterial, replacement.ReceiveMaterial);
+		// The receive script/blinding keys are preserved; the published receive material is
+		// rebound (a new instance) so its NextReceiveLabels track the committed state's
+		// durable label map for the next-receive index (empty here, since none is set).
+		Assert.Equal(owner.ReceiveMaterial.NextReceiveScriptPubKey, replacement.ReceiveMaterial.NextReceiveScriptPubKey);
+		Assert.Equal(owner.ReceiveMaterial.NextReceiveBlindingPublicKey, replacement.ReceiveMaterial.NextReceiveBlindingPublicKey);
+		Assert.Empty(replacement.ReceiveMaterial.NextReceiveLabels);
 		Assert.Same(owner.NodeExpectation, replacement.NodeExpectation);
 
 		// Balances/selectable/history are re-projected from the committed state consistently.
