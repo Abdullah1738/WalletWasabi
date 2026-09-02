@@ -260,10 +260,12 @@ internal sealed class LiquidWalletRefreshCommandService
 			cancellationToken.ThrowIfCancellationRequested();
 			LiquidWalletLoadSaveResult saved = _dependencies.Save(new SaveRequest(
 				session.WalletDataDirectory, session.Identity.CanonicalWalletId, committed.State,
-				nextGeneration, captured.PersistenceGeneration, captured.ExternalIndexHighWater, replayKey, context));
+				nextGeneration, captured.PersistenceGeneration, captured.ExternalIndexHighWater,
+				captured.InternalIndexHighWater, replayKey, context));
 			if (saved.Revision != committed.ResultRevision
 				|| saved.Generation != nextGeneration
-				|| saved.ExternalIndexHighWater != captured.ExternalIndexHighWater)
+				|| saved.ExternalIndexHighWater != captured.ExternalIndexHighWater
+				|| saved.InternalIndexHighWater != captured.InternalIndexHighWater)
 			{
 				throw new InvalidOperationException("The Liquid wallet refresh save result violated its exact fences.");
 			}
@@ -329,6 +331,7 @@ internal sealed class LiquidWalletRefreshCommandService
 		ulong NextGeneration,
 		ulong BaseGeneration,
 		ulong ExternalIndexHighWater,
+		ulong InternalIndexHighWater,
 		byte[] ReplayKey,
 		byte[] Context);
 

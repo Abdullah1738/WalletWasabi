@@ -92,6 +92,69 @@ public class LiquidWalletReplayProtectionTests
 	}
 
 	[Fact]
+	public void ProtectedPayloadV3RoundTripsExternalAndInternalHighWaters()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		byte[]? envelope = null;
+		try
+		{
+			LiquidWalletReplayProtectedPayload protectedPayload =
+				LiquidWalletReplayProtectedPayload.Seal(CreateReplaySnapshot(), 73, key, context, 11, 22);
+			envelope = protectedPayload.GetBytes();
+			LiquidWalletReplayOpenResult opened = protectedPayload.Open(key, context);
+
+			Assert.Equal(73ul, opened.Generation);
+			Assert.Equal(11ul, opened.ExternalIndexHighWater);
+			Assert.Equal(22ul, opened.InternalIndexHighWater);
+			Assert.Equal(4ul, opened.Snapshot.Revision);
+			// The current payload version header is 3.
+			Assert.Equal(3, BinaryPrimitives.ReadUInt16LittleEndian(envelope.AsSpan(10)));
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(key);
+			CryptographicOperations.ZeroMemory(context);
+			if (envelope is not null)
+			{
+				CryptographicOperations.ZeroMemory(envelope);
+			}
+		}
+	}
+
+	[Theory]
+	[InlineData(1)]
+	[InlineData(2)]
+	public void LegacyPayloadVersionsOpenWithZeroInternalIndexHighWater(ushort legacyPayloadVersion)
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		byte[]? envelope = null;
+		try
+		{
+			envelope = CreateLegacyPayloadEnvelope(
+				CreateReplaySnapshot(), generation: 7, key, context, legacyPayloadVersion, externalIndexHighWater: 5);
+
+			LiquidWalletReplayOpenResult opened =
+				LiquidWalletReplayProtectedPayload.Open(envelope, key, context);
+
+			Assert.Equal(7ul, opened.Generation);
+			Assert.Equal(0ul, opened.InternalIndexHighWater);
+			// v1 carries no external high-water (reads 0); v2 carries it.
+			Assert.Equal(legacyPayloadVersion == 2 ? 5ul : 0ul, opened.ExternalIndexHighWater);
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(key);
+			CryptographicOperations.ZeroMemory(context);
+			if (envelope is not null)
+			{
+				CryptographicOperations.ZeroMemory(envelope);
+			}
+		}
+	}
+
+	[Fact]
 	public void SealUsesFreshNonceAndReturnsDefensiveEnvelopeCopies()
 	{
 		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
@@ -599,6 +662,73 @@ public class LiquidWalletReplayProtectionTests
 			CryptographicOperations.ZeroMemory(plaintext);
 			CryptographicOperations.ZeroMemory(associatedData);
 			CryptographicOperations.ZeroMemory(temporary);
+		}
+	}
+
+	// Builds a byte-exact legacy (v1 or v2) envelope: inner prefix generation + canonical length,
+	// the canonical bytes, an external-index high-water only for v2, random padding, sealed under
+	// the supplied legacy payload-version header. No internal high-water is ever written.
+	private static byte[] CreateLegacyPayloadEnvelope(
+		LiquidWalletReplaySnapshot snapshot,
+		ulong generation,
+		byte[] key,
+		byte[] context,
+		ushort legacyPayloadVersion,
+		ulong externalIndexHighWater)
+	{
+		const int headerLength = 48;
+		const int paddingBucketLength = 4_096;
+		const ushort envelopeVersion = 1;
+		const ushort aes256GcmAlgorithm = 1;
+		const int innerPrefixLength = sizeof(ulong) + sizeof(uint);
+
+		byte[] canonical = LiquidWalletReplayCodec.Encode(snapshot);
+		int innerLength = checked(innerPrefixLength + canonical.Length +
+			(legacyPayloadVersion == 2 ? sizeof(ulong) : 0));
+		int paddedLength = checked(((innerLength + paddingBucketLength - 1) / paddingBucketLength) * paddingBucketLength);
+
+		byte[] plaintext = new byte[paddedLength];
+		byte[] envelope = new byte[checked(headerLength + paddedLength + LiquidWalletReplayProtectedPayload.TagLength)];
+		byte[] associatedData = new byte[headerLength + context.Length];
+		try
+		{
+			BinaryPrimitives.WriteUInt64LittleEndian(plaintext, generation);
+			BinaryPrimitives.WriteUInt32LittleEndian(plaintext.AsSpan(sizeof(ulong)), (uint)canonical.Length);
+			canonical.CopyTo(plaintext.AsSpan(innerPrefixLength));
+			if (legacyPayloadVersion == 2)
+			{
+				BinaryPrimitives.WriteUInt64LittleEndian(
+					plaintext.AsSpan(innerPrefixLength + canonical.Length), externalIndexHighWater);
+			}
+			RandomNumberGenerator.Fill(plaintext.AsSpan(innerLength));
+
+			Span<byte> header = envelope.AsSpan(0, headerLength);
+			"WLRPENV1"u8.CopyTo(header);
+			BinaryPrimitives.WriteUInt16LittleEndian(header[8..], envelopeVersion);
+			BinaryPrimitives.WriteUInt16LittleEndian(header[10..], legacyPayloadVersion);
+			BinaryPrimitives.WriteUInt16LittleEndian(header[12..], aes256GcmAlgorithm);
+			BinaryPrimitives.WriteUInt16LittleEndian(header[14..], 0);
+			BinaryPrimitives.WriteUInt32LittleEndian(header[16..], (uint)paddedLength);
+			BinaryPrimitives.WriteUInt32LittleEndian(header[20..], (uint)paddedLength);
+			BinaryPrimitives.WriteUInt32LittleEndian(header[44..], 0);
+			RandomNumberGenerator.Fill(header[32..44]);
+
+			header.CopyTo(associatedData);
+			context.CopyTo(associatedData.AsSpan(headerLength));
+			using var aes = new AesGcm(key, LiquidWalletReplayProtectedPayload.TagLength);
+			aes.Encrypt(
+				header[32..44],
+				plaintext,
+				envelope.AsSpan(headerLength, paddedLength),
+				envelope.AsSpan(headerLength + paddedLength, LiquidWalletReplayProtectedPayload.TagLength),
+				associatedData);
+			return envelope;
+		}
+		finally
+		{
+			CryptographicOperations.ZeroMemory(plaintext);
+			CryptographicOperations.ZeroMemory(canonical);
+			CryptographicOperations.ZeroMemory(associatedData);
 		}
 	}
 

@@ -701,6 +701,132 @@ public class LiquidWalletLoadSaveTests
 		AssertFreshChild(dir, "race", key, context, 2, 71, 0, 2, 2, winner.Balance);
 	}
 
+	[Fact]
+	public void SaveLoadRoundTripsInternalIndexHighWater()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(Tx('a'), [], [Output(Tx('a'), 0, PeggedAsset, 42)]));
+
+		LiquidWalletLoadSaveResult saved = LiquidWalletLoadSave.SaveWithIndexHighWaters(
+			dir, "internal-roundtrip", state, generation: 9,
+			externalIndexHighWater: 4, internalIndexHighWater: 7,
+			expectedGeneration: 8, key, context);
+		Assert.Equal(7ul, saved.InternalIndexHighWater);
+		Assert.Equal(4ul, saved.ExternalIndexHighWater);
+
+		LiquidWalletLoadSaveResult loaded = LiquidWalletLoadSave.Load(dir, "internal-roundtrip", key, context);
+		Assert.Equal(7ul, loaded.InternalIndexHighWater);
+		Assert.Equal(4ul, loaded.ExternalIndexHighWater);
+	}
+
+	[Fact]
+	public void PlainSavePreservesInternalAndExternalHighWaters()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(Tx('b'), [], [Output(Tx('b'), 0, PeggedAsset, 42)]));
+		LiquidWalletLoadSave.SaveWithIndexHighWaters(
+			dir, "internal-preserve", state, generation: 3,
+			externalIndexHighWater: 2, internalIndexHighWater: 6,
+			expectedGeneration: 2, key, context);
+
+		// A plain state save carries both durable high-waters forward unchanged.
+		LiquidWalletLoadSave.Save(dir, "internal-preserve", state, generation: 4, key, context);
+		LiquidWalletLoadSaveResult loaded = LiquidWalletLoadSave.Load(dir, "internal-preserve", key, context);
+		Assert.Equal(6ul, loaded.InternalIndexHighWater);
+		Assert.Equal(2ul, loaded.ExternalIndexHighWater);
+	}
+
+	[Fact]
+	public void AllocatingSaveRejectsInternalHighWaterMovingBackward()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(Tx('c'), [], [Output(Tx('c'), 0, PeggedAsset, 42)]));
+		LiquidWalletLoadSave.SaveWithIndexHighWaters(
+			dir, "internal-backward", state, generation: 3,
+			externalIndexHighWater: 0, internalIndexHighWater: 5,
+			expectedGeneration: 2, key, context);
+
+		// An allocating save that requests an internal high-water below the durable one is rejected.
+		InvalidOperationException failure = Assert.Throws<InvalidOperationException>(() =>
+			LiquidWalletLoadSave.SaveWithIndexHighWaters(
+				dir, "internal-backward", state, generation: 4,
+				externalIndexHighWater: 0, internalIndexHighWater: 1,
+				expectedGeneration: 3, key, context));
+		Assert.Equal("The Liquid internal change-index high-water moved backwards.", failure.Message);
+		Assert.Equal(5ul, LiquidWalletLoadSave.Load(dir, "internal-backward", key, context).InternalIndexHighWater);
+	}
+
+	[Fact]
+	public void GenericSavePreservesInternalHighWaterAcrossOlderStateSave()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(Tx('c'), [], [Output(Tx('c'), 0, PeggedAsset, 42)]));
+		LiquidWalletLoadSave.SaveWithIndexHighWaters(
+			dir, "internal-generic", state, generation: 3,
+			externalIndexHighWater: 2, internalIndexHighWater: 5,
+			expectedGeneration: 2, key, context);
+
+		// A plain state save requests no high-water and never lowers the durable internal value,
+		// even when persisting an older (revision-0) state under a forward generation.
+		LiquidWalletLoadSave.Save(dir, "internal-generic", state, generation: 4, key, context);
+		LiquidWalletLoadSaveResult loaded = LiquidWalletLoadSave.Load(dir, "internal-generic", key, context);
+		Assert.Equal(5ul, loaded.InternalIndexHighWater);
+		Assert.Equal(2ul, loaded.ExternalIndexHighWater);
+	}
+
+	[Fact]
+	public void InternalIndexAllocatorIsMonotonicAcrossReopenWithoutObservation()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
+		LiquidWalletLoadSave.Save(dir, "internal-alloc", state, generation: 0, key, context);
+
+		// Each allocation reserves the current internal high-water and persists +1, with no
+		// process-local state and no observation required. Indices are never reused across reopen.
+		LiquidWalletInternalIndexAllocation first = LiquidWalletInternalIndexAllocator.Allocate(dir, "internal-alloc", key, context);
+		LiquidWalletInternalIndexAllocation second = LiquidWalletInternalIndexAllocator.Allocate(dir, "internal-alloc", key, context);
+		Assert.Equal(0ul, first.Index);
+		Assert.Equal(1ul, second.Index);
+		Assert.Equal(1ul, first.PersistedInternalIndexHighWater);
+		Assert.Equal(2ul, second.PersistedInternalIndexHighWater);
+		Assert.Equal(2ul, LiquidWalletLoadSave.Load(dir, "internal-alloc", key, context).InternalIndexHighWater);
+
+		// The external high-water is untouched by internal allocation.
+		Assert.Equal(0ul, LiquidWalletLoadSave.Load(dir, "internal-alloc", key, context).ExternalIndexHighWater);
+	}
+
+	[Fact]
+	public void InternalIndexAllocatorRejectsExhaustion()
+	{
+		byte[] key = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
+		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
+		string dir = GetWorkDir();
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
+		// Persist the internal high-water just past the exact 0x7fffffff ceiling.
+		LiquidWalletLoadSave.SaveWithIndexHighWaters(
+			dir, "internal-exhaust", state, generation: 1,
+			externalIndexHighWater: 0, internalIndexHighWater: 0x80000000UL,
+			expectedGeneration: 0, key, context);
+
+		InvalidOperationException failure = Assert.Throws<InvalidOperationException>(() =>
+			LiquidWalletInternalIndexAllocator.Allocate(dir, "internal-exhaust", key, context));
+		Assert.Equal("The Liquid internal change-index space is exhausted.", failure.Message);
+	}
+
 	private static void AssertFreshChild(string dir, string name, byte[] key, byte[] context, ulong revision, ulong generation, ulong highWater, int applied, int unspent, long balance)
 	{
 		using JsonDocument result = RoslynFreshChildHarness.RunChild(FreshChildAssemblyPath.Value,

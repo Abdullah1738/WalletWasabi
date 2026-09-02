@@ -24,6 +24,7 @@ internal sealed class LiquidWalletRefreshStateCapture
 		ulong stateRevision,
 		ulong persistenceGeneration,
 		ulong externalIndexHighWater,
+		ulong internalIndexHighWater,
 		uint? minConfirmedHeight,
 		string[] acceptedTransactionIds,
 		IReadOnlyDictionary<string, ulong> acceptedTransactionIdVersions)
@@ -35,6 +36,7 @@ internal sealed class LiquidWalletRefreshStateCapture
 		StateRevision = stateRevision;
 		PersistenceGeneration = persistenceGeneration;
 		ExternalIndexHighWater = externalIndexHighWater;
+		InternalIndexHighWater = internalIndexHighWater;
 		MinConfirmedHeight = minConfirmedHeight;
 		_acceptedTransactionIds = acceptedTransactionIds;
 		_acceptedTransactionIdVersions = acceptedTransactionIdVersions;
@@ -47,6 +49,7 @@ internal sealed class LiquidWalletRefreshStateCapture
 	internal ulong StateRevision { get; }
 	internal ulong PersistenceGeneration { get; }
 	internal ulong ExternalIndexHighWater { get; }
+	internal ulong InternalIndexHighWater { get; }
 
 	/// <summary>
 	/// The captured confirmed-history high-water anchor for the bounded confirmed-block rescan:
@@ -177,6 +180,7 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable
 				owner.StateRevision,
 				owner.PersistenceGeneration,
 				owner.ExternalIndexHighWater,
+				owner.InternalIndexHighWater,
 				owner.MinConfirmedHeight,
 				acceptedTransactionIds,
 				acceptedVersions);
@@ -200,7 +204,8 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable
 				&& ReferenceEquals(owner.State, captured.State)
 				&& owner.StateRevision == captured.StateRevision
 				&& owner.PersistenceGeneration == captured.PersistenceGeneration
-				&& owner.ExternalIndexHighWater == captured.ExternalIndexHighWater;
+				&& owner.ExternalIndexHighWater == captured.ExternalIndexHighWater
+				&& owner.InternalIndexHighWater == captured.InternalIndexHighWater;
 		}
 	}
 

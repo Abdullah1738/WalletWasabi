@@ -89,7 +89,7 @@ internal static class LiquidWalletLoadSave
 		}
 	}
 
-	private readonly record struct CurrentMetadata(ulong Generation, ulong ExternalIndexHighWater);
+	private readonly record struct CurrentMetadata(ulong Generation, ulong ExternalIndexHighWater, ulong InternalIndexHighWater);
 
 	/// <summary>
 	/// Loads one Liquid managed wallet's sealed state file from
@@ -124,7 +124,8 @@ internal static class LiquidWalletLoadSave
 			result.State!,
 			result.Revision,
 			result.Generation,
-			result.ExternalIndexHighWater);
+			result.ExternalIndexHighWater,
+			result.InternalIndexHighWater);
 	}
 
 	/// <summary>
@@ -144,7 +145,7 @@ internal static class LiquidWalletLoadSave
 	{
 		lock (GenerationFence)
 		{
-			return SaveCore(walletDataDir, walletName, state, generation, key, externalWalletNetworkContext, null, null);
+			return SaveCore(walletDataDir, walletName, state, generation, key, externalWalletNetworkContext, null, null, null);
 		}
 	}
 
@@ -175,7 +176,18 @@ internal static class LiquidWalletLoadSave
 				}
 			}
 
-			return SaveCore(walletDataDir, walletName, state, generation, key, externalWalletNetworkContext, current?.ExternalIndexHighWater ?? 0, null, current, usePreReadSnapshot: true);
+			return SaveCore(
+				walletDataDir,
+				walletName,
+				state,
+				generation,
+				key,
+				externalWalletNetworkContext,
+				current?.ExternalIndexHighWater ?? 0,
+				current?.InternalIndexHighWater ?? 0,
+				expectedGeneration: null,
+				current,
+				usePreReadSnapshot: true);
 		}
 	}
 
@@ -199,6 +211,33 @@ internal static class LiquidWalletLoadSave
 				key,
 				externalWalletNetworkContext,
 				externalIndexHighWater,
+				requestedInternalIndexHighWater: null,
+				expectedGeneration);
+		}
+	}
+
+	internal static LiquidWalletLoadSaveResult SaveWithIndexHighWaters(
+		string walletDataDir,
+		string walletName,
+		LiquidWalletState state,
+		ulong generation,
+		ulong externalIndexHighWater,
+		ulong internalIndexHighWater,
+		ulong expectedGeneration,
+		ReadOnlySpan<byte> key,
+		ReadOnlySpan<byte> externalWalletNetworkContext)
+	{
+		lock (GenerationFence)
+		{
+			return SaveCore(
+				walletDataDir,
+				walletName,
+				state,
+				generation,
+				key,
+				externalWalletNetworkContext,
+				externalIndexHighWater,
+				internalIndexHighWater,
 				expectedGeneration);
 		}
 	}
@@ -211,6 +250,7 @@ internal static class LiquidWalletLoadSave
 		ReadOnlySpan<byte> key,
 		ReadOnlySpan<byte> externalWalletNetworkContext,
 		ulong? requestedExternalIndexHighWater,
+		ulong? requestedInternalIndexHighWater,
 		ulong? expectedGeneration,
 		CurrentMetadata? preReadSnapshot = null,
 		bool usePreReadSnapshot = false)
@@ -221,17 +261,19 @@ internal static class LiquidWalletLoadSave
 			walletDataDir,
 			walletName);
 		ulong externalIndexHighWater = requestedExternalIndexHighWater ?? 0;
+		ulong internalIndexHighWater = requestedInternalIndexHighWater ?? 0;
 		if (usePreReadSnapshot)
 		{
 			if (preReadSnapshot is CurrentMetadata snapshot)
 			{
 				externalIndexHighWater = Math.Max(externalIndexHighWater, snapshot.ExternalIndexHighWater);
+				internalIndexHighWater = Math.Max(internalIndexHighWater, snapshot.InternalIndexHighWater);
 			}
 		}
 		else if (File.Exists(filePath))
 		{
-			// Read the current on-disk high-water to carry it forward. A file that cannot be
-			// decrypted or parsed under this key/context is treated as absent (high-water 0):
+			// Read the current on-disk high-waters to carry them forward. A file that cannot be
+			// decrypted or parsed under this key/context is treated as absent (high-waters 0):
 			// Save is an idempotent overwrite and must not fail on a stale or foreign file.
 			// The strict expected-generation / rollback rejections below only apply when the
 			// current state is actually readable.
@@ -249,7 +291,7 @@ internal static class LiquidWalletLoadSave
 
 			if (current is not null)
 			{
-				if (requestedExternalIndexHighWater.HasValue || expectedGeneration.HasValue)
+				if (requestedExternalIndexHighWater.HasValue || requestedInternalIndexHighWater.HasValue || expectedGeneration.HasValue)
 				{
 					if (expectedGeneration is ulong expected && current.Generation != expected)
 					{
@@ -259,16 +301,21 @@ internal static class LiquidWalletLoadSave
 					{
 						throw new InvalidOperationException("The Liquid wallet persistence generation moved backwards.");
 					}
-					if (requestedExternalIndexHighWater is ulong requested && requested < current.ExternalIndexHighWater)
+					if (requestedExternalIndexHighWater is ulong requestedExternal && requestedExternal < current.ExternalIndexHighWater)
 					{
 						throw new InvalidOperationException("The Liquid external receive-index high-water moved backwards.");
 					}
+					if (requestedInternalIndexHighWater is ulong requestedInternal && requestedInternal < current.InternalIndexHighWater)
+					{
+						throw new InvalidOperationException("The Liquid internal change-index high-water moved backwards.");
+					}
 				}
 
-				// A state save never lowers the authenticated external receive-index high-water.
-				// A generic save carries the on-disk value forward unchanged; an allocating save
-				// supplies the advanced value above.
+				// A state save never lowers either authenticated index high-water. A generic save
+				// carries the on-disk values forward unchanged; an allocating save supplies the
+				// advanced value above.
 				externalIndexHighWater = Math.Max(externalIndexHighWater, current.ExternalIndexHighWater);
+				internalIndexHighWater = Math.Max(internalIndexHighWater, current.InternalIndexHighWater);
 			}
 		}
 		LiquidWalletPersistenceHandoffResult result =
@@ -277,9 +324,10 @@ internal static class LiquidWalletLoadSave
 				generation,
 				key,
 				externalWalletNetworkContext,
-				externalIndexHighWater);
+				externalIndexHighWater,
+				internalIndexHighWater);
 		LiquidWalletPersistenceFormat.Save(filePath, result.Envelope!);
-		return LiquidWalletLoadSaveResult.CreateSaved(result.Revision, result.Generation, result.ExternalIndexHighWater);
+		return LiquidWalletLoadSaveResult.CreateSaved(result.Revision, result.Generation, result.ExternalIndexHighWater, result.InternalIndexHighWater);
 	}
 
 	private static LiquidWalletPersistenceHandoffResult ObserveAndExport(
@@ -287,7 +335,8 @@ internal static class LiquidWalletLoadSave
 		ulong generation,
 		ReadOnlySpan<byte> key,
 		ReadOnlySpan<byte> externalWalletNetworkContext,
-		ulong externalIndexHighWater)
+		ulong externalIndexHighWater,
+		ulong internalIndexHighWater)
 	{
 		ActiveObservation.Value?.RecordExportWriteEntry();
 		return
@@ -296,7 +345,8 @@ internal static class LiquidWalletLoadSave
 				generation,
 				key,
 				externalWalletNetworkContext,
-				externalIndexHighWater);
+				externalIndexHighWater,
+				internalIndexHighWater);
 		// Export always returns a non-null Envelope; the null-forgiving
 		// operator adds no runtime check and no fallback.
 	}
@@ -316,7 +366,7 @@ internal static class LiquidWalletLoadSave
 			LiquidWalletReplayProtectedPayload envelope = LiquidWalletPersistenceFormat.LoadEnvelope(filePath);
 			LiquidWalletReplayOpenResult opened = LiquidWalletReplayProtectedPayload.Open(
 				envelope.GetBytes(), key, externalWalletNetworkContext);
-			return new CurrentMetadata(opened.Generation, opened.ExternalIndexHighWater);
+			return new CurrentMetadata(opened.Generation, opened.ExternalIndexHighWater, opened.InternalIndexHighWater);
 		}
 		catch (LiquidWalletReplayProtectionException)
 		{

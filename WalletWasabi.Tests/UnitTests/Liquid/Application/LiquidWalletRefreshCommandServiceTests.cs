@@ -76,7 +76,8 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 				return LiquidWalletLoadSaveResult.CreateSaved(
 					request.State.Revision,
 					request.NextGeneration,
-					request.ExternalIndexHighWater);
+					request.ExternalIndexHighWater,
+					request.InternalIndexHighWater);
 			},
 			publish: (publishedProvider, publishedSession, handoff) =>
 			{
@@ -234,7 +235,7 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 			},
 			observeNative: _ => batch,
 			save: request => LiquidWalletLoadSaveResult.CreateSaved(
-				request.State.Revision, request.NextGeneration, request.ExternalIndexHighWater),
+				request.State.Revision, request.NextGeneration, request.ExternalIndexHighWater, request.InternalIndexHighWater),
 			publish: (_, _, _) => false);
 		var command = LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
 
@@ -280,7 +281,8 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 				return LiquidWalletLoadSaveResult.CreateSaved(
 					request.State.Revision,
 					request.NextGeneration,
-					request.ExternalIndexHighWater);
+					request.ExternalIndexHighWater,
+					request.InternalIndexHighWater);
 			},
 			publish: (_, _, _) =>
 			{
@@ -382,7 +384,8 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 			save: request => LiquidWalletLoadSaveResult.CreateSaved(
 				request.State.Revision,
 				request.NextGeneration,
-				request.ExternalIndexHighWater),
+				request.ExternalIndexHighWater,
+				request.InternalIndexHighWater),
 			publish: (_, _, _) => true,
 			stageObserver: _ => { });
 		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> command =
@@ -423,7 +426,8 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 			save: request => LiquidWalletLoadSaveResult.CreateSaved(
 				request.State.Revision,
 				request.NextGeneration,
-				request.ExternalIndexHighWater),
+				request.ExternalIndexHighWater,
+				request.InternalIndexHighWater),
 			publish: (_, _, _) => true,
 			stageObserver: _ => { });
 		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> command =
@@ -645,6 +649,7 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 			stateRevision: 0,
 			persistedGeneration: 0,
 			persistedExternalIndexHighWater: 0,
+			persistedInternalIndexHighWater: 0,
 			WalletWasabi.Liquid.Wallet.LiquidWalletState.Empty(
 				WalletWasabi.Liquid.Assets.LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId)));
 		SetField(owner, "_allocation", allocation);

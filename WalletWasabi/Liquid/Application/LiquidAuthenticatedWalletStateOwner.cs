@@ -90,6 +90,9 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 	/// <summary>The persisted external receive-index high-water carried by this owner.</summary>
 	internal ulong ExternalIndexHighWater => _allocation.PersistedExternalIndexHighWater;
 
+	/// <summary>The persisted internal change-index high-water carried by this owner.</summary>
+	internal ulong InternalIndexHighWater => _allocation.PersistedInternalIndexHighWater;
+
 	/// <summary>
 	/// Purely projects a complete replacement owner from a committed
 	/// <paramref name="committedState"/> and its persisted <paramref name="nextGeneration"/>.
@@ -119,13 +122,14 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 		}
 
 		// Re-project through a replacement allocation that preserves the allocated receive
-		// index and the persisted external-index high-water while binding the committed
+		// index and both persisted index high-waters while binding the committed
 		// state, its revision, and the next persistence generation.
 		var replacementAllocation = new LiquidWalletExternalIndexAllocation(
 			_allocation.Index,
 			committedState.Revision,
 			nextGeneration,
 			_allocation.PersistedExternalIndexHighWater,
+			_allocation.PersistedInternalIndexHighWater,
 			committedState);
 		return new LiquidAuthenticatedWalletStateOwner(
 			replacementAllocation,

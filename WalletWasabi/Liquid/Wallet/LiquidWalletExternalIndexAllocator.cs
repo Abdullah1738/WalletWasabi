@@ -14,12 +14,14 @@ public sealed class LiquidWalletExternalIndexAllocation
 		ulong stateRevision,
 		ulong persistedGeneration,
 		ulong persistedExternalIndexHighWater,
+		ulong persistedInternalIndexHighWater,
 		LiquidWalletState state)
 	{
 		Index = index;
 		StateRevision = stateRevision;
 		PersistedGeneration = persistedGeneration;
 		PersistedExternalIndexHighWater = persistedExternalIndexHighWater;
+		PersistedInternalIndexHighWater = persistedInternalIndexHighWater;
 		_state = state;
 	}
 
@@ -27,6 +29,7 @@ public sealed class LiquidWalletExternalIndexAllocation
 	public ulong StateRevision { get; }
 	public ulong PersistedGeneration { get; }
 	public ulong PersistedExternalIndexHighWater { get; }
+	public ulong PersistedInternalIndexHighWater { get; }
 	internal LiquidWalletState State => _state;
 }
 
@@ -74,6 +77,7 @@ public static class LiquidWalletExternalIndexAllocator
 				saved.Revision,
 				saved.Generation,
 				saved.ExternalIndexHighWater,
+				saved.InternalIndexHighWater,
 				loadedState);
 		}
 	}

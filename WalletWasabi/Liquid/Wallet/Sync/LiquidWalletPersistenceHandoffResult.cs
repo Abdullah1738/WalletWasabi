@@ -20,12 +20,14 @@ internal sealed class LiquidWalletPersistenceHandoffResult
 		ulong revision,
 		ulong generation,
 		ulong externalIndexHighWater,
+		ulong internalIndexHighWater,
 		LiquidWalletState? state)
 	{
 		Envelope = envelope;
 		Revision = revision;
 		Generation = generation;
 		ExternalIndexHighWater = externalIndexHighWater;
+		InternalIndexHighWater = internalIndexHighWater;
 		State = state;
 	}
 
@@ -33,16 +35,18 @@ internal sealed class LiquidWalletPersistenceHandoffResult
 	public ulong Revision { get; }
 	public ulong Generation { get; }
 	public ulong ExternalIndexHighWater { get; }
+	public ulong InternalIndexHighWater { get; }
 	public LiquidWalletState? State { get; }
 
 	internal static LiquidWalletPersistenceHandoffResult Create(
 		LiquidWalletReplayProtectedPayload envelope,
 		ulong revision,
 		ulong generation,
-		ulong externalIndexHighWater = 0)
+		ulong externalIndexHighWater = 0,
+		ulong internalIndexHighWater = 0)
 	{
 		ArgumentNullException.ThrowIfNull(envelope);
-		return new LiquidWalletPersistenceHandoffResult(envelope, revision, generation, externalIndexHighWater, state: null);
+		return new LiquidWalletPersistenceHandoffResult(envelope, revision, generation, externalIndexHighWater, internalIndexHighWater, state: null);
 	}
 
 	internal static LiquidWalletPersistenceHandoffResult Create(
@@ -50,10 +54,11 @@ internal sealed class LiquidWalletPersistenceHandoffResult
 		ulong revision,
 		ulong generation,
 		ulong externalIndexHighWater,
+		ulong internalIndexHighWater,
 		LiquidWalletState state)
 	{
 		ArgumentNullException.ThrowIfNull(state);
-		return new LiquidWalletPersistenceHandoffResult(envelope, revision, generation, externalIndexHighWater, state);
+		return new LiquidWalletPersistenceHandoffResult(envelope, revision, generation, externalIndexHighWater, internalIndexHighWater, state);
 	}
 
 	public override string ToString() => nameof(LiquidWalletPersistenceHandoffResult);
