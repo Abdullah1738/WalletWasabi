@@ -288,7 +288,9 @@ public sealed class LiquidWalletSession : IAsyncDisposable
 				manifest,
 				current.Balances,
 				current.ReceiveMaterial.NextReceiveScriptPubKey,
-				current.ReceiveMaterial.NextReceiveBlindingPublicKey);
+				current.ReceiveMaterial.NextReceiveBlindingPublicKey,
+				current.ReceiveMaterial.NextReceiveLabels,
+				session.SetNextReceiveLabelsAsync);
 
 			// Feed the already-produced history into the model so a funded
 			// wallet presents its retained history instead of the "not
@@ -335,6 +337,29 @@ public sealed class LiquidWalletSession : IAsyncDisposable
 		LiquidWalletApplicationClient client = await GetOrCreateClientAsync(cancellationToken).ConfigureAwait(false);
 		LiquidWalletUiSendExecutionRequest authorized = WithSessionPreviousTransactionRows(client, request);
 		return await client.SendCommand(authorized, cancellationToken).ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// The single narrow non-secret receive-label write surface the Fluent
+	/// receive flow is wired with: one <see cref="Func{T1,T2,TResult}"/> over
+	/// the public request type. It delegates to the single application
+	/// client's <see cref="LiquidWalletApplicationClient.SetNextReceiveLabelsAsync"/>
+	/// for the wallet the request names — the same open authenticated session
+	/// the wallet was opened with — persisting the durable label set through
+	/// the landed, generation-fenced receive-label command service (NOT a
+	/// process-local dictionary). Key management stays in this lifetime
+	/// layer: the delegate never receives or returns key material, and the
+	/// view model never holds keys. Fail-closed: any rejection from the
+	/// landed surface surfaces as-is.
+	/// </summary>
+	public async Task SetNextReceiveLabelsAsync(
+		LiquidWalletUiSetReceiveLabelsRequest request,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(request);
+
+		LiquidWalletApplicationClient client = await GetOrCreateClientAsync(cancellationToken).ConfigureAwait(false);
+		await client.SetNextReceiveLabelsAsync(request, cancellationToken).ConfigureAwait(false);
 	}
 
 	/// <summary>

@@ -460,7 +460,8 @@ public class LiquidWalletWiringTests
 			Manifest,
 			handoff.Balances,
 			handoff.ReceiveMaterial.NextReceiveScriptPubKey,
-			handoff.ReceiveMaterial.NextReceiveBlindingPublicKey);
+			handoff.ReceiveMaterial.NextReceiveBlindingPublicKey,
+			handoff.ReceiveMaterial.NextReceiveLabels);
 
 		Assert.False(model.IsHistoryLoaded);
 		Assert.Null(model.HistorySnapshot);
@@ -474,7 +475,12 @@ public class LiquidWalletWiringTests
 
 	// Builds a LiquidWalletModel over a state with the given balances, with the
 	// shared next-receive script + blinding public key.
-	private static LiquidWalletModel CreateModel(string name, long peggedAtomic, long? issuedAtomic = null)
+	private static LiquidWalletModel CreateModel(
+		string name,
+		long peggedAtomic,
+		long? issuedAtomic = null,
+		IReadOnlyList<string>? nextReceiveLabels = null,
+		Func<LiquidWalletUiSetReceiveLabelsRequest, CancellationToken, Task>? setNextReceiveLabelsCommand = null)
 	{
 		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
 		ulong revision = 0;
@@ -490,7 +496,14 @@ public class LiquidWalletWiringTests
 		}
 
 		LiquidWalletUiSnapshot snapshot = LiquidWalletUiSnapshot.Capture(name, Manifest, state);
-		return new LiquidWalletModel(name, Manifest, snapshot, ReceiveScript, BlindingKey);
+		return new LiquidWalletModel(
+			name,
+			Manifest,
+			snapshot,
+			ReceiveScript,
+			BlindingKey,
+			nextReceiveLabels,
+			setNextReceiveLabelsCommand);
 	}
 
 	// Slice LIQUID-UI-SEND-ASSET-PICKER-001 headless evidence: render the real
@@ -638,6 +651,190 @@ public class LiquidWalletWiringTests
 		Assert.Equal("2000 atomic units", new LiquidSpendPlanAssetAmountItemViewModel(uiContext, issuedTotal).AmountDisplayText);
 	}
 
+	// Slice LIQUID-UI-RECEIVE-LABEL-001 headless evidence: render the real
+	// LiquidReceiveView over a wallet whose open handoff carried a durable
+	// next-receive label set, and prove the label input binds and shows the
+	// existing labels joined as Wasabi's comma-separated convention. The
+	// compiled bindings are validated by x:CompileBindings at build; this
+	// asserts the live binding path headlessly.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void ReceiveViewLabelInputBindsAndShowsExistingLabels()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using ServicesScope _ = InstallTestServices(uiContext.Services.UiConfig);
+		using LiquidWalletModel model = CreateModel(
+			"liquid-recv-label",
+			peggedAtomic: 1_000,
+			nextReceiveLabels: new[] { "exchange", "savings" });
+		LiquidReceiveViewModel receive = new(uiContext, model);
+		receive.OnNavigatedTo(isInHistory: false);
+
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidReceiveView
+		{
+			DataContext = receive,
+		};
+
+		var window = new Avalonia.Controls.Window
+		{
+			Width = 800,
+			Height = 600,
+			Content = view,
+		};
+		window.Show();
+		try
+		{
+			view.Measure(new Avalonia.Size(800, 600));
+			view.Arrange(new Avalonia.Rect(0, 0, 800, 600));
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+			// The label input is the only TextBox in the receive view; it
+			// shows the existing labels joined, and its text round-trips
+			// through the bound LabelText property.
+			Avalonia.Controls.TextBox labelBox = view.GetVisualDescendants()
+				.OfType<Avalonia.Controls.TextBox>()
+				.Single();
+			Assert.Equal("exchange, savings", labelBox.Text);
+			Assert.Equal("exchange, savings", receive.LabelText);
+
+			labelBox.Text = "newlabel";
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.Equal("newlabel", receive.LabelText);
+		}
+		finally
+		{
+			window.Close();
+		}
+	}
+
+	// A receive view with no durable label opens with an empty label input.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void ReceiveViewLabelInputIsEmptyWhenUnlabeled()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using LiquidWalletModel model = CreateModel("liquid-recv-unlabeled", peggedAtomic: 1_000);
+		LiquidReceiveViewModel receive = new(uiContext, model);
+		receive.OnNavigatedTo(isInHistory: false);
+
+		Assert.Equal("", receive.LabelText);
+		Assert.Empty(model.NextReceiveLabels);
+	}
+
+	// The save action parses the comma-separated label text and invokes the
+	// model's write path with the expected label set.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public async Task ReceiveViewSaveLabelInvokesModelWritePathAsync()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using ServicesScope _ = InstallTestServices(uiContext.Services.UiConfig);
+
+		string[]? capturedLabels = null;
+		Task WriteLabels(LiquidWalletUiSetReceiveLabelsRequest request, CancellationToken cancellationToken)
+		{
+			capturedLabels = request.Labels.ToArray();
+			return Task.CompletedTask;
+		}
+
+		using LiquidWalletModel model = CreateModel(
+			"liquid-recv-save",
+			peggedAtomic: 1_000,
+			setNextReceiveLabelsCommand: WriteLabels);
+		LiquidReceiveViewModel receive = new(uiContext, model);
+		receive.OnNavigatedTo(isInHistory: false);
+
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidReceiveView
+		{
+			DataContext = receive,
+		};
+
+		var window = new Avalonia.Controls.Window
+		{
+			Width = 800,
+			Height = 600,
+			Content = view,
+		};
+		window.Show();
+		try
+		{
+			view.Measure(new Avalonia.Size(800, 600));
+			view.Arrange(new Avalonia.Rect(0, 0, 800, 600));
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+			Avalonia.Controls.TextBox labelBox = view.GetVisualDescendants()
+				.OfType<Avalonia.Controls.TextBox>()
+				.Single();
+			labelBox.Text = "exchange, savings";
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+			// The stub write delegate completes synchronously, so the save
+			// runs to completion on the UI thread without yielding to a
+			// background scheduler (which would let the rendered
+			// PrivacyContentControl fire off-thread after teardown).
+			await receive.SaveLabel.Execute().ToTask();
+
+			Assert.NotNull(capturedLabels);
+			Assert.Equal(new[] { "exchange", "savings" }, capturedLabels);
+			Assert.Null(receive.LabelSaveErrorText);
+		}
+		finally
+		{
+			window.Close();
+		}
+	}
+
+	// An empty label field clears the label: the write path receives an empty
+	// label set.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public async Task ReceiveViewSaveEmptyLabelClearsAsync()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+
+		string[]? capturedLabels = null;
+		Task WriteLabels(LiquidWalletUiSetReceiveLabelsRequest request, CancellationToken cancellationToken)
+		{
+			capturedLabels = request.Labels.ToArray();
+			return Task.CompletedTask;
+		}
+
+		using LiquidWalletModel model = CreateModel(
+			"liquid-recv-clear",
+			peggedAtomic: 1_000,
+			nextReceiveLabels: new[] { "exchange" },
+			setNextReceiveLabelsCommand: WriteLabels);
+		LiquidReceiveViewModel receive = new(uiContext, model);
+		receive.OnNavigatedTo(isInHistory: false);
+		Assert.Equal("exchange", receive.LabelText);
+
+		receive.LabelText = "";
+		await receive.SaveLabel.Execute().ToTask();
+
+		Assert.NotNull(capturedLabels);
+		Assert.Empty(capturedLabels);
+		Assert.Null(receive.LabelSaveErrorText);
+	}
+
+	// A landed rejection from the write path surfaces as-is; no success is
+	// fabricated.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public async Task ReceiveViewSaveLabelSurfacesRejectionAsync()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+
+		Task WriteLabels(LiquidWalletUiSetReceiveLabelsRequest request, CancellationToken cancellationToken) =>
+			throw new InvalidOperationException("landed rejection");
+
+		using LiquidWalletModel model = CreateModel(
+			"liquid-recv-reject",
+			peggedAtomic: 1_000,
+			setNextReceiveLabelsCommand: WriteLabels);
+		LiquidReceiveViewModel receive = new(uiContext, model);
+		receive.OnNavigatedTo(isInHistory: false);
+
+		receive.LabelText = "exchange";
+		await receive.SaveLabel.Execute().ToTask();
+
+		Assert.Equal("landed rejection", receive.LabelSaveErrorText);
+	}
+
 	private static LiquidTransactionId Tx(char value) =>
 		LiquidTransactionId.ParseRpcHex(new string(value, 64));
 
@@ -716,6 +913,44 @@ public class LiquidWalletWiringTests
 
 	private static void SetField(object target, string name, object? value) =>
 		target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(target, value);
+
+	// Installs a minimal WalletWasabi.Fluent Services singleton exposing only
+	// the supplied UiConfig, so the landed PrivacyContentControl (which reads
+	// Services.Instance.UiConfig at construction) can be exercised headless.
+	// This is a test-only harness over the unchanged shared control, mirroring
+	// LiquidWalletHistoryPresentationTests.
+	private static ServicesScope InstallTestServices(UiConfig uiConfig)
+	{
+		var services = (WalletWasabi.Fluent.Services)RuntimeHelpers
+			.GetUninitializedObject(typeof(WalletWasabi.Fluent.Services));
+		SetServicesBackingField(services, nameof(WalletWasabi.Fluent.Services.UiConfig), uiConfig);
+		PropertyInfo instanceProperty = typeof(WalletWasabi.Fluent.Services)
+			.GetProperty(nameof(WalletWasabi.Fluent.Services.Instance))!;
+		WalletWasabi.Fluent.Services? previous =
+			(WalletWasabi.Fluent.Services?)instanceProperty.GetValue(null);
+		SetStaticServicesBackingField(nameof(WalletWasabi.Fluent.Services.Instance), services);
+		return new ServicesScope(previous);
+	}
+
+	private static void SetServicesBackingField(object target, string propertyName, object? value) =>
+		typeof(WalletWasabi.Fluent.Services)
+			.GetField($"<{propertyName}>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+			.SetValue(target, value);
+
+	private static void SetStaticServicesBackingField(string propertyName, object? value) =>
+		typeof(WalletWasabi.Fluent.Services)
+			.GetField($"<{propertyName}>k__BackingField", BindingFlags.Static | BindingFlags.NonPublic)!
+			.SetValue(null, value);
+
+	private sealed class ServicesScope : IDisposable
+	{
+		private readonly WalletWasabi.Fluent.Services? _previous;
+
+		internal ServicesScope(WalletWasabi.Fluent.Services? previous) => _previous = previous;
+
+		public void Dispose() =>
+			SetStaticServicesBackingField(nameof(WalletWasabi.Fluent.Services.Instance), _previous);
+	}
 
 	// Builds a sealed snapshot instance without running its constructor (the
 	// landed types have private constructors): only the auto-property backing

@@ -18,6 +18,7 @@ public sealed class LiquidWalletApplicationClient : IAsyncDisposable
 	private readonly LiquidAuthenticatedRuntimeProvider _runtimeProvider;
 	private readonly Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> _refreshCommand;
 	private readonly Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> _sendCommand;
+	private readonly Func<LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest, Task<LiquidAuthenticatedWalletStateOwner>> _setReceiveLabelsCommand;
 	private int _isDisposed;
 
 	private LiquidWalletApplicationClient(
@@ -25,13 +26,15 @@ public sealed class LiquidWalletApplicationClient : IAsyncDisposable
 		LiquidWalletDirectories walletDirectories,
 		LiquidAuthenticatedRuntimeProvider runtimeProvider,
 		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> refreshCommand,
-		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> sendCommand)
+		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> sendCommand,
+		Func<LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest, Task<LiquidAuthenticatedWalletStateOwner>> setReceiveLabelsCommand)
 	{
 		_options = options;
 		_walletDirectories = walletDirectories;
 		_runtimeProvider = runtimeProvider;
 		_refreshCommand = refreshCommand;
 		_sendCommand = sendCommand;
+		_setReceiveLabelsCommand = setReceiveLabelsCommand;
 	}
 
 	internal LiquidWalletApplicationOptions Options => _options;
@@ -42,6 +45,38 @@ public sealed class LiquidWalletApplicationClient : IAsyncDisposable
 	public Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> RefreshCommand => _refreshCommand;
 
 	public Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> SendCommand => _sendCommand;
+
+	/// <summary>
+	/// The single narrow public surface the Fluent receive-label write path
+	/// calls: persists the durable label set bound to the wallet's current
+	/// next-receive derivation index through the landed, generation-fenced
+	/// receive-label command service. The command runs entirely inside this
+	/// assembly: it resolves the open authenticated session for
+	/// <see cref="LiquidWalletUiSetReceiveLabelsRequest.CanonicalWalletId"/>,
+	/// reads the session's current next-receive index, invokes the internal
+	/// command, and on success republishes the handoff so the rebound
+	/// <see cref="LiquidWalletUiReceiveMaterial.NextReceiveLabels"/> is live.
+	/// Key material never crosses this public signature. Fail-closed: any
+	/// rejection from the landed surface surfaces as-is.
+	/// </summary>
+	public async Task SetNextReceiveLabelsAsync(
+		LiquidWalletUiSetReceiveLabelsRequest request,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(request);
+		ThrowIfDisposed();
+		cancellationToken.ThrowIfCancellationRequested();
+
+		LiquidAuthenticatedWalletSession session = _runtimeProvider.TryGetOpenSession(request.CanonicalWalletId)
+			?? throw new InvalidOperationException("No authenticated Liquid wallet session is open for the named wallet.");
+
+		uint index = checked((uint)session.StateOwner.LastIndex);
+		await _setReceiveLabelsCommand(
+			new LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest(
+				request.CanonicalWalletId,
+				index,
+				request.Labels)).ConfigureAwait(false);
+	}
 
 	public static LiquidWalletApplicationClient Create(LiquidWalletApplicationOptions options)
 	{
@@ -74,12 +109,15 @@ public sealed class LiquidWalletApplicationClient : IAsyncDisposable
 				runtimeProvider.RefreshCommand;
 			Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> sendCommand =
 				LiquidWalletSendExecutionCommandService.CreateSendCommand(runtimeProvider);
+			Func<LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest, Task<LiquidAuthenticatedWalletStateOwner>> setReceiveLabelsCommand =
+				LiquidWalletReceiveLabelCommandService.CreateSetReceiveLabelsCommand(runtimeProvider);
 			return new LiquidWalletApplicationClient(
 				canonicalOptions,
 				walletDirectories,
 				runtimeProvider,
 				refreshCommand,
-				sendCommand);
+				sendCommand,
+				setReceiveLabelsCommand);
 		}
 		catch (Exception originalException)
 		{

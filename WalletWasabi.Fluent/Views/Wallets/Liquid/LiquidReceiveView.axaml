@@ -15,6 +15,26 @@
     <DockPanel LastChildFill="True">
 
       <StackPanel DockPanel.Dock="Bottom" HorizontalAlignment="Stretch" Spacing="20">
+        <!-- The receive label for the currently-shown next receive address:
+             comma-separated suggestion labels, consistent with the BTC
+             Receive flow. Shown joined on open; an empty field clears the
+             durable label on save. -->
+        <StackPanel HorizontalAlignment="Stretch" Spacing="8" Margin="40 0 40 0">
+          <TextBlock Text="Label" HorizontalAlignment="Center" />
+          <DockPanel HorizontalAlignment="Stretch">
+            <Button DockPanel.Dock="Right"
+                    Content="Save"
+                    Command="{Binding SaveLabel}"
+                    Margin="8 0 0 0" />
+            <TextBox x:Name="LabelTextBox"
+                     Watermark="Comma-separated labels"
+                     Text="{Binding LabelText}" />
+          </DockPanel>
+          <TextBlock TextWrapping="Wrap"
+                     IsVisible="{Binding LabelSaveErrorText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                     Text="{Binding LabelSaveErrorText}" />
+        </StackPanel>
+
         <!-- The canonical confidential form is the primary address. -->
         <DockPanel HorizontalAlignment="Center">
           <PrivacyContentControl FontSize="{StaticResource FontSizeH5}">

@@ -1,5 +1,8 @@
+using System.Linq;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
+using System.Threading;
+using System.Threading.Tasks;
 using ReactiveUI;
 using WalletWasabi.Fluent.Infrastructure;
 using WalletWasabi.Liquid.Network;
@@ -33,13 +36,17 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	private readonly BehaviorSubject<bool> _historyLoaded;
 	private readonly byte[] _nextReceiveScriptPubKey;
 	private readonly byte[] _nextReceiveBlindingPublicKey;
+	private readonly string[] _nextReceiveLabels;
+	private readonly Func<LiquidWalletUiSetReceiveLabelsRequest, CancellationToken, Task>? _setNextReceiveLabelsCommand;
 
 	public LiquidWalletModel(
 		string name,
 		ElementsPublicNetworkManifest manifest,
 		LiquidWalletUiSnapshot initialSnapshot,
 		ReadOnlyMemory<byte> nextReceiveScriptPubKey,
-		ReadOnlyMemory<byte> nextReceiveBlindingPublicKey)
+		ReadOnlyMemory<byte> nextReceiveBlindingPublicKey,
+		IReadOnlyList<string>? nextReceiveLabels = null,
+		Func<LiquidWalletUiSetReceiveLabelsRequest, CancellationToken, Task>? setNextReceiveLabelsCommand = null)
 	{
 		ArgumentException.ThrowIfNullOrEmpty(name);
 		ArgumentNullException.ThrowIfNull(manifest);
@@ -51,6 +58,8 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 		Snapshot = initialSnapshot;
 		_nextReceiveScriptPubKey = nextReceiveScriptPubKey.ToArray();
 		_nextReceiveBlindingPublicKey = nextReceiveBlindingPublicKey.ToArray();
+		_nextReceiveLabels = nextReceiveLabels?.ToArray() ?? [];
+		_setNextReceiveLabelsCommand = setNextReceiveLabelsCommand;
 
 		_balances = new BehaviorSubject<LiquidWalletUiSnapshot>(initialSnapshot);
 		_loaded = new BehaviorSubject<bool>(true);
@@ -162,6 +171,37 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	/// </summary>
 	public LiquidWalletUiReceiveAddress CreateNextReceiveAddress() =>
 		CreateReceiveAddress(_nextReceiveScriptPubKey, _nextReceiveBlindingPublicKey);
+
+	/// <summary>
+	/// The durable label set bound to the wallet's next receive derivation
+	/// index, as published on the open handoff's receive material (empty when
+	/// the address is unlabeled). Read-only projection; labels carry no key
+	/// material.
+	/// </summary>
+	public IReadOnlyList<string> NextReceiveLabels => [.. _nextReceiveLabels];
+
+	/// <summary>
+	/// Persists a durable label set for the wallet's current next-receive
+	/// derivation index through the session-wired command (the landed,
+	/// generation-fenced receive-label command service — not a process-local
+	/// dictionary). An empty <paramref name="labels"/> clears the label. The
+	/// model only forwards the public request; key management stays in the
+	/// session layer. Fail-closed: any rejection from the landed surface
+	/// surfaces as-is. Throws when no write surface is wired.
+	/// </summary>
+	public Task SetNextReceiveLabelsAsync(
+		IReadOnlyList<string> labels,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(labels);
+		if (_setNextReceiveLabelsCommand is not { } command)
+		{
+			throw new InvalidOperationException(
+				"The Liquid receive-label write surface is not wired for this wallet session.");
+		}
+
+		return command(new LiquidWalletUiSetReceiveLabelsRequest(Name, labels), cancellationToken);
+	}
 
 	/// <summary>
 	/// Builds the exact Liquid spend plan for the send flow from the
