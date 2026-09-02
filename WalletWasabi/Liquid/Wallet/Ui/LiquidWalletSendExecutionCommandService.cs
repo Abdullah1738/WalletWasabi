@@ -231,6 +231,8 @@ public sealed class LiquidWalletSendExecutionCommandService
 				rpcClient,
 				_manifest.PeggedAssetId,
 				walletDataDirectory,
+				canonicalWalletId,
+				_manifest,
 				(request, ct) => AcquireFundingSourceAsync(rpcClient, _manifest.PeggedAssetId, _manifest, session.StateOwner.State, request, ct),
 				(canonicalTransactionIdHex, ct) => ScheduleAcceptedRefreshAsync(recordAcceptedTxid, canonicalWalletId, canonicalTransactionIdHex, ct),
 				ct => ScheduleManualRefreshAsync(canonicalWalletId, ct));

@@ -223,7 +223,8 @@ public static class LiquidWalletUiFacade
 		string destinationAssetIdHex,
 		long destinationAtomicUnits,
 		long explicitFeeAtomicUnits,
-		ulong? expectedRevision = null)
+		ulong? expectedRevision = null,
+		LiquidWalletUiChangeDestination? changeDestination = null)
 	{
 		ArgumentNullException.ThrowIfNull(manifest);
 		ArgumentNullException.ThrowIfNull(selectedOutPointHexes);
@@ -246,7 +247,8 @@ public static class LiquidWalletUiFacade
 			destinationAssetIdHex,
 			destinationAtomicUnits,
 			explicitFeeAtomicUnits,
-			expectedRevision);
+			expectedRevision,
+			changeDestination);
 	}
 
 	/// <summary>
@@ -289,7 +291,8 @@ public static class LiquidWalletUiFacade
 		string destinationAssetIdHex,
 		long destinationAtomicUnits,
 		long explicitFeeAtomicUnits,
-		ulong? expectedRevision = null)
+		ulong? expectedRevision = null,
+		LiquidWalletUiChangeDestination? changeDestination = null)
 	{
 		ArgumentNullException.ThrowIfNull(walletName);
 		ArgumentNullException.ThrowIfNull(manifest);
@@ -348,21 +351,16 @@ public static class LiquidWalletUiFacade
 				nameof(selectedOutPointHexes));
 		}
 
-		LiquidAddress address = LiquidAddress.Parse(manifest, confidentialDestinationAddress);
-		LiquidAssetId assetId = LiquidAssetId.ParseRpcHex(destinationAssetIdHex);
-		LiquidAssetAmount amount = LiquidAssetAmount.Create(
-			assetId,
-			LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId),
-			destinationAtomicUnits);
-		LiquidSuppliedConfidentialDestination destination =
-			LiquidSuppliedConfidentialDestination.Create(
-				manifest,
-				address,
-				assetId,
-				amount,
-				LiquidWalletLabelSet.Empty);
-		LiquidSuppliedConfidentialDestinationBatch batch =
-			LiquidSuppliedConfidentialDestinationBatch.Create([destination]);
+		LiquidSuppliedConfidentialDestinationBatch batch = CreateDestinationBatch(
+			manifest,
+			state,
+			expectedRevision,
+			selectedOutPoints,
+			confidentialDestinationAddress,
+			destinationAssetIdHex,
+			destinationAtomicUnits,
+			explicitFeeAtomicUnits,
+			changeDestination);
 		LiquidAssetAmount explicitFee = LiquidAssetAmount.Create(
 			LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId),
 			LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId),
@@ -410,7 +408,8 @@ public static class LiquidWalletUiFacade
 		ReadOnlySpan<byte> sourceEpoch,
 		ElementsExpectationBoundRawTransactionBatch fundingSource,
 		IReadOnlyList<IReadOnlyList<string>?> previousTransactionIdsBySelectedInput,
-		ulong? expectedRevision = null)
+		ulong? expectedRevision = null,
+		LiquidWalletUiChangeDestination? changeDestination = null)
 	{
 		ArgumentNullException.ThrowIfNull(manifest);
 		ArgumentNullException.ThrowIfNull(selectedOutPointHexes);
@@ -444,7 +443,8 @@ public static class LiquidWalletUiFacade
 			sourceEpoch,
 			fundingSource,
 			previousTransactionIdsBySelectedInput,
-			expectedRevision);
+			expectedRevision,
+			changeDestination);
 	}
 
 	/// <summary>
@@ -487,7 +487,8 @@ public static class LiquidWalletUiFacade
 		ReadOnlySpan<byte> sourceEpoch,
 		ElementsExpectationBoundRawTransactionBatch fundingSource,
 		IReadOnlyList<IReadOnlyList<string>?> previousTransactionIdsBySelectedInput,
-		ulong? expectedRevision = null)
+		ulong? expectedRevision = null,
+		LiquidWalletUiChangeDestination? changeDestination = null)
 	{
 		ArgumentNullException.ThrowIfNull(walletName);
 		ArgumentNullException.ThrowIfNull(manifest);
@@ -550,21 +551,16 @@ public static class LiquidWalletUiFacade
 				nameof(selectedOutPointHexes));
 		}
 
-		LiquidAddress address = LiquidAddress.Parse(manifest, confidentialDestinationAddress);
-		LiquidAssetId assetId = LiquidAssetId.ParseRpcHex(destinationAssetIdHex);
-		LiquidAssetAmount amount = LiquidAssetAmount.Create(
-			assetId,
-			LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId),
-			destinationAtomicUnits);
-		LiquidSuppliedConfidentialDestination destination =
-			LiquidSuppliedConfidentialDestination.Create(
-				manifest,
-				address,
-				assetId,
-				amount,
-				LiquidWalletLabelSet.Empty);
-		LiquidSuppliedConfidentialDestinationBatch batch =
-			LiquidSuppliedConfidentialDestinationBatch.Create([destination]);
+		LiquidSuppliedConfidentialDestinationBatch batch = CreateDestinationBatch(
+			manifest,
+			state,
+			expectedRevision,
+			selectedOutPoints,
+			confidentialDestinationAddress,
+			destinationAssetIdHex,
+			destinationAtomicUnits,
+			explicitFeeAtomicUnits,
+			changeDestination);
 		LiquidAssetAmount explicitFee = LiquidAssetAmount.Create(
 			LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId),
 			LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId),
@@ -667,5 +663,98 @@ public static class LiquidWalletUiFacade
 		}
 
 		return map;
+	}
+
+	/// <summary>
+	/// Builds the confidential-destination batch for one exact spend plan: the single user
+	/// destination followed by one wallet-owned change destination per asset whose selected total
+	/// exceeds the destination-plus-fee requirement for that asset. The surplus per asset is
+	/// <c>selected − (destination amount for the destination asset) − (explicit fee for the
+	/// pegged asset)</c>, read from the landed coin-control selection's per-asset totals. For each
+	/// asset with surplus &gt; 0, a change destination is appended from the caller-supplied
+	/// wallet-owned branch-1 confidential address values (no key material crosses this boundary);
+	/// the change label is <see cref="LiquidWalletLabelSet.Empty"/>. When no asset has surplus the
+	/// batch is exactly the one-destination batch (byte-identical to the pre-change shape). The
+	/// exact plan validator then balances per asset. This composition performs no signing, no
+	/// broadcast, no node contact, and no key derivation; the change address strings are parsed
+	/// fail-closed exactly as the user destination address.
+	/// </summary>
+	private static LiquidSuppliedConfidentialDestinationBatch CreateDestinationBatch(
+		ElementsPublicNetworkManifest manifest,
+		LiquidWalletState state,
+		ulong? expectedRevision,
+		LiquidOutPoint[] selectedOutPoints,
+		string confidentialDestinationAddress,
+		string destinationAssetIdHex,
+		long destinationAtomicUnits,
+		long explicitFeeAtomicUnits,
+		LiquidWalletUiChangeDestination? changeDestination)
+	{
+		LiquidAssetId peggedAssetId = LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId);
+		LiquidAddress address = LiquidAddress.Parse(manifest, confidentialDestinationAddress);
+		LiquidAssetId assetId = LiquidAssetId.ParseRpcHex(destinationAssetIdHex);
+		LiquidAssetAmount amount = LiquidAssetAmount.Create(
+			assetId,
+			peggedAssetId,
+			destinationAtomicUnits);
+		LiquidSuppliedConfidentialDestination destination =
+			LiquidSuppliedConfidentialDestination.Create(
+				manifest,
+				address,
+				assetId,
+				amount,
+				LiquidWalletLabelSet.Empty);
+
+		// When no change destination is supplied the batch is exactly the one-destination batch
+		// (byte-identical to the pre-change shape); the plan builder's own validation surfaces
+		// oversized/insufficient selections with the landed exceptions. Surplus computation is
+		// only engaged when the executor reserved a change address.
+		if (changeDestination is null)
+		{
+			return LiquidSuppliedConfidentialDestinationBatch.Create([destination]);
+		}
+
+		// The per-asset selected totals from the landed coin-control selection, computed at the
+		// caller-supplied revision fence exactly as the plan builder does.
+		LiquidWalletCoinControlSelection selection = state.CreateCoinControlSelection(
+			expectedRevision ?? state.Revision,
+			selectedOutPoints);
+		LiquidAssetBalanceMap selectedBalances = selection.GetSelectedBalances();
+
+		var destinations = new List<LiquidSuppliedConfidentialDestination> { destination };
+		IReadOnlyList<LiquidAssetAmount> balances = selectedBalances.GetAmounts();
+		for (int index = 0; index < balances.Count; index++)
+		{
+			LiquidAssetAmount balance = balances[index];
+			long requirement = 0;
+			if (balance.AssetId == assetId)
+			{
+				requirement = checked(requirement + destinationAtomicUnits);
+			}
+			if (balance.AssetId == peggedAssetId)
+			{
+				requirement = checked(requirement + explicitFeeAtomicUnits);
+			}
+
+			long surplus = balance.AtomicUnits - requirement;
+			if (surplus <= 0)
+			{
+				continue;
+			}
+
+			LiquidAddress changeAddress = LiquidAddress.Parse(manifest, changeDestination.ConfidentialAddress);
+			LiquidAssetAmount changeAmount = LiquidAssetAmount.Create(
+				balance.AssetId,
+				peggedAssetId,
+				surplus);
+			destinations.Add(LiquidSuppliedConfidentialDestination.Create(
+				manifest,
+				changeAddress,
+				balance.AssetId,
+				changeAmount,
+				LiquidWalletLabelSet.Empty));
+		}
+
+		return LiquidSuppliedConfidentialDestinationBatch.Create(destinations);
 	}
 }

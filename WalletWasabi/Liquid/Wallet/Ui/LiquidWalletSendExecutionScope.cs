@@ -1,5 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
+using NBitcoin;
+using WalletWasabi.Liquid.Addresses;
+using WalletWasabi.Liquid.Cryptography;
+using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Liquid.Transactions;
 
@@ -20,6 +24,9 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 	private readonly Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<ElementsExpectationBoundRawTransactionBatch>> _acquireFundingSource;
 	private readonly Func<string, CancellationToken, Task> _scheduleRefresh;
 	private readonly Func<CancellationToken, Task> _scheduleManualRefresh;
+	private readonly ElementsPublicNetworkManifest _manifest;
+	private readonly string _walletName;
+	private string? _cachedChangeAddress;
 	private int _disposed;
 
 	internal LiquidWalletSendExecutionScope(
@@ -33,6 +40,8 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 		ElementsRpcClient rpcClient,
 		string expectedEffectiveFeeAsset,
 		string walletDataDirectory,
+		string walletName,
+		ElementsPublicNetworkManifest manifest,
 		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<ElementsExpectationBoundRawTransactionBatch>> acquireFundingSource,
 		Func<string, CancellationToken, Task> scheduleRefresh,
 		Func<CancellationToken, Task> scheduleManualRefresh)
@@ -46,6 +55,8 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 		ArgumentNullException.ThrowIfNull(rpcClient);
 		ArgumentException.ThrowIfNullOrEmpty(expectedEffectiveFeeAsset);
 		ArgumentException.ThrowIfNullOrEmpty(walletDataDirectory);
+		ArgumentException.ThrowIfNullOrEmpty(walletName);
+		ArgumentNullException.ThrowIfNull(manifest);
 		ArgumentNullException.ThrowIfNull(acquireFundingSource);
 		ArgumentNullException.ThrowIfNull(scheduleRefresh);
 		ArgumentNullException.ThrowIfNull(scheduleManualRefresh);
@@ -65,6 +76,8 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 		RpcClient = rpcClient;
 		ExpectedEffectiveFeeAsset = expectedEffectiveFeeAsset;
 		WalletDataDirectory = walletDataDirectory;
+		_walletName = walletName;
+		_manifest = manifest;
 		_acquireFundingSource = acquireFundingSource;
 		_scheduleRefresh = scheduleRefresh;
 		_scheduleManualRefresh = scheduleManualRefresh;
@@ -115,6 +128,93 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 	{
 		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 		return _scheduleManualRefresh(cancellationToken);
+	}
+
+	/// <summary>
+	/// Reserves the wallet-owned branch-1 confidential change address for one send. Lazily on
+	/// first request it reserves one internal change index through the durable
+	/// <see cref="LiquidWalletInternalIndexAllocator"/> (generation-fenced, never rolled back;
+	/// gaps acceptable), derives the branch-1 spend script from the descriptor's account xpub,
+	/// blinds it with the SLIP-77 master, and builds the confidential address with the same
+	/// factory used at receive time. The result is cached so both facade calls of one send
+	/// observe the same address — no double-reservation. No key material is exposed; the derived
+	/// values are computed from the scope's already-held descriptor copy and SLIP-77 master.
+	/// </summary>
+	public bool TryReserveChangeDestination(out string? changeAddress)
+	{
+		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+		if (_cachedChangeAddress is not null)
+		{
+			changeAddress = _cachedChangeAddress;
+			return true;
+		}
+
+		try
+		{
+			LiquidWalletInternalIndexAllocation allocation = LiquidWalletInternalIndexAllocator.Allocate(
+				WalletDataDirectory,
+				_walletName,
+				ReplayProtectionKey,
+				ExternalWalletNetworkContext);
+			ExtPubKey accountPublicKey = ParseAccountPublicKey(DescriptorString, _manifest);
+			byte[] changeScript = accountPublicKey
+				.Derive(1)
+				.Derive((uint)allocation.Index)
+				.PubKey.WitHash.ScriptPubKey.ToBytes();
+			try
+			{
+				byte[] blindingPublicKey = LiquidSlip77PublicKey.Derive(Slip77MasterKey, changeScript);
+				try
+				{
+					_cachedChangeAddress = LiquidAddress.FromScriptPubKey(
+							_manifest,
+							changeScript,
+							LiquidBlindingPublicKey.Create(blindingPublicKey))
+						.GetCanonicalAddressText();
+				}
+				finally
+				{
+					CryptographicOperations.ZeroMemory(blindingPublicKey);
+				}
+			}
+			finally
+			{
+				CryptographicOperations.ZeroMemory(changeScript);
+			}
+
+			changeAddress = _cachedChangeAddress;
+			return true;
+		}
+		catch (Exception)
+		{
+			changeAddress = null;
+			return false;
+		}
+	}
+
+	private static ExtPubKey ParseAccountPublicKey(
+		string descriptor,
+		ElementsPublicNetworkManifest manifest)
+	{
+		const string Prefix = "elwpkh(";
+		int start = descriptor.IndexOf(Prefix, StringComparison.Ordinal);
+		if (start < 0)
+		{
+			throw new FormatException("The Liquid spend descriptor is not an elwpkh descriptor.");
+		}
+
+		start += Prefix.Length;
+		int end = descriptor.IndexOf('/', start);
+		if (end < 0)
+		{
+			throw new FormatException("The Liquid spend descriptor does not carry a derivation path.");
+		}
+
+		string xpub = descriptor[start..end];
+		NBitcoin.Network network = ReferenceEquals(manifest, ElementsPublicNetworkManifest.LiquidMainnet)
+			? NBitcoin.Network.Main
+			: NBitcoin.Network.TestNet;
+		return new BitcoinExtPubKey(xpub, network).ExtPubKey;
 	}
 
 	/// <summary>

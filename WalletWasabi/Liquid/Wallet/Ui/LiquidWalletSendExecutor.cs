@@ -53,7 +53,16 @@ internal sealed class LiquidWalletSendExecutor
 			// Step 3: build the exact spend plan through the landed facade using the
 			// executor-configured manifest, the scope's replay key/context, and the expected
 			// revision. The wallet data directory is the session-supplied single source of
-			// truth from the scope (the request carries no directory copy).
+			// truth from the scope (the request carries no directory copy). The scope's
+			// reserved wallet-owned branch-1 change address is threaded through so the facade
+			// can append a change output for any per-asset surplus; the reservation is lazy in
+			// the scope and cached, so both facade calls observe the same address and no index
+			// is double-reserved. When no asset has surplus the facade ignores the change
+			// address and the batch is the one-destination batch, byte-identical to before.
+			LiquidWalletUiChangeDestination? changeDestination =
+				scope.TryReserveChangeDestination(out string? changeAddress) && changeAddress is not null
+					? new LiquidWalletUiChangeDestination(changeAddress)
+					: null;
 			LiquidWalletUiSpendPlan plan = LiquidWalletUiFacade.LoadAndCreateSpendPlan(
 				scope.WalletDataDirectory,
 				request.WalletName,
@@ -65,7 +74,8 @@ internal sealed class LiquidWalletSendExecutor
 				request.DestinationAssetIdHex,
 				request.DestinationAtomicUnits,
 				request.ExplicitFeeAtomicUnits,
-				request.ExpectedRevision);
+				request.ExpectedRevision,
+				changeDestination);
 			ulong sourceRevision = plan.SourceRevision;
 
 			// Step 4: re-check cancellation.
@@ -123,7 +133,8 @@ internal sealed class LiquidWalletSendExecutor
 					scope.SourceEpoch,
 					fundingSource,
 					request.PreviousTransactionIdsBySelectedInput,
-					request.ExpectedRevision);
+					request.ExpectedRevision,
+					changeDestination);
 			}
 			catch (Exception)
 			{

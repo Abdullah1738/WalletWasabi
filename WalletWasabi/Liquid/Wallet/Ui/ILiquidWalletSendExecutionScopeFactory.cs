@@ -76,6 +76,16 @@ internal interface ILiquidWalletSendExecutionScope : IDisposable
 	string ExpectedEffectiveFeeAsset { get; }
 
 	/// <summary>
+	/// Reserves the wallet-owned branch-1 confidential change address for one send. Reservation
+	/// happens lazily on first request within the scope (durable, generation-fenced, never rolled
+	/// back; gaps acceptable) and is cached so both facade calls of one send observe the same
+	/// reserved address — no double-reservation of branch-1 indexes across the two facade calls.
+	/// The returned value is the canonical confidential change address string; no key material is
+	/// exposed. Returns <see langword="false"/> when no change address can be reserved.
+	/// </summary>
+	bool TryReserveChangeDestination(out string? changeAddress);
+
+	/// <summary>
 	/// The single source of truth for the wallet's landed state directory, taken from the
 	/// authenticated session. The send request carries no directory copy; the executor loads
 	/// state from this session-supplied directory.

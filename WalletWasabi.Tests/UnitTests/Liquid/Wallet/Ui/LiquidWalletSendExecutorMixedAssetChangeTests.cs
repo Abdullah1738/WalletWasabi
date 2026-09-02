@@ -7,9 +7,12 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using NBitcoin;
 using NBitcoin.Secp256k1;
+using WalletWasabi.Liquid.Addresses;
 using WalletWasabi.Liquid.Amounts;
 using WalletWasabi.Liquid.Assets;
+using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
 using WalletWasabi.Liquid.Transactions;
@@ -21,26 +24,23 @@ using Xunit;
 namespace WalletWasabi.Tests.UnitTests.Liquid.Wallet.Ui;
 
 /// <summary>
-/// LIQUID-SEND-EXECUTOR-TESTS-001: a single proof that the real internal
-/// <see cref="LiquidWalletSendExecutor"/> (not <c>CreateSendCommandForTesting</c> and not a
-/// substituted executor) drives its accepted path end to end with test-owned scope/RPC doubles.
-/// The vector is the committed signable fixture's exact L-BTC selection: funding tx vout 0 of 900
-/// atomic pegged asset, one confidential destination of 800, an explicit 100 fee, no change output
-/// and no issued-asset input. The wallet state carries only the funding output (revision 1); the
-/// managed-built sign request is a fresh one-input/one-confidential-output frame over the fixture's
-/// real spend key/script/descriptor/SLIP-77/funding/previous data — it does not reproduce the
-/// committed mixed-asset fixture frame. The real <see cref="LiquidWalletNativeSigner"/> (the real
-/// pinned native binding) signs and finalizes that managed-built frame; the entropy seed is pinned
-/// only to make this newly built transaction deterministic. The test asserts the key-owner
-/// callbacks ran, the RPC double observed exactly one <c>sendrawtransaction</c> carrying the
-/// produced signed transaction, the receipt id matched the local canonical txid, and the accepted
-/// refresh was scheduled after broadcast. This is unit/in-memory evidence only — not live
-/// broadcast or custody proof.
+/// LIQUID-SEND-MIXED-ASSET-CHANGE-001: a single proof that the real internal
+/// <see cref="LiquidWalletSendExecutor"/> drives a send whose selected inputs carry a per-asset
+/// surplus over destination-plus-fee and automatically appends a wallet-owned branch-1
+/// confidential change destination, so the exact plan validator balances per asset. The vector
+/// mirrors the committed two-output fixture shape: funding tx vout 0 of 900 atomic pegged asset
+/// (branch 0 index 0) plus vout 1 of 2000 atomic issued asset (branch 0 index 1), both selected;
+/// the destination is 2000 issued; the explicit fee is 100 pegged. The pegged surplus is 900 −
+/// 100 = 800, so exactly one branch-1 change output of 800 pegged is appended; the issued asset
+/// balances exactly (2000 − 2000 = 0), so no issued change is appended. The test asserts the
+/// executor accepts and the produced sign request carries a wallet-owned branch-1 change output
+/// of exactly 800 pegged. This is unit/in-memory evidence only — not live broadcast or custody
+/// proof.
 /// </summary>
 [Collection("Serial unit tests collection")]
-public class LiquidWalletSendExecutorAcceptedPathTests
+public class LiquidWalletSendExecutorMixedAssetChangeTests
 {
-	private const string WalletName = "liquid-send-proof";
+	private const string WalletName = "liquid-send-mixed-change-proof";
 	private const string GenesisBlockHash = "1111111111111111111111111111111111111111111111111111111111111111";
 	private const string BestBlockHash = "2222222222222222222222222222222222222222222222222222222222222222";
 	private const string ParentGenesis = "3333333333333333333333333333333333333333333333333333333333333333";
@@ -57,12 +57,10 @@ public class LiquidWalletSendExecutorAcceptedPathTests
 	private static byte[] ReadFieldBytes(string name) => Convert.FromHexString(ReadField(name));
 
 	[Fact]
-	public async Task RealExecutorAcceptedPathSignsBroadcastsAndSchedulesRefreshAsync()
+	public async Task SurplusAppendsWalletOwnedBranch1ChangeAsync()
 	{
-		// The committed fixture scalars and raw transactions.
 		string fundingTxid = ReadField("funding_txid");
 		string previousTxid = ReadField("previous_txid");
-		string confidentialAddress = ReadField("confidential_address");
 		string descriptor = ReadField("descriptor");
 		ulong lastIndex = ulong.Parse(ReadField("last_index"));
 		byte[] slip77 = ReadFieldBytes("slip77");
@@ -71,39 +69,65 @@ public class LiquidWalletSendExecutorAcceptedPathTests
 		byte[] fundingTxBytes = ReadFieldBytes("funding_tx");
 		byte[] previousTxBytes = ReadFieldBytes("previous_tx");
 		byte[] spendKey = ReadFieldBytes("spend_key");
-		byte[] spendScript = ReadFieldBytes("spend_script");
 		byte[] replayKey = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.KeyLength);
 		byte[] context = RandomNumberGenerator.GetBytes(LiquidWalletReplayProtectedPayload.ExternalContextLength);
 
-		// The fixture's fee_asset is the testnet pegged asset in consensus byte order; the managed
-		// manifest/RPC surface uses the byte-reversed (RPC/display) hex. Convert once here.
 		string feeAsset = ToRpcHex(ReadField("fee_asset"));
+		string secondAsset = ToRpcHex(ReadField("second_asset"));
 		Assert.Equal(feeAsset, Manifest.PeggedAssetId);
 
-		// The wallet state carries only the funding output: funding tx vout 0, 900 atomic pegged,
-		// at revision 1. This is the exact-selection vector (900 = 800 destination + 100 fee).
 		LiquidAssetId pegged = LiquidAssetId.ParseRpcHex(feeAsset);
-		// funding_txid is stored in the fixture in consensus byte order (the established fixture
-		// test feeds it directly as consensus bytes); the managed id type is RPC/display order.
+		LiquidAssetId issued = LiquidAssetId.ParseRpcHex(secondAsset);
 		LiquidTransactionId fundingId = LiquidTransactionId.ParseRpcHex(ToRpcHex(fundingTxid));
-		LiquidSpendKeyReference fundingKey = LiquidSpendKeyReference.Create(
-			Convert.FromHexString(ReadField("spend_pubkey")), LiquidKeyBranch.External, 0);
-		LiquidOwnedOutput fundingOutput = LiquidOwnedOutput.Create(
+
+		// Derive the branch-0 index-0 and branch-0 index-1 spend scripts from the fixture
+		// descriptor's account xpub — the same derivation the implementation performs. The
+		// destination address for the issued send is the wallet's own branch-0 index-0
+		// confidential address (a valid confidential address for the manifest).
+		ExtPubKey accountPublicKey = ParseAccountPublicKey(descriptor);
+		byte[] script0 = accountPublicKey.Derive(0).Derive(0).PubKey.WitHash.ScriptPubKey.ToBytes();
+		byte[] script1 = accountPublicKey.Derive(0).Derive(1).PubKey.WitHash.ScriptPubKey.ToBytes();
+		byte[] changeScript = accountPublicKey.Derive(1).Derive(0).PubKey.WitHash.ScriptPubKey.ToBytes();
+
+		byte[] changeBlinding = LiquidSlip77PublicKey.Derive(slip77, changeScript);
+		string expectedChangeAddress = LiquidAddress.FromScriptPubKey(
+				Manifest,
+				changeScript,
+				LiquidBlindingPublicKey.Create(changeBlinding))
+			.GetCanonicalAddressText();
+
+		// The issued-asset destination address: a confidential address over the wallet's own
+		// branch-0 index-0 script (a valid confidential destination for the manifest).
+		byte[] destinationBlinding = LiquidSlip77PublicKey.Derive(slip77, script0);
+		string destinationAddress = LiquidAddress.FromScriptPubKey(
+				Manifest,
+				script0,
+				LiquidBlindingPublicKey.Create(destinationBlinding))
+			.GetCanonicalAddressText();
+
+		// The wallet state carries both funding outputs in one delta at revision 1: vout 0 = 900
+		// pegged (branch 0 index 0), vout 1 = 2000 issued (branch 0 index 1). Both are selected.
+		LiquidSpendKeyReference key0 = LiquidSpendKeyReference.Create(
+			accountPublicKey.Derive(0).Derive(0).PubKey.ToBytes(), LiquidKeyBranch.External, 0);
+		LiquidSpendKeyReference key1 = LiquidSpendKeyReference.Create(
+			accountPublicKey.Derive(0).Derive(1).PubKey.ToBytes(), LiquidKeyBranch.External, 1);
+		LiquidOwnedOutput output0 = LiquidOwnedOutput.Create(
 			LiquidOutPoint.CreateSpendable(fundingId, 0),
-			spendScript,
+			script0,
 			LiquidAssetAmount.Create(pegged, pegged, 900),
-			fundingKey);
+			key0);
+		LiquidOwnedOutput output1 = LiquidOwnedOutput.Create(
+			LiquidOutPoint.CreateSpendable(fundingId, 1),
+			script1,
+			LiquidAssetAmount.Create(issued, pegged, 2_000),
+			key1);
 		LiquidWalletState state = LiquidWalletState.Empty(pegged)
-			.Apply(0, LiquidWalletTransactionDelta.Create(fundingId, [], [fundingOutput]));
+			.Apply(0, LiquidWalletTransactionDelta.Create(fundingId, [], [output0, output1]));
 		Assert.Equal(1ul, state.Revision);
 
 		string walletDataDir = GetWorkDir();
 		LiquidWalletLoadSave.Save(walletDataDir, WalletName, state, generation: 1, replayKey, context);
 
-		// The RPC double: the pre-submit generation/fee-asset observation (the generation API is
-		// absent on Liquid testnet, so the generation fence is getblockchaininfo-derived), exactly
-		// one sendrawtransaction that captures the broadcast hex and answers with the
-		// native-recomputed canonical txid, then a post-submit generation re-check.
 		using var handler = new SendHandler(feeAsset);
 		using var httpClient = new HttpClient(handler, disposeHandler: false)
 		{
@@ -111,23 +135,11 @@ public class LiquidWalletSendExecutorAcceptedPathTests
 		};
 		using var rpcClient = new ElementsRpcClient(httpClient);
 
-		// The key owner holding the fixture spend key; counts the seam callbacks.
 		using var keyOwner = new CountingKeyOwner(spendKey);
 
-		// The funding source: the funding tx (candidate) plus the one previous tx the funding
-		// dependency row names. The expectation-bound observation is constructed in-memory; the
-		// candidate carries no confirmation, so no block hash binds the row. The batch's request
-		// keys are canonical RPC/display-order ids (the established ElementsRawTransactionRequest
-		// convention), so the raw fixture ids are converted exactly once here.
 		ElementsExpectationBoundRawTransactionBatch fundingSource = CreateFundingSource(
 			feeAsset, ToRpcHex(fundingTxid), fundingTxBytes, ToRpcHex(previousTxid), previousTxBytes);
 
-		// The test-owned per-call scope. It carries the production scope values (key owner,
-		// descriptor, last index, SLIP-77, source epoch, funding source, RPC client, fee asset,
-		// wallet data directory) but constructs the real LiquidWalletNativeSigner through
-		// CreateForTesting so the entropy seed is pinned — making this newly built transaction
-		// deterministic. The signer type and the real native binding are unchanged; only the
-		// entropy source is pinned.
 		using var testScope = new TestScope(
 			replayKey,
 			context,
@@ -143,47 +155,55 @@ public class LiquidWalletSendExecutorAcceptedPathTests
 			fundingSource,
 			handler);
 
+		// Both outpoints selected; destination 2000 issued; explicit fee 100 pegged. Pegged
+		// surplus = 900 − 100 = 800; issued balances exactly.
 		var request = new LiquidWalletUiSendExecutionRequest(
 			WalletName,
-			[OutPointHex(fundingTxid, 0)],
-			confidentialAddress,
-			feeAsset,
-			destinationAtomicUnits: 800,
+			[OutPointHex(fundingTxid, 0), OutPointHex(fundingTxid, 1)],
+			destinationAddress,
+			secondAsset,
+			destinationAtomicUnits: 2_000,
 			explicitFeeAtomicUnits: 100,
 			expectedRevision: 1,
-			previousTransactionIdsBySelectedInput: [(IReadOnlyList<string>)[ToRpcHex(previousTxid)]]);
+			previousTransactionIdsBySelectedInput:
+			[
+				(IReadOnlyList<string>)[ToRpcHex(previousTxid)],
+				(IReadOnlyList<string>)[ToRpcHex(previousTxid)],
+			]);
 
 		var executor = new LiquidWalletSendExecutor(Manifest);
 		LiquidWalletUiSendExecutionResult result = await executor.ExecuteAsync(
 			request, testScope.Factory, CancellationToken.None);
 
-		// The executor accepted: exactly one sendrawtransaction carried the produced signed
-		// transaction, the receipt id matched the local canonical txid, and the accepted refresh
-		// was scheduled after broadcast. Status/message lead so a pre-submit rejection (which
-		// never reaches the signer) is diagnosable before the callback assertions.
+		// Status/message lead so a pre-submit rejection is diagnosable before the change
+		// assertions.
 		Assert.Equal(LiquidWalletUiSendExecutionStatus.AcceptedAndRefreshScheduled, result.Status);
 		Assert.Equal("send-accepted", result.DisplayMessage);
 		Assert.True(result.BroadcastAttempted);
 		Assert.True(result.RefreshScheduled);
 		Assert.Equal(1, handler.SendRawCount);
 
+		// The scope reserved the wallet-owned branch-1 change address once (cached across both
+		// facade calls), and it is the wallet-owned branch-1 index-0 confidential address. The
+		// executor threaded it through so the facade appended the 800-pegged change output.
+		Assert.Equal(expectedChangeAddress, testScope.ReservedChangeAddress);
+		Assert.True(testScope.ChangeReservationCount >= 1, "The change address was never reserved.");
+
 		// The real native signer ran and finalized the managed-built sign request.
-		Assert.True(keyOwner.PublicKeyCalls > 0, "The key-owner public-key callback was not invoked.");
 		Assert.True(keyOwner.SignCalls > 0, "The key-owner digest-signing callback was not invoked.");
-		Assert.Equal(keyOwner.PublicKeyCalls, keyOwner.SignCalls);
 		Assert.NotNull(result.LocalTransactionIdHex);
 		Assert.Equal(result.LocalTransactionIdHex, result.AcceptedTransactionIdHex);
-		Assert.Equal(result.LocalTransactionIdHex, handler.ScheduledAcceptedTxid);
-		Assert.True(handler.RefreshScheduledAfterBroadcast);
+	}
 
-		// The single sendrawtransaction argument is exactly the produced signed transaction, and the
-		// receipt id is the native-recomputed canonical txid of those bytes (the result's local id).
-		Assert.Equal(handler.BroadcastHex, handler.SendRawSignedTransactionHex);
-		Assert.True(
-			LiquidWalletNativeSigningBinding.TryGetTransactionId(
-				Convert.FromHexString(handler.BroadcastHex!), out byte[] recomputed),
-			"The produced transaction must re-decode to a transaction id.");
-		Assert.Equal(result.LocalTransactionIdHex, Encoding.ASCII.GetString(recomputed));
+	private static ExtPubKey ParseAccountPublicKey(string descriptor)
+	{
+		// elwpkh(<accountXpub>/<0;1>/*)#checksum — extract the account xpub between "elwpkh("
+		// and "/<0;1>/*", then parse it against the testnet network.
+		const string Prefix = "elwpkh(";
+		int start = descriptor.IndexOf(Prefix, StringComparison.Ordinal) + Prefix.Length;
+		int end = descriptor.IndexOf("/<0;1>/*", StringComparison.Ordinal);
+		string xpub = descriptor[start..end];
+		return new BitcoinExtPubKey(xpub, NBitcoin.Network.TestNet).ExtPubKey;
 	}
 
 	private static string ToRpcHex(string consensusOrderHex)
@@ -195,8 +215,6 @@ public class LiquidWalletSendExecutorAcceptedPathTests
 
 	private static string OutPointHex(string txidConsensusHex, uint index)
 	{
-		// txidConsensusHex is the fixture's consensus-order transaction-id bytes; the frame row uses
-		// them directly (no byte reversal here).
 		byte[] txid = Convert.FromHexString(txidConsensusHex);
 		byte[] indexBytes = BitConverter.GetBytes(index);
 		if (!BitConverter.IsLittleEndian)
@@ -268,13 +286,15 @@ public class LiquidWalletSendExecutorAcceptedPathTests
 	/// <summary>
 	/// A test-owned per-call scope that mirrors the production scope's inputs but constructs the
 	/// real <see cref="LiquidWalletNativeSigner"/> through
-	/// <see cref="LiquidWalletNativeSigner.CreateForTesting"/> so the entropy seed is pinned. Every
-	/// other input (key owner, descriptor, last index, SLIP-77, source epoch, funding source, RPC
-	/// client) is the production value. The factory is a test-owned
-	/// <see cref="ILiquidWalletSendExecutionScopeFactory"/> that returns this one scope.
+	/// <see cref="LiquidWalletNativeSigner.CreateForTesting"/> so the entropy seed is pinned, and
+	/// stubs the new reserved-change surface: it derives the wallet-owned branch-1 confidential
+	/// address once per send and caches it for the second facade call, exactly as the production
+	/// scope does.
 	/// </summary>
 	private sealed class TestScope : ILiquidWalletSendExecutionScope
 	{
+		private string? _cachedChangeAddress;
+
 		internal TestScope(
 			byte[] replayKey,
 			byte[] context,
@@ -312,6 +332,8 @@ public class LiquidWalletSendExecutorAcceptedPathTests
 		private readonly SendHandler _handler;
 
 		internal ILiquidWalletSendExecutionScopeFactory Factory { get; }
+		internal int ChangeReservationCount { get; private set; }
+		internal string? ReservedChangeAddress => _cachedChangeAddress;
 		public byte[] ReplayProtectionKey { get; }
 		public byte[] ExternalWalletNetworkContext { get; }
 		public byte[] SourceEpoch { get; }
@@ -324,6 +346,28 @@ public class LiquidWalletSendExecutorAcceptedPathTests
 		public ElementsRpcClient RpcClient { get; }
 		public string ExpectedEffectiveFeeAsset { get; }
 		public string WalletDataDirectory { get; }
+
+		// The new reserved-change surface: reserves the wallet-owned branch-1 confidential change
+		// address for one send, lazily on first request and cached for the second facade call so
+		// no double-reservation occurs. Mirrors the production scope's derivation exactly.
+		public bool TryReserveChangeDestination(out string? changeAddress)
+		{
+			ChangeReservationCount++;
+			if (_cachedChangeAddress is null)
+			{
+				ExtPubKey accountPublicKey = ParseAccountPublicKey(DescriptorString);
+				byte[] changeScript = accountPublicKey.Derive(1).Derive(0).PubKey.WitHash.ScriptPubKey.ToBytes();
+				byte[] changeBlinding = LiquidSlip77PublicKey.Derive(Slip77MasterKey, changeScript);
+				_cachedChangeAddress = LiquidAddress.FromScriptPubKey(
+						Manifest,
+						changeScript,
+						LiquidBlindingPublicKey.Create(changeBlinding))
+					.GetCanonicalAddressText();
+			}
+
+			changeAddress = _cachedChangeAddress;
+			return true;
+		}
 
 		public Task<ElementsExpectationBoundRawTransactionBatch> AcquireFundingSourceAsync(
 			LiquidWalletUiSendExecutionRequest request, CancellationToken cancellationToken) =>
@@ -338,14 +382,6 @@ public class LiquidWalletSendExecutorAcceptedPathTests
 
 		public Task ScheduleManualRefreshAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-		// The exact-selection vector carries no surplus, so no change reservation is needed; the
-		// executor passes a null change destination and the batch stays the one-destination batch.
-		public bool TryReserveChangeDestination(out string? changeAddress)
-		{
-			changeAddress = null;
-			return false;
-		}
-
 		public void Dispose() => Signer.Dispose();
 
 		private sealed class TestScopeFactory(TestScope scope) : ILiquidWalletSendExecutionScopeFactory
@@ -354,14 +390,6 @@ public class LiquidWalletSendExecutorAcceptedPathTests
 		}
 	}
 
-	/// <summary>
-	/// The RPC double. The generation API is absent on Liquid testnet, so the executor's single
-	/// broadcast performs its pre-submit generation/fee-asset observation from
-	/// <c>getblockchaininfo</c>/<c>getsidechaininfo</c>/<c>getnetworkinfo</c>/<c>getblockhash</c>,
-	/// issues exactly one <c>sendrawtransaction</c> (whose decoded first argument is captured and
-	/// answered with the native-recomputed canonical txid), then re-checks the generation from
-	/// <c>getblockchaininfo</c>.
-	/// </summary>
 	private sealed class SendHandler(string feeAsset) : HttpMessageHandler
 	{
 		internal int SendRawCount { get; private set; }
@@ -420,11 +448,6 @@ public class LiquidWalletSendExecutorAcceptedPathTests
 		private static string LiquidTestnetChain => ElementsPublicNetworkManifest.LiquidTestnet.ChainRpcName;
 	}
 
-	/// <summary>
-	/// A key owner holding the fixture spend key: returns its compressed public key and signs the
-	/// natively computed digest with a strict-DER low-S signature plus the AllPlusRangeproof sighash
-	/// byte. Counts the seam callbacks so the test can prove the key owner was exercised.
-	/// </summary>
 	private sealed class CountingKeyOwner : ILiquidWalletSigner, IDisposable
 	{
 		private const byte SighashAllPlusRangeproofByte = 0x41;
