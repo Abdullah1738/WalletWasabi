@@ -53,12 +53,22 @@ public partial class LiquidSendViewModel : RoutableViewModel
 	public LiquidSendViewModel(
 		UiContext uiContext,
 		LiquidWalletModel walletModel,
-		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>>? executeSendCommand = null)
+		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>>? executeSendCommand = null,
+		string? preSelectedAssetIdHex = null)
 		: base(uiContext)
 	{
 		WalletModel = walletModel;
 		ExecuteSendCommand = executeSendCommand;
 		Recipient = new LiquidSendRecipientViewModel(uiContext, walletModel);
+
+		// The per-balance-row Send affordance carries the row's asset id so the
+		// picker opens holding that asset; null is the plain top-level Send path
+		// (the landed pegged-first default). Presentation-only: the id only
+		// chooses which option the picker holds.
+		if (preSelectedAssetIdHex is not null)
+		{
+			Recipient.PreSelectAsset(preSelectedAssetIdHex);
+		}
 
 		SetupCancel(enableCancel: true, enableCancelOnEscape: true, enableCancelOnPressed: true);
 		EnableBack = true;

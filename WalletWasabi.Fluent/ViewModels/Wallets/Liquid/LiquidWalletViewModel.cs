@@ -8,6 +8,7 @@ using ReactiveUI;
 using WalletWasabi.Fluent.Infrastructure;
 using WalletWasabi.Fluent.Models.Wallets.Liquid;
 using WalletWasabi.Fluent.ViewModels.Navigation;
+using WalletWasabi.Liquid.Wallet.Ui;
 
 namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 
@@ -47,7 +48,7 @@ public partial class LiquidWalletViewModel : RoutableViewModel
 		walletModel.Balances
 			.ObserveOn(RxApp.MainThreadScheduler)
 			.Select(snapshot => snapshot.Balances
-				.Select(balance => new LiquidAssetBalanceItemViewModel(uiContext, balance))
+				.Select(balance => CreateBalanceRow(balance))
 				.ToArray())
 			.Do(rows => PeggedBalanceRow = rows.FirstOrDefault(row => row.IsPeggedAsset))
 			.ToObservableChangeSet(row => row.AssetIdHex)
@@ -152,4 +153,23 @@ public partial class LiquidWalletViewModel : RoutableViewModel
 	public ICommand SendCommand { get; }
 
 	public override string Title { get; protected set; }
+
+	// Projects one balance row, wiring the per-row Send affordance: the row's
+	// Send navigates exactly like the top-level SendCommand (DialogScreen →
+	// LiquidSendViewModel over the session's send executor) but pre-selects
+	// the row's asset in the picker. The top-level SendCommand keeps the
+	// default (no pre-selection) path.
+	private LiquidAssetBalanceItemViewModel CreateBalanceRow(LiquidWalletUiAssetBalance balance)
+	{
+		var row = new LiquidAssetBalanceItemViewModel(UiContext, balance);
+		string assetIdHex = balance.AssetIdHex;
+		row.SendCommand = ReactiveCommand.Create(() =>
+			UiContext.Navigate(NavigationTarget.DialogScreen)
+				.To(new LiquidSendViewModel(
+					UiContext,
+					WalletModel,
+					UiContext.LiquidWalletSession.ExecuteSendAsync,
+					preSelectedAssetIdHex: assetIdHex)));
+		return row;
+	}
 }

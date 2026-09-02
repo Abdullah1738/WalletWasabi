@@ -78,12 +78,45 @@ public sealed partial class LiquidSendRecipientViewModel : ViewModelBase
 
 	public bool IsConfidential => true;
 
+	/// <summary>
+	/// Holds the asset id the per-balance-row Send affordance wants pre-selected.
+	/// The initial option emission is scheduler-deferred, so the option set may be
+	/// empty when the affordance fires; holding the id lets the deferred reseed
+	/// consume it once the matching option arrives.
+	/// </summary>
+	private string? _preSelectedAssetIdHex;
+
+	/// <summary>
+	/// Pre-selects the option whose <see cref="LiquidAssetBalanceItemViewModel.AssetIdHex"/>
+	/// matches <paramref name="assetIdHex"/> (the per-balance-row Send affordance
+	/// opens the send flow with the row's asset held). The id is held and consumed
+	/// by the deferred reseed once the matching option is present; it never
+	/// fabricates an option (an empty balance set still yields an empty dropdown).
+	/// The default reseed semantics for the no-preselection path are unchanged.
+	/// </summary>
+	public void PreSelectAsset(string assetIdHex)
+	{
+		ArgumentNullException.ThrowIfNull(assetIdHex);
+		_preSelectedAssetIdHex = assetIdHex;
+		SelectedAsset = AssetOptions.FirstOrDefault(option => option.AssetIdHex == assetIdHex);
+	}
+
 	private void ReseedSelection(IReadOnlyList<LiquidAssetBalanceItemViewModel>? options)
 	{
 		if (options is null || options.Count == 0)
 		{
 			// Empty balance set: no fabricated asset.
 			SelectedAsset = null;
+			return;
+		}
+
+		// Consume the held pre-selection once its option is present. The reseed
+		// then honors the held selection on later refreshes via the branch below.
+		if (_preSelectedAssetIdHex is { } wanted &&
+			options.FirstOrDefault(option => option.AssetIdHex == wanted) is { } preSelected)
+		{
+			_preSelectedAssetIdHex = null;
+			SelectedAsset = preSelected;
 			return;
 		}
 

@@ -316,6 +316,75 @@ public class LiquidWalletWiringTests
 		Assert.Equal("The Liquid send execution surface is not wired for this wallet session.", send.ExecutionErrorText);
 	}
 
+	// Slice LIQUID-UI-BALANCE-SEND-AFFORDANCE-001 headless evidence: render the
+	// wallet home over a multi-asset balance set, activate a non-pegged row's
+	// Send affordance, and prove the send view opens with that asset selected
+	// (Recipient.AssetIdHex matches the row). The affordance navigates the same
+	// way the top-level SendCommand does (DialogScreen → LiquidSendViewModel
+	// over the session's send executor) but pre-selects the row's asset; the
+	// pre-selection survives the dispatcher-deferred reseed because the reseed
+	// honors a held selection whose asset id is still present.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void BalanceRowSendAffordanceNavigatesWithThatAssetPreSelected()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		var mainScreen = new TargettedNavigationStack(uiContext, NavigationTarget.HomeScreen);
+		var dialogScreen = new DialogScreenViewModel(uiContext);
+		var fullScreen = new DialogScreenViewModel(uiContext, NavigationTarget.FullScreen);
+		var compactDialogScreen = new DialogScreenViewModel(uiContext, NavigationTarget.CompactDialogScreen);
+		NavBarViewModel navBar = new(uiContext);
+		uiContext.RegisterNavigation(
+			new NavigationState(uiContext, mainScreen, dialogScreen, fullScreen, compactDialogScreen, navBar));
+
+		using LiquidWalletModel model = CreateModel("liquid-row-send", peggedAtomic: 5_000, issuedAtomic: 7_500);
+		LiquidWalletViewModel page = new(uiContext, model);
+		Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+		LiquidAssetBalanceItemViewModel issuedRow =
+			page.BalanceRows!.Single(row => !row.IsPeggedAsset);
+		Assert.NotNull(issuedRow.SendCommand);
+		Assert.True(issuedRow.SendCommand!.CanExecute(null));
+
+		issuedRow.SendCommand.Execute(null);
+		Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+		LiquidSendViewModel send = Assert.IsType<LiquidSendViewModel>(dialogScreen.CurrentPage);
+		Assert.Same(model, send.WalletModel);
+		Assert.NotNull(send.ExecuteSendCommand);
+		Assert.Equal(IssuedAssetA.CanonicalRpcHex, send.Recipient.AssetIdHex);
+		Assert.NotNull(send.Recipient.SelectedAsset);
+		Assert.False(send.Recipient.SelectedAsset!.IsPeggedAsset);
+		Assert.Equal(IssuedAssetA.CanonicalRpcHex, send.Recipient.SelectedAsset.AssetIdHex);
+	}
+
+	// The top-level Send command is unchanged: it opens the send flow with no
+	// pre-selection, so the picker holds the landed pegged-first default even
+	// though the wallet also carries an issued asset.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void TopLevelSendKeepsPeggedDefaultSelection()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		var mainScreen = new TargettedNavigationStack(uiContext, NavigationTarget.HomeScreen);
+		var dialogScreen = new DialogScreenViewModel(uiContext);
+		var fullScreen = new DialogScreenViewModel(uiContext, NavigationTarget.FullScreen);
+		var compactDialogScreen = new DialogScreenViewModel(uiContext, NavigationTarget.CompactDialogScreen);
+		NavBarViewModel navBar = new(uiContext);
+		uiContext.RegisterNavigation(
+			new NavigationState(uiContext, mainScreen, dialogScreen, fullScreen, compactDialogScreen, navBar));
+
+		using LiquidWalletModel model = CreateModel("liquid-top-send", peggedAtomic: 5_000, issuedAtomic: 7_500);
+		LiquidWalletViewModel page = new(uiContext, model);
+		Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+		page.SendCommand.Execute(null);
+		Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+		LiquidSendViewModel send = Assert.IsType<LiquidSendViewModel>(dialogScreen.CurrentPage);
+		Assert.Equal(PeggedAsset.CanonicalRpcHex, send.Recipient.AssetIdHex);
+		Assert.NotNull(send.Recipient.SelectedAsset);
+		Assert.True(send.Recipient.SelectedAsset!.IsPeggedAsset);
+	}
+
 	// The session's send executor delegates to the single application
 	// client's SendCommand for the wallet the request names, after replacing
 	// the request's previous-transaction-id rows with the rows derived from

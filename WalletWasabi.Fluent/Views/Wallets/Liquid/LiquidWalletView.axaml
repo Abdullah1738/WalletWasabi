@@ -83,6 +83,16 @@
                          Text="{Binding BalanceDisplayText}" />
               <TextBlock DockPanel.Dock="Right" Margin="8 0 0 0"
                          Text="confidential" IsVisible="{Binding IsConfidential}" />
+              <Button DockPanel.Dock="Right" Classes="plain" Margin="8 0 0 0"
+                      Focusable="False"
+                      ToolTip.Tip="Send this asset"
+                      Command="{Binding SendCommand}"
+                      IsVisible="{Binding SendCommand, Converter={x:Static ObjectConverters.IsNotNull}}">
+                <StackPanel Orientation="Horizontal">
+                  <PathIcon Data="{StaticResource wallet_action_send}" />
+                  <TextBlock Text="Send" />
+                </StackPanel>
+              </Button>
             </DockPanel>
           </DataTemplate>
         </ItemsControl.ItemTemplate>

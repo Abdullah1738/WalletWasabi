@@ -1,3 +1,4 @@
+using System.Windows.Input;
 using WalletWasabi.Fluent.Helpers;
 using WalletWasabi.Liquid.Wallet.Ui;
 
@@ -30,6 +31,15 @@ public sealed class LiquidAssetBalanceItemViewModel : ViewModelBase
 	public bool IsPeggedAsset { get; }
 	public long AtomicUnits { get; }
 	public bool IsConfidential { get; }
+
+	/// <summary>
+	/// The per-row Send affordance: navigates to the Liquid send flow with
+	/// this row's asset pre-selected in the asset picker. Wired by
+	/// <see cref="LiquidWalletViewModel"/> at projection (it owns the wallet
+	/// model and the navigation); null for rows projected by the send flow's
+	/// own picker options, which carry no send affordance.
+	/// </summary>
+	public ICommand? SendCommand { get; internal set; }
 
 	/// <summary>
 	/// The pegged-aware display amount: the L-BTC decimal form (e.g.
