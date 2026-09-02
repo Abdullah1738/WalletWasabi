@@ -1460,7 +1460,7 @@ public class ElementsRpcClientTests
 		using var httpClient = CreateStreamingHttpClient(handler);
 		using var client = new ElementsRpcClient(httpClient, new ElementsRpcTimeouts(
 			ConnectTimeout: TimeSpan.FromMilliseconds(50),
-			TotalRequestTimeout: TimeSpan.FromMilliseconds(500),
+			TotalRequestTimeout: TimeSpan.FromSeconds(10),
 			ResponseIdleTimeout: TimeSpan.FromMilliseconds(75)));
 
 		var exception = await Assert.ThrowsAsync<ElementsRpcException>(
@@ -1511,7 +1511,7 @@ public class ElementsRpcClientTests
 		using var httpClient = CreateStreamingHttpClient(handler);
 		using var client = new ElementsRpcClient(httpClient, new ElementsRpcTimeouts(
 			ConnectTimeout: TimeSpan.FromMilliseconds(50),
-			TotalRequestTimeout: TimeSpan.FromMilliseconds(300),
+			TotalRequestTimeout: TimeSpan.FromSeconds(10),
 			ResponseIdleTimeout: TimeSpan.FromMilliseconds(100)));
 		httpClient.Timeout = Timeout.InfiniteTimeSpan;
 
