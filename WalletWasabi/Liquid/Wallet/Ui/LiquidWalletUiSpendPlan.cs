@@ -64,7 +64,8 @@ public sealed class LiquidWalletUiSpendPlan
 	internal static LiquidWalletUiSpendPlan FromPlan(
 		string walletName,
 		ElementsPublicNetworkManifest manifest,
-		LiquidOrdinaryWalletExactSpendPlan plan)
+		LiquidOrdinaryWalletExactSpendPlan plan,
+		string? changeAddressCanonicalText = null)
 	{
 		ArgumentNullException.ThrowIfNull(walletName);
 		ArgumentNullException.ThrowIfNull(manifest);
@@ -95,7 +96,9 @@ public sealed class LiquidWalletUiSpendPlan
 		for (int index = 0; index < projectedDestinations.Length; index++)
 		{
 			projectedDestinations[index] =
-				LiquidWalletUiSpendPlanDestination.FromDestination(destinations[index]);
+				LiquidWalletUiSpendPlanDestination.FromDestination(
+					destinations[index],
+					changeAddressCanonicalText);
 		}
 
 		// The per-asset selected totals, accumulated in the landed canonical

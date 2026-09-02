@@ -228,7 +228,6 @@ public class LiquidWalletWiringTests
 		LiquidWalletModel model = CreateModel("liquid-send-exec", peggedAtomic: 5_000);
 		ulong expectedRevision = model.Snapshot!.Revision;
 
-		string outPointHex = "aa" + new string('f', 70);
 		var result = new LiquidWalletUiSendExecutionResult(
 			LiquidWalletUiSendExecutionStatus.AcceptedAndRefreshScheduled,
 			model.Name,
@@ -253,14 +252,16 @@ public class LiquidWalletWiringTests
 		send.Recipient.ConfidentialAddressText = "tex1qdestination";
 		send.Recipient.AssetIdHex = new string('b', 64);
 		send.Recipient.AtomicUnits = 4_000;
-		send.SelectedOutPointHexesText = outPointHex;
 		send.ExplicitFeeAtomicUnits = 100;
 
+		// The coin-control list binds from the wallet's selectable snapshot;
+		// a real wallet output funds the plan (coin control never fabricates
+		// an outpoint). The model below holds one spendable pegged output.
 		await send.SendExecution.Execute().ToTask();
 
 		Assert.NotNull(captured);
 		Assert.Equal(model.Name, captured.WalletName);
-		Assert.Equal(new[] { outPointHex }, captured.SelectedOutPointHexes);
+		Assert.Equal(send.SelectedOutPointHexes, captured.SelectedOutPointHexes);
 		Assert.Equal("tex1qdestination", captured.ConfidentialDestinationAddress);
 		Assert.Equal(new string('b', 64), captured.DestinationAssetIdHex);
 		Assert.Equal(4_000, captured.DestinationAtomicUnits);
@@ -290,7 +291,6 @@ public class LiquidWalletWiringTests
 		send.Recipient.ConfidentialAddressText = "tex1qdestination";
 		send.Recipient.AssetIdHex = new string('b', 64);
 		send.Recipient.AtomicUnits = 4_000;
-		send.SelectedOutPointHexesText = "aa" + new string('f', 70);
 		send.ExplicitFeeAtomicUnits = 100;
 
 		await send.SendExecution.Execute().ToTask();
@@ -496,6 +496,15 @@ public class LiquidWalletWiringTests
 		}
 
 		LiquidWalletUiSnapshot snapshot = LiquidWalletUiSnapshot.Capture(name, Manifest, state);
+
+		// The selectable snapshot derived from the same wallet state, so the
+		// coin-control list binds the wallet's real spendable outputs (the
+		// allocation's state field is internal; the test mirrors the landed
+		// CaptureSelectableOutputs path via reflection, exactly as the other
+		// RuntimeHelpers-backed helpers in this file do).
+		LiquidWalletUiSelectableOutputsSnapshot selectableOutputs =
+			LiquidWalletUiFacade.CaptureSelectableOutputs(name, Manifest, CreateAllocationFor(state));
+
 		return new LiquidWalletModel(
 			name,
 			Manifest,
@@ -503,7 +512,20 @@ public class LiquidWalletWiringTests
 			ReceiveScript,
 			BlindingKey,
 			nextReceiveLabels,
-			setNextReceiveLabelsCommand);
+			setNextReceiveLabelsCommand,
+			selectableOutputs);
+	}
+
+	// Wraps a wallet state in the landed external-index allocation the
+	// facade's CaptureSelectableOutputs consumes, via the internal state
+	// field (the test mirrors the production allocation shape).
+	private static WalletWasabi.Liquid.Wallet.LiquidWalletExternalIndexAllocation CreateAllocationFor(
+		LiquidWalletState state)
+	{
+		var allocation = (WalletWasabi.Liquid.Wallet.LiquidWalletExternalIndexAllocation)
+			RuntimeHelpers.GetUninitializedObject(typeof(WalletWasabi.Liquid.Wallet.LiquidWalletExternalIndexAllocation));
+		SetField(allocation, "_state", state);
+		return allocation;
 	}
 
 	// Slice LIQUID-UI-SEND-ASSET-PICKER-001 headless evidence: render the real
@@ -617,6 +639,248 @@ public class LiquidWalletWiringTests
 			window.Close();
 		}
 	}
+
+	// Slice LIQUID-UI-SEND-CHANGE-001 headless evidence: render the real
+	// LiquidSendView over a spend plan whose facade appended a wallet-owned
+	// change destination, and prove the "change" tag renders exactly on the
+	// change row and not on the user destination. The flag is additive
+	// attribution of ALREADY-composed change; the view only surfaces it.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void SendViewChangeTagRendersForChangeDestination()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using LiquidWalletModel model = CreateModel("liquid-send-change", peggedAtomic: 5_000);
+		LiquidSendViewModel send = new(uiContext, model);
+
+		// A two-destination plan: the user destination, then the wallet-owned
+		// change row the facade flagged. Build the projection directly (the
+		// change-attribution projection is the unit under test; the
+		// composition path is covered by LiquidWalletUiMixedAssetChangeTests).
+		LiquidWalletUiSpendPlan plan = CreatePlanWithChange(uiContext);
+		send.SpendPlan = new LiquidSpendPlanItemViewModel(uiContext, plan);
+
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidSendView
+		{
+			DataContext = send,
+		};
+
+		var window = new Avalonia.Controls.Window
+		{
+			Width = 800,
+			Height = 600,
+			Content = view,
+		};
+		window.Show();
+		try
+		{
+			view.Measure(new Avalonia.Size(800, 600));
+			view.Arrange(new Avalonia.Rect(0, 0, 800, 600));
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+			LiquidSpendPlanDestinationItemViewModel userRow = send.SpendPlan!.Destinations[0];
+			LiquidSpendPlanDestinationItemViewModel changeRow = send.SpendPlan!.Destinations[1];
+			Assert.False(userRow.IsWalletOwnedChange);
+			Assert.True(changeRow.IsWalletOwnedChange);
+
+			// Exactly one "change" tag is visible in the rendered tree.
+			var tags = view.GetVisualDescendants()
+				.OfType<Avalonia.Controls.TextBlock>()
+				.Where(text => text.Text == "change" && text.IsVisible)
+				.ToArray();
+			Assert.Single(tags);
+		}
+		finally
+		{
+			window.Close();
+		}
+	}
+
+	// Slice LIQUID-UI-SEND-COINCONTROL-001 headless evidence: the coin-control
+	// list binds from the wallet's selectable snapshot — one checkable row per
+	// spendable output, every row selected by default (the landed empty-field
+	// semantics) — and the checked rows drive the exact selected-outpoint hex
+	// set the plan/sign path consumes (the SelectionId, verbatim).
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void SendViewCoinControlBindsSelectableSnapshotWithAllSelectedDefault()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using LiquidWalletModel model = CreateModel("liquid-send-cc", peggedAtomic: 5_000, issuedAtomic: 7_500);
+
+		string peggedSelection = "aa" + new string('1', 70);
+		string issuedSelection = "bb" + new string('2', 70);
+		model.RefreshSelectableOutputs(CreateSelectableOutputs(
+			"liquid-send-cc",
+			model.Snapshot!.Revision,
+			[
+				(peggedSelection, new string('c', 64), 0u, Manifest.PeggedAssetId, 5_000L, true),
+				(issuedSelection, new string('d', 64), 1u, IssuedAssetAHex, 7_500L, false),
+			]));
+
+		LiquidSendViewModel send = new(uiContext, model);
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidSendView
+		{
+			DataContext = send,
+		};
+
+		var window = new Avalonia.Controls.Window
+		{
+			Width = 800,
+			Height = 600,
+			Content = view,
+		};
+		window.Show();
+		try
+		{
+			view.Measure(new Avalonia.Size(800, 600));
+			view.Arrange(new Avalonia.Rect(0, 0, 800, 600));
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+			// Two rows from the snapshot, both selected by default (the landed
+			// empty-field semantics), driving the full selected set verbatim.
+			Assert.Equal(2, send.SelectableOutputs.Count);
+			Assert.All(send.SelectableOutputs, row => Assert.True(row.IsSelected));
+			Assert.Equal(new[] { peggedSelection, issuedSelection }, send.SelectedOutPointHexes);
+
+			// The rendered list has one CheckBox per row, all checked.
+			var checkBoxes = view.GetVisualDescendants()
+				.OfType<Avalonia.Controls.CheckBox>()
+				.ToArray();
+			Assert.Equal(2, checkBoxes.Length);
+			Assert.All(checkBoxes, box => Assert.True(box.IsChecked));
+
+			// The pegged row shows the L-BTC marker; the issued row shows the
+			// issued marker; the outpoint coordinate renders txid:vout.
+			Assert.Equal("L-BTC", send.SelectableOutputs[0].AssetMarkerText);
+			Assert.Equal("issued", send.SelectableOutputs[1].AssetMarkerText);
+			Assert.Equal("0.00 005 000 L-BTC", send.SelectableOutputs[0].AmountDisplayText);
+			Assert.Equal("7500 atomic units", send.SelectableOutputs[1].AmountDisplayText);
+			Assert.EndsWith(":0", send.SelectableOutputs[0].OutPointDisplayText);
+		}
+		finally
+		{
+			window.Close();
+		}
+	}
+
+	// Checking/unchecking a coin-control row drives the selected set: an
+	// unchecked row drops its outpoint from the exact set the plan/sign path
+	// consumes; re-checking restores it. No non-wallet outpoint is ever added.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void SendViewCoinControlToggleDrivesSelectedSet()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using LiquidWalletModel model = CreateModel("liquid-send-cc-toggle", peggedAtomic: 5_000, issuedAtomic: 7_500);
+
+		string peggedSelection = "aa" + new string('1', 70);
+		string issuedSelection = "bb" + new string('2', 70);
+		model.RefreshSelectableOutputs(CreateSelectableOutputs(
+			"liquid-send-cc-toggle",
+			model.Snapshot!.Revision,
+			[
+				(peggedSelection, new string('c', 64), 0u, Manifest.PeggedAssetId, 5_000L, true),
+				(issuedSelection, new string('d', 64), 1u, IssuedAssetAHex, 7_500L, false),
+			]));
+
+		LiquidSendViewModel send = new(uiContext, model);
+		Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+		Assert.Equal(new[] { peggedSelection, issuedSelection }, send.SelectedOutPointHexes);
+
+		// Uncheck the pegged row: its outpoint leaves the set.
+		send.SelectableOutputs[0].IsSelected = false;
+		Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+		Assert.Equal(new[] { issuedSelection }, send.SelectedOutPointHexes);
+
+		// Re-check it: the full set is restored in list order.
+		send.SelectableOutputs[0].IsSelected = true;
+		Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+		Assert.Equal(new[] { peggedSelection, issuedSelection }, send.SelectedOutPointHexes);
+	}
+
+	// A refresh replaces the row set deterministically: the fresh rows are
+	// re-selected (the landed empty-field default) and the selected set
+	// follows the new snapshot, with no stale row carried over.
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public void SendViewCoinControlRefreshReseedsDeterministically()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using LiquidWalletModel model = CreateModel("liquid-send-cc-refresh", peggedAtomic: 5_000);
+
+		string initial = "aa" + new string('1', 70);
+		model.RefreshSelectableOutputs(CreateSelectableOutputs(
+			"liquid-send-cc-refresh",
+			model.Snapshot!.Revision,
+			[(initial, new string('c', 64), 0u, Manifest.PeggedAssetId, 5_000L, true)]));
+
+		LiquidSendViewModel send = new(uiContext, model);
+		Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+		Assert.Equal(new[] { initial }, send.SelectedOutPointHexes);
+
+		// Uncheck the only row, then refresh to a different two-output set.
+		send.SelectableOutputs[0].IsSelected = false;
+		Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+		Assert.Empty(send.SelectedOutPointHexes);
+
+		string refreshedA = "dd" + new string('3', 70);
+		string refreshedB = "ee" + new string('4', 70);
+		model.RefreshSelectableOutputs(CreateSelectableOutputs(
+			"liquid-send-cc-refresh",
+			model.Snapshot!.Revision,
+			[
+				(refreshedA, new string('f', 64), 0u, Manifest.PeggedAssetId, 2_000L, true),
+				(refreshedB, new string('a', 64), 1u, Manifest.PeggedAssetId, 3_000L, true),
+			]));
+		Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+
+		// The fresh rows replace the old set wholesale, all selected.
+		Assert.Equal(2, send.SelectableOutputs.Count);
+		Assert.All(send.SelectableOutputs, row => Assert.True(row.IsSelected));
+		Assert.Equal(new[] { refreshedA, refreshedB }, send.SelectedOutPointHexes);
+		Assert.DoesNotContain(send.SelectableOutputs, row => row.SelectionId == initial);
+	}
+
+	// Builds a two-destination plan projection (user destination + flagged
+	// wallet-owned change row) via the landed facade path.
+	private static LiquidWalletUiSpendPlan CreatePlanWithChange(UiContext uiContext)
+	{
+		// Fund 2_000 pegged: selected 2_000, destination 900, fee 100 → pegged
+		// surplus 1_000 > 0, so the facade appends the wallet-owned change row.
+		LiquidTransactionId txA = Tx('a');
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
+			.Apply(0, Delta(txA, [], [Output(txA, 0, PeggedAsset, 2_000)]));
+
+		string changeAddress = LiquidAddress.FromScriptPubKey(
+				Manifest,
+				ChangeScriptForTag,
+				LiquidBlindingPublicKey.Create(ChangeBlindingKeyForTag))
+			.GetCanonicalAddressText();
+
+		return LiquidWalletUiFacade.CreateSpendPlan(
+			"wallet",
+			Manifest,
+			state,
+			[OutPointHexForTag(txA, 0)],
+			ConfidentialAddressForTag(),
+			Manifest.PeggedAssetId,
+			destinationAtomicUnits: 900,
+			explicitFeeAtomicUnits: 100,
+			changeDestination: new LiquidWalletUiChangeDestination(changeAddress));
+	}
+
+	private const string ChangePublicKeyHexForTag = "03f028892bad7ed57d2fb57bf33081d5cfcf6f9ed3d3d7f159c2e2fff579dc341a";
+	private const string ChangeBlindingKeyHexForTag = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+	private static byte[] ChangeScriptForTag =>
+		LiquidSpendKeyReference.Create(Convert.FromHexString(ChangePublicKeyHexForTag), LiquidKeyBranch.Internal, 0).GetScriptPubKey();
+	private static byte[] ChangeBlindingKeyForTag => Convert.FromHexString(ChangeBlindingKeyHexForTag);
+	private static string ConfidentialAddressForTag() =>
+		LiquidAddress.FromScriptPubKey(
+				Manifest,
+				ReceiveScript,
+				LiquidBlindingPublicKey.Create(BlindingKey))
+			.GetCanonicalAddressText();
+	private static string OutPointHexForTag(LiquidTransactionId transactionId, uint outputIndex) =>
+		Convert.ToHexString(
+			LiquidOutPoint.CreateSpendable(transactionId, outputIndex).ToConsensusBytes());
 
 	// The balance-row display amount is pegged-aware: the pegged asset renders
 	// its protocol-fixed 1e8 L-BTC decimal form, while an issued asset (no
@@ -979,6 +1243,17 @@ public class LiquidWalletWiringTests
 		string walletName,
 		ulong revision,
 		params (string SelectionId, string TransactionIdHex)[] outputs) =>
+		CreateSelectableOutputs(
+			walletName,
+			revision,
+			outputs
+				.Select(output => (output.SelectionId, output.TransactionIdHex, 0u, Manifest.PeggedAssetId, 0L, true))
+				.ToArray());
+
+	private static LiquidWalletUiSelectableOutputsSnapshot CreateSelectableOutputs(
+		string walletName,
+		ulong revision,
+		(string SelectionId, string TransactionIdHex, uint OutputIndex, string AssetIdHex, long AtomicUnits, bool IsPeggedAsset)[] outputs) =>
 		CreateUninitialized<LiquidWalletUiSelectableOutputsSnapshot>(
 			(nameof(LiquidWalletUiSelectableOutputsSnapshot.WalletName), walletName),
 			(nameof(LiquidWalletUiSelectableOutputsSnapshot.NetworkManifestId), Manifest.ManifestId),
@@ -987,7 +1262,11 @@ public class LiquidWalletWiringTests
 			(nameof(LiquidWalletUiSelectableOutputsSnapshot.Outputs),
 				outputs.Select(output => CreateUninitialized<LiquidWalletUiSelectableOutput>(
 					(nameof(LiquidWalletUiSelectableOutput.SelectionId), output.SelectionId),
-					(nameof(LiquidWalletUiSelectableOutput.TransactionIdHex), output.TransactionIdHex)))
+					(nameof(LiquidWalletUiSelectableOutput.TransactionIdHex), output.TransactionIdHex),
+					(nameof(LiquidWalletUiSelectableOutput.OutputIndex), output.OutputIndex),
+					(nameof(LiquidWalletUiSelectableOutput.AssetIdHex), output.AssetIdHex),
+					(nameof(LiquidWalletUiSelectableOutput.AtomicUnits), output.AtomicUnits),
+					(nameof(LiquidWalletUiSelectableOutput.IsPeggedAsset), output.IsPeggedAsset)))
 				.ToArray()));
 
 	private static LiquidWalletUiHistorySnapshot CreateHistory(string walletName, ulong revision) =>

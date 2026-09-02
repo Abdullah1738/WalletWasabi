@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Reactive;
+using System.Reactive.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
@@ -41,8 +43,9 @@ namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 	Searchable = false)]
 public partial class LiquidSendViewModel : RoutableViewModel
 {
+	private readonly ObservableAsPropertyHelper<IReadOnlyList<LiquidSelectableOutputItemViewModel>> _selectableOutputs;
+
 	[AutoNotify] private LiquidSpendPlanItemViewModel? _spendPlan;
-	[AutoNotify] private string _selectedOutPointHexesText = "";
 	[AutoNotify] private long _explicitFeeAtomicUnits;
 	[AutoNotify] private LiquidWalletUiSendExecutionResult? _executionResult;
 	[AutoNotify] private string? _executionErrorText;
@@ -59,6 +62,51 @@ public partial class LiquidSendViewModel : RoutableViewModel
 
 		SetupCancel(enableCancel: true, enableCancelOnEscape: true, enableCancelOnPressed: true);
 		EnableBack = true;
+
+		// The coin-control list binds from the wallet's selectable-output
+		// stream: each emission replaces the row set wholesale with a fresh
+		// projection of the immutable snapshot. Every projected row starts
+		// selected — this preserves the landed empty-field semantics exactly
+		// (an empty SelectedOutPointHexesText meant every spendable outpoint
+		// funded the plan, because the coin-control selection is drawn from
+		// the spendable set). A refresh re-selects the fresh rows
+		// deterministically. Seed with an empty row set so SelectableOutputs
+		// is never null before the first emission: an empty selectable set
+		// means an empty list (no fabricated outputs).
+		_selectableOutputs = walletModel.SelectableOutputs
+			.ObserveOn(RxApp.MainThreadScheduler)
+			.Select(snapshot => (IReadOnlyList<LiquidSelectableOutputItemViewModel>)snapshot.Outputs
+				.Select(output =>
+				{
+					var row = new LiquidSelectableOutputItemViewModel(uiContext, output)
+					{
+						IsSelected = true,
+					};
+					// A checkbox toggle rebuilds the selected-outpoint set.
+					row.WhenAnyValue(x => x.IsSelected)
+						.Subscribe(_ => RebuildSelectedOutPointHexes(null));
+					return row;
+				})
+				.ToArray())
+			.ToProperty(
+				this,
+				x => x.SelectableOutputs,
+				initialValue: Array.Empty<LiquidSelectableOutputItemViewModel>());
+
+		// Rebuild the selected-outpoint set after the bound list has applied
+		// the new row set: when SelectableOutputs changes, a bound
+		// ItemsControl rebuilds its containers, so deferring to the
+		// dispatcher lets the fresh all-selected rows settle before the set
+		// is recomputed.
+		this.WhenAnyValue(x => x.SelectableOutputs)
+			.ObserveOn(RxApp.MainThreadScheduler)
+			.Subscribe(rows => RxApp.MainThreadScheduler.Schedule(
+				rows,
+				(_, current) =>
+				{
+					RebuildSelectedOutPointHexes(current);
+					return System.Reactive.Disposables.Disposable.Empty;
+				}));
 
 		// Builds the plan from the current recipient/asset/amount/fee
 		// inputs. The wallet data directory and the key/context spans are
@@ -87,6 +135,24 @@ public partial class LiquidSendViewModel : RoutableViewModel
 	public Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>>? ExecuteSendCommand { get; }
 
 	public LiquidSendRecipientViewModel Recipient { get; }
+
+	/// <summary>
+	/// The coin-control rows bound from the wallet's selectable-output
+	/// snapshot: one checkable row per spendable wallet output, every row
+	/// selected by default (the landed empty-field semantics — an empty
+	/// selected-outpoint text meant every spendable outpoint funded the
+	/// plan). Never null; an empty selectable set means an empty list.
+	/// </summary>
+	public IReadOnlyList<LiquidSelectableOutputItemViewModel> SelectableOutputs => _selectableOutputs.Value;
+
+	/// <summary>
+	/// The exact selected-outpoint hex set the plan/sign path consumes: the
+	/// 72-character consensus-bytes hex of every checked row, in list order.
+	/// Coin control only chooses which wallet outputs fund the plan; it never
+	/// fabricates an output, never admits a non-wallet outpoint, and never
+	/// bypasses the landed exact-plan validation.
+	/// </summary>
+	public IReadOnlyList<string> SelectedOutPointHexes { get; private set; } = [];
 
 	public ICommand BuildPlanCommand { get; }
 
@@ -117,9 +183,7 @@ public partial class LiquidSendViewModel : RoutableViewModel
 			return;
 		}
 
-		string[] selectedOutPointHexes = SelectedOutPointHexesText.Split(
-			['\r', '\n', ' ', ',', ';'],
-			StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		string[] selectedOutPointHexes = [.. SelectedOutPointHexes];
 
 		try
 		{
@@ -162,9 +226,7 @@ public partial class LiquidSendViewModel : RoutableViewModel
 		ReadOnlySpan<byte> key,
 		ReadOnlySpan<byte> externalWalletNetworkContext)
 	{
-		string[] selectedOutPointHexes = SelectedOutPointHexesText.Split(
-			['\r', '\n', ' ', ',', ';'],
-			StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		string[] selectedOutPointHexes = [.. SelectedOutPointHexes];
 
 		SpendPlan = new LiquidSpendPlanItemViewModel(UiContext, WalletModel.CreateSpendPlan(
 			walletDataDir,
@@ -181,6 +243,17 @@ public partial class LiquidSendViewModel : RoutableViewModel
 	// The snapshot revision the UI last rendered — the caller's freshness
 	// fence wired to the landed plan-time revision fence.
 	private LiquidWalletUiSnapshot? Snapshot => WalletModel.Snapshot;
+
+	// Recomputes the exact selected-outpoint hex set from the checked rows,
+	// in list order. Called on every checkbox toggle (null → read the current
+	// row set) and (deferred) after a snapshot refresh reseeds the row set.
+	private void RebuildSelectedOutPointHexes(IReadOnlyList<LiquidSelectableOutputItemViewModel>? rows)
+	{
+		rows ??= _selectableOutputs?.Value;
+		SelectedOutPointHexes = rows is null
+			? []
+			: [.. rows.Where(row => row.IsSelected).Select(row => row.SelectionId)];
+	}
 
 	// The build-plan command: the application lifetime layer invokes it
 	// with the wallet data directory and the caller's key/context spans

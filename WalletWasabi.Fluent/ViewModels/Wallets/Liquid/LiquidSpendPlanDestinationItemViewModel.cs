@@ -26,6 +26,7 @@ public sealed class LiquidSpendPlanDestinationItemViewModel : ViewModelBase
 		IsPeggedAsset = destination.IsPeggedAsset;
 		AtomicUnits = destination.AtomicUnits;
 		IsConfidential = destination.IsConfidential;
+		IsWalletOwnedChange = destination.IsWalletOwnedChange;
 		AmountDisplayText = LiquidAmountDisplay.FormatBalance(IsPeggedAsset, AtomicUnits);
 	}
 
@@ -35,6 +36,13 @@ public sealed class LiquidSpendPlanDestinationItemViewModel : ViewModelBase
 	public bool IsPeggedAsset { get; }
 	public long AtomicUnits { get; }
 	public bool IsConfidential { get; }
+
+	/// <summary>
+	/// Whether this destination is the wallet-owned change output the facade
+	/// appended for a per-asset surplus (additive attribution of
+	/// ALREADY-composed change). The view surfaces a "change" tag when set.
+	/// </summary>
+	public bool IsWalletOwnedChange { get; }
 
 	/// <summary>
 	/// The pegged-aware display amount: the L-BTC decimal form with the unit

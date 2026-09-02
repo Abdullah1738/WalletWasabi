@@ -78,11 +78,14 @@ public class LiquidWalletUiMixedAssetChangeTests
 		// The user destination is first; the change destination is appended after it.
 		Assert.Equal(IssuedAssetAHex, plan.Destinations[0].AssetIdHex);
 		Assert.Equal(5_000, plan.Destinations[0].AtomicUnits);
+		Assert.False(plan.Destinations[0].IsWalletOwnedChange);
 
 		LiquidWalletUiSpendPlanDestination changeRow = plan.Destinations[1];
 		Assert.Equal(Manifest.PeggedAssetId, changeRow.AssetIdHex);
 		Assert.Equal(900, changeRow.AtomicUnits);
 		Assert.True(changeRow.IsConfidential);
+		// The additive change-attribution flag is set exactly on the change row.
+		Assert.True(changeRow.IsWalletOwnedChange);
 		Assert.Equal(
 			LiquidAddress.Parse(Manifest, changeAddress).GetCanonicalAddressText(),
 			changeRow.ConfidentialAddressText);
@@ -120,6 +123,8 @@ public class LiquidWalletUiMixedAssetChangeTests
 		LiquidWalletUiSpendPlanDestination destination = Assert.Single(plan.Destinations);
 		Assert.Equal(Manifest.PeggedAssetId, destination.AssetIdHex);
 		Assert.Equal(900, destination.AtomicUnits);
+		// No change destination supplied: the flag is never fabricated.
+		Assert.False(destination.IsWalletOwnedChange);
 
 		LiquidWalletUiAssetAmount total = Assert.Single(plan.SelectedTotals);
 		Assert.True(total.IsPeggedAsset);

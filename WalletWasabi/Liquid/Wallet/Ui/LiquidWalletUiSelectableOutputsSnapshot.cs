@@ -71,6 +71,34 @@ public sealed class LiquidWalletUiSelectableOutputsSnapshot
 	public ulong Revision { get; }
 	public IReadOnlyList<LiquidWalletUiSelectableOutput> Outputs { get; }
 
+	/// <summary>
+	/// An empty selectable set bound to the same wallet, network manifest, and
+	/// pegged asset as the supplied balance snapshot, at that snapshot's
+	/// revision. The Fluent layer seeds its initial selectable stream with
+	/// this when the caller supplies no open-time selectable snapshot: an
+	/// empty coin-control list, never a fabricated output. Public because the
+	/// Fluent model (a separate assembly) composes its own empty seed; no
+	/// internal type is named.
+	/// </summary>
+	public static LiquidWalletUiSelectableOutputsSnapshot Empty(
+		string walletName,
+		LiquidWalletUiSnapshot balance)
+	{
+		ArgumentException.ThrowIfNullOrEmpty(walletName);
+		ArgumentNullException.ThrowIfNull(balance);
+		if (!StringComparer.Ordinal.Equals(balance.WalletName, walletName))
+		{
+			throw new ArgumentException("The Liquid balance snapshot is bound to a different wallet.", nameof(balance));
+		}
+
+		return new LiquidWalletUiSelectableOutputsSnapshot(
+			walletName,
+			balance.NetworkManifestId,
+			balance.PeggedAssetIdHex,
+			balance.Revision,
+			new ReadOnlyCollection<LiquidWalletUiSelectableOutput>([]));
+	}
+
 	internal static LiquidWalletUiSelectableOutputsSnapshot Capture(
 		string walletName,
 		ElementsPublicNetworkManifest manifest,

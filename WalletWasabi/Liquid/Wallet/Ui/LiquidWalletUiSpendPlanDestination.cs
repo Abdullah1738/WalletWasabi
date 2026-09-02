@@ -24,7 +24,8 @@ public sealed class LiquidWalletUiSpendPlanDestination
 		string unconfidentialAddressText,
 		string assetIdHex,
 		bool isPeggedAsset,
-		long atomicUnits)
+		long atomicUnits,
+		bool isWalletOwnedChange)
 	{
 		ConfidentialAddressText = confidentialAddressText;
 		UnconfidentialAddressText = unconfidentialAddressText;
@@ -32,6 +33,7 @@ public sealed class LiquidWalletUiSpendPlanDestination
 		IsPeggedAsset = isPeggedAsset;
 		AtomicUnits = atomicUnits;
 		IsConfidential = true;
+		IsWalletOwnedChange = isWalletOwnedChange;
 	}
 
 	public string ConfidentialAddressText { get; }
@@ -47,20 +49,37 @@ public sealed class LiquidWalletUiSpendPlanDestination
 	public long AtomicUnits { get; }
 	public bool IsConfidential { get; }
 
+	/// <summary>
+	/// Whether this destination is the wallet-owned change output the facade
+	/// appended for a per-asset surplus: true exactly when the destination's
+	/// canonical address text matches the change address supplied to the
+	/// facade for that plan. When no change destination was supplied (no
+	/// surplus) this is false for every destination — the projection shape is
+	/// otherwise byte-identical. Additive attribution of ALREADY-composed
+	/// change only; it never alters when or how change outputs are appended.
+	/// </summary>
+	public bool IsWalletOwnedChange { get; }
+
 	internal static LiquidWalletUiSpendPlanDestination FromDestination(
-		LiquidSuppliedConfidentialDestination destination)
+		LiquidSuppliedConfidentialDestination destination,
+		string? changeAddressCanonicalText = null)
 	{
 		ArgumentNullException.ThrowIfNull(destination);
 
 		LiquidAddress address = destination.GetAddress();
+		string canonicalAddressText = address.GetCanonicalAddressText();
 		// The landed destination Create rejects a null amount and the landed
 		// plan Create rejects a null amount again; the null-forgiving
-		// operator adds no runtime check and no fallback.
+		// operator adds no runtime check and no fallback. The change flag is
+		// attribution only: a canonical-text match against the supplied
+		// change address; no change destination supplied means no match.
 		return new LiquidWalletUiSpendPlanDestination(
-			address.GetCanonicalAddressText(),
+			canonicalAddressText,
 			address.GetUnconfidentialAddressText(),
 			destination.GetAssetId().CanonicalRpcHex,
 			destination.GetAmount()!.IsPeggedAsset,
-			destination.GetAmount()!.AtomicUnits);
+			destination.GetAmount()!.AtomicUnits,
+			changeAddressCanonicalText is not null
+				&& StringComparer.Ordinal.Equals(canonicalAddressText, changeAddressCanonicalText));
 	}
 }

@@ -390,7 +390,18 @@ public static class LiquidWalletUiFacade
 			selectedOutPoints,
 			batch,
 			explicitFee);
-		return LiquidWalletUiSpendPlan.FromPlan(walletName, manifest, plan);
+
+		// The additive change-attribution projection: the canonical address
+		// text of the caller-supplied change destination, parsed fail-closed
+		// exactly as the user destination address (a supplied change
+		// destination is always parseable — the batch composition above
+		// already parsed it when a surplus row was composed, and a supplied
+		// no-surplus one parses here identically). When no change destination
+		// is supplied the projection flag is false for every destination.
+		string? changeAddressCanonicalText = changeDestination is null
+			? null
+			: LiquidAddress.Parse(manifest, changeDestination.ConfidentialAddress).GetCanonicalAddressText();
+		return LiquidWalletUiSpendPlan.FromPlan(walletName, manifest, plan, changeAddressCanonicalText);
 	}
 
 	/// <summary>

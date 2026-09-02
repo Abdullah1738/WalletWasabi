@@ -34,6 +34,7 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	private readonly BehaviorSubject<bool> _loaded;
 	private readonly BehaviorSubject<LiquidWalletUiHistorySnapshot?> _history;
 	private readonly BehaviorSubject<bool> _historyLoaded;
+	private readonly BehaviorSubject<LiquidWalletUiSelectableOutputsSnapshot> _selectableOutputs;
 	private readonly byte[] _nextReceiveScriptPubKey;
 	private readonly byte[] _nextReceiveBlindingPublicKey;
 	private readonly string[] _nextReceiveLabels;
@@ -46,7 +47,8 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 		ReadOnlyMemory<byte> nextReceiveScriptPubKey,
 		ReadOnlyMemory<byte> nextReceiveBlindingPublicKey,
 		IReadOnlyList<string>? nextReceiveLabels = null,
-		Func<LiquidWalletUiSetReceiveLabelsRequest, CancellationToken, Task>? setNextReceiveLabelsCommand = null)
+		Func<LiquidWalletUiSetReceiveLabelsRequest, CancellationToken, Task>? setNextReceiveLabelsCommand = null,
+		LiquidWalletUiSelectableOutputsSnapshot? initialSelectableOutputs = null)
 	{
 		ArgumentException.ThrowIfNullOrEmpty(name);
 		ArgumentNullException.ThrowIfNull(manifest);
@@ -65,6 +67,12 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 		_loaded = new BehaviorSubject<bool>(true);
 		_history = new BehaviorSubject<LiquidWalletUiHistorySnapshot?>(null);
 		_historyLoaded = new BehaviorSubject<bool>(false);
+		// The selectable set starts empty when the caller supplies no snapshot;
+		// an empty selectable set means an empty coin-control list (no
+		// fabricated outputs). The session seeds the open-time handoff's
+		// snapshot and re-captures on refresh.
+		_selectableOutputs = new BehaviorSubject<LiquidWalletUiSelectableOutputsSnapshot>(
+			initialSelectableOutputs ?? EmptySelectableOutputs(name, initialSnapshot));
 
 		Balances = _balances.AsObservable();
 		HasBalance = Balances.Select(snapshot => !snapshot.IsEmpty);
@@ -73,6 +81,8 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 			.Where(snapshot => snapshot is not null)
 			.Select(snapshot => snapshot!);
 		HistoryLoaded = _historyLoaded.AsObservable();
+		SelectableOutputs = _selectableOutputs.AsObservable();
+		SelectableOutputsSnapshot = _selectableOutputs.Value;
 	}
 
 	public string Name { get; }
@@ -93,6 +103,16 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	public IObservable<LiquidWalletUiHistorySnapshot> History { get; }
 	public bool IsHistoryLoaded => _historyLoaded.Value;
 	public IObservable<bool> HistoryLoaded { get; }
+
+	/// <summary>
+	/// The current spendable set the coin-control list binds from: one
+	/// immutable <see cref="LiquidWalletUiSelectableOutputsSnapshot"/> per
+	/// capture. Seeded from the open-time handoff and re-captured by the
+	/// session on refresh. Starts empty (no fabricated outputs) when the
+	/// caller supplies no snapshot.
+	/// </summary>
+	public LiquidWalletUiSelectableOutputsSnapshot? SelectableOutputsSnapshot { get; private set; }
+	public IObservable<LiquidWalletUiSelectableOutputsSnapshot> SelectableOutputs { get; }
 
 	/// <summary>
 	/// Re-captures the balance snapshot from the caller's advanced state
@@ -151,6 +171,34 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 		HistorySnapshot = snapshot;
 		_history.OnNext(snapshot);
 		_historyLoaded.OnNext(true);
+	}
+
+	/// <summary>
+	/// Accepts one immutable selectable-outputs snapshot captured by the
+	/// application-owned wallet lifetime layer (the open-time handoff's
+	/// selectable set, or a refresh-time re-capture). Validates the wallet
+	/// name, network manifest id, and pegged asset id against the model's
+	/// current <see cref="Snapshot"/>; any mismatch throws before changing
+	/// either selectable field or stream. Success stores and emits the
+	/// immutable snapshot, driving one deterministic rebuild of the
+	/// coin-control list. This model never receives key or context spans.
+	/// </summary>
+	public void RefreshSelectableOutputs(LiquidWalletUiSelectableOutputsSnapshot snapshot)
+	{
+		ArgumentNullException.ThrowIfNull(snapshot);
+		LiquidWalletUiSnapshot balance = Snapshot ??
+			throw new InvalidOperationException(
+				"Liquid selectable outputs cannot be paired before a balance snapshot exists.");
+		if (!StringComparer.Ordinal.Equals(snapshot.WalletName, Name) ||
+			!StringComparer.Ordinal.Equals(snapshot.NetworkManifestId, balance.NetworkManifestId) ||
+			!StringComparer.Ordinal.Equals(snapshot.PeggedAssetIdHex, balance.PeggedAssetIdHex))
+		{
+			throw new InvalidOperationException(
+				"The Liquid selectable-outputs snapshot does not pair with the current balance snapshot.");
+		}
+
+		SelectableOutputsSnapshot = snapshot;
+		_selectableOutputs.OnNext(snapshot);
 	}
 
 	/// <summary>
@@ -254,5 +302,14 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 		_loaded.Dispose();
 		_history.Dispose();
 		_historyLoaded.Dispose();
+		_selectableOutputs.Dispose();
 	}
+
+	// An empty selectable set at the balance snapshot's revision: an empty
+	// coin-control list, never a fabricated output. Used only when the caller
+	// supplies no open-time selectable snapshot.
+	private static LiquidWalletUiSelectableOutputsSnapshot EmptySelectableOutputs(
+		string walletName,
+		LiquidWalletUiSnapshot balance) =>
+		LiquidWalletUiSelectableOutputsSnapshot.Empty(walletName, balance);
 }

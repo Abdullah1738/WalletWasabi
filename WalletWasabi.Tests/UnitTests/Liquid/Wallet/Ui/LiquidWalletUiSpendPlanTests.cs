@@ -535,6 +535,7 @@ public class LiquidWalletUiSpendPlanTests
 				"ConfidentialAddressText",
 				"IsConfidential",
 				"IsPeggedAsset",
+				"IsWalletOwnedChange",
 				"UnconfidentialAddressText",
 			],
 			PublicInstancePropertyNames(typeof(LiquidWalletUiSpendPlanDestination)));
