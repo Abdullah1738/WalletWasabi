@@ -638,7 +638,7 @@ public class ElementsWalletRefreshObservationTests
 		Assert.Equal(
 			"0000000000000000000000000000000000000000000000000000000000000000",
 			observation.NodeObservation.Generation.StartupId);
-		Assert.Equal(0UL, observation.NodeObservation.Generation.ChainstateRevision);
+		Assert.Equal(42UL, observation.NodeObservation.Generation.ChainstateRevision);
 		Assert.Equal(42, observation.NodeObservation.Generation.Blocks);
 		Assert.Equal(BestBlockHash, observation.NodeObservation.Generation.BestBlockHash);
 		Assert.DoesNotContain(harness.Handler.Methods, method => method == "getnodegeneration");

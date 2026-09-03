@@ -830,7 +830,7 @@ public class ElementsRpcClientTests
 		Assert.True(observation.UsesPeggedAssetForFees);
 		Assert.False(observation.ChainstateChangedDuringObservation);
 		Assert.Equal("0000000000000000000000000000000000000000000000000000000000000000", observation.GenerationBefore.StartupId);
-		Assert.Equal(0UL, observation.GenerationBefore.ChainstateRevision);
+		Assert.Equal(42UL, observation.GenerationBefore.ChainstateRevision);
 		Assert.Equal(42, observation.GenerationBefore.Blocks);
 		Assert.Equal(BestBlockHash, observation.GenerationBefore.BestBlockHash);
 		Assert.Equal(observation.GenerationBefore, observation.GenerationAfter);
@@ -861,7 +861,11 @@ public class ElementsRpcClientTests
 	}
 
 	[Theory]
-	[InlineData(43, BestBlockHash)]
+	// A height regression (after < before) is a rollback: the fallback revision proxies the block
+	// height, so the revision regresses and the fence throws fail-closed.
+	[InlineData(41, BestBlockHash)]
+	// Same height with a different best-block hash is an unchanged revision reporting an
+	// inconsistent tip identity: the fence throws fail-closed.
 	[InlineData(42, "0202020202020202020202020202020202020202020202020202020202020202")]
 	public async Task RejectsTipDriftInsideFallbackFenceWithoutGetNodeGenerationAsync(
 		int closingBlocks,
@@ -888,7 +892,67 @@ public class ElementsRpcClientTests
 				CancellationToken.None));
 
 		Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
-		Assert.Contains("inconsistent tip", exception.Message, StringComparison.Ordinal);
+		Assert.DoesNotContain("getnodegeneration", harness.Handler.Methods);
+	}
+
+	[Fact]
+	public async Task ToleratesForwardTipProgressInsideFallbackFenceWithoutGetNodeGenerationAsync()
+	{
+		// A single new block lands between the before/after observations: after.Blocks (43) >
+		// before.Blocks (42), so the height-proxied revision advances and the fence tolerates the
+		// forward-only movement instead of throwing the live "node generation changed" false positive.
+		const string AdvancedBlockHash = "0303030303030303030303030303030303030303030303030303030303030303";
+		int blockchainCalls = 0;
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getblockchaininfo" => Envelope(
+				invocation.Id,
+				++blockchainCalls == 1
+					? BlockchainResult()
+					: BlockchainResult(blocks: 43, headers: 43, bestBlockHash: AdvancedBlockHash)),
+			"getblockhash" => Envelope(
+				invocation.Id,
+				JsonSerializer.Serialize(blockchainCalls <= 1 ? BestBlockHash : AdvancedBlockHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset)),
+			_ => throw new InvalidOperationException($"Unexpected RPC method '{invocation.Method}'."),
+		});
+
+		ElementsFeeAssetGenerationObservation observation =
+			await harness.Client.GetFeeAssetGenerationObservationAsync(
+				ElementsPublicNetworkManifest.LiquidTestnet,
+				CancellationToken.None);
+
+		Assert.True(observation.ChainstateChangedDuringObservation);
+		Assert.Equal(42UL, observation.GenerationBefore.ChainstateRevision);
+		Assert.Equal(43UL, observation.GenerationAfter.ChainstateRevision);
+		Assert.Equal(42, observation.GenerationBefore.Blocks);
+		Assert.Equal(43, observation.GenerationAfter.Blocks);
+		Assert.Equal(BestBlockHash, observation.GenerationBefore.BestBlockHash);
+		Assert.Equal(AdvancedBlockHash, observation.GenerationAfter.BestBlockHash);
+		Assert.DoesNotContain("getnodegeneration", harness.Handler.Methods);
+	}
+
+	[Fact]
+	public async Task AcceptsSameTipInsideFallbackFenceWithoutGetNodeGenerationAsync()
+	{
+		// The before/after observations read an unchanged tip: same height and same best-block hash
+		// yield the same height-proxied revision, so the fence does not throw (unchanged behavior).
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getblockchaininfo" => Envelope(invocation.Id, BlockchainResult()),
+			"getblockhash" => Envelope(invocation.Id, JsonSerializer.Serialize(BestBlockHash)),
+			"getsidechaininfo" => Envelope(invocation.Id, FeeAssetResult(PeggedAsset, PeggedAsset)),
+			_ => throw new InvalidOperationException($"Unexpected RPC method '{invocation.Method}'."),
+		});
+
+		ElementsFeeAssetGenerationObservation observation =
+			await harness.Client.GetFeeAssetGenerationObservationAsync(
+				ElementsPublicNetworkManifest.LiquidTestnet,
+				CancellationToken.None);
+
+		Assert.False(observation.ChainstateChangedDuringObservation);
+		Assert.Equal(42UL, observation.GenerationBefore.ChainstateRevision);
+		Assert.Equal(observation.GenerationBefore, observation.GenerationAfter);
 		Assert.DoesNotContain("getnodegeneration", harness.Handler.Methods);
 	}
 
@@ -2595,7 +2659,7 @@ public class ElementsRpcClientTests
 			Assert.Equal(
 				"0000000000000000000000000000000000000000000000000000000000000000",
 				nodeObservation.Generation.StartupId);
-			Assert.Equal(0UL, nodeObservation.Generation.ChainstateRevision);
+			Assert.Equal(42UL, nodeObservation.Generation.ChainstateRevision);
 			Assert.True(nodeObservation.HasExactGenerationFenceObservation);
 			Assert.True(nodeObservation.HasEffectiveFeeAssetObservation);
 			Assert.False(nodeObservation.HasArtifactSourceAttestation);

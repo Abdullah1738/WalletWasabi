@@ -293,10 +293,12 @@ public sealed class ElementsRpcClient : IDisposable
 	/// <c>getnodegeneration</c> RPC absent. Built from <c>getblockchaininfo</c> with a
 	/// <c>getblockhash(blocks)</c> tip cross-check (the same pattern
 	/// <see cref="GetNodeStatusCoreAsync"/> uses); the startup id becomes the fixed all-zero
-	/// sentinel and the chainstate revision 0, so every fallback observation compares equal on
-	/// the sentinel fields and the existing fences reduce to an exact blocks/bestblockhash tip
-	/// comparison. This still detects any tip change between the before/after observations but
-	/// cannot detect a node restart mid-observation.
+	/// sentinel and the chainstate revision proxies the observed block height, so the existing
+	/// fences tolerate forward-only tip movement (a new block advances the height and therefore
+	/// the revision) while still rejecting any rollback (the height and therefore the revision
+	/// regresses) and any same-height tip identity change (the revision is unchanged but the
+	/// best-block hash differs). This still detects any non-forward tip change between the
+	/// before/after observations but cannot detect a node restart mid-observation.
 	/// </summary>
 	private async Task<ElementsNodeGenerationObservation> GetFallbackTipObservationCoreAsync(
 		CancellationToken cancellationToken)

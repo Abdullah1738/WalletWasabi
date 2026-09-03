@@ -36,9 +36,13 @@ public sealed record ElementsNodeGenerationObservation
 
 	/// <summary>
 	/// The fixed fallback observation shape used when the reviewed network manifest declares the
-	/// fork-only <c>getnodegeneration</c> RPC absent: an all-zero startup-id sentinel and revision
-	/// zero, so every fallback observation compares equal on the sentinel fields and the fences
-	/// reduce to an exact blocks/bestblockhash tip comparison. Never produced for a manifest that
+	/// fork-only <c>getnodegeneration</c> RPC absent: an all-zero startup-id sentinel and a
+	/// chainstate revision that proxies the observed block height, so the existing fences tolerate
+	/// forward-only tip movement (a new block advances the height and therefore the revision) while
+	/// still rejecting any rollback (the height and therefore the revision regresses) and any
+	/// same-height tip identity change (the revision is unchanged but the best-block hash differs).
+	/// Restart detection remains genuinely unavailable without <c>getnodegeneration</c>; the all-zero
+	/// startup-id sentinel is retained and never claims otherwise. Never produced for a manifest that
 	/// declares the generation API present.
 	/// </summary>
 	internal static ElementsNodeGenerationObservation CreateFallbackTipObservation(
@@ -46,7 +50,7 @@ public sealed record ElementsNodeGenerationObservation
 		string bestBlockHash) =>
 		new(
 			FallbackTipStartupIdSentinel,
-			0UL,
+			(ulong)ElementsNodeStatus.RequireNonNegative(blocks, nameof(blocks)),
 			ElementsNodeStatus.RequireNonNegative(blocks, nameof(blocks)),
 			ElementsNodeStatus.RequireHex32(bestBlockHash, nameof(bestBlockHash)),
 			allowSentinelStartupId: true);
