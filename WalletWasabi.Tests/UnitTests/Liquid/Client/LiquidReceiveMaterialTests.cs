@@ -54,26 +54,31 @@ public class LiquidReceiveMaterialTests
 		LiquidWalletExternalIndexAllocation first = LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
 			directory.Path, walletName, key, context, peggedAsset);
 
+		// Genesis seals the empty state at generation 0 with a zero external-index
+		// high-water; the open is a pure peek, so it presents next-receive index 0
+		// WITHOUT advancing the high-water or persisting a new generation.
 		Assert.Equal(0UL, first.Index);
-		Assert.Equal(1UL, first.PersistedGeneration);
-		Assert.Equal(1UL, first.PersistedExternalIndexHighWater);
+		Assert.Equal(0UL, first.PersistedGeneration);
+		Assert.Equal(0UL, first.PersistedExternalIndexHighWater);
 		Assert.True(File.Exists(filePath));
 
 		LiquidWalletLoadSaveResult persisted = LiquidWalletLoadSave.Load(directory.Path, walletName, key, context);
 		Assert.Equal(0UL, persisted.State!.Revision);
-		Assert.Equal(1UL, persisted.Generation);
-		Assert.Equal(1UL, persisted.ExternalIndexHighWater);
+		Assert.Equal(0UL, persisted.Generation);
+		Assert.Equal(0UL, persisted.ExternalIndexHighWater);
 		Assert.Equal(
 			peggedAsset.CanonicalRpcHex,
 			persisted.State.PeggedAssetId.CanonicalRpcHex);
 		Assert.Equal(0, persisted.State.AppliedTransactionCount);
 
-		// A reopen performs no re-initialization: it allocates the next index off the
-		// persisted state.
+		// A reopen performs no re-initialization and PEEKS: it presents the same
+		// next-receive index and advances neither the persisted generation nor the
+		// external-index high-water.
 		LiquidWalletExternalIndexAllocation second = LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
 			directory.Path, walletName, key, context, peggedAsset);
-		Assert.Equal(1UL, second.Index);
-		Assert.Equal(2UL, second.PersistedGeneration);
+		Assert.Equal(first.Index, second.Index);
+		Assert.Equal(first.PersistedGeneration, second.PersistedGeneration);
+		Assert.Equal(first.PersistedExternalIndexHighWater, second.PersistedExternalIndexHighWater);
 	}
 
 	[Fact]
@@ -91,7 +96,8 @@ public class LiquidReceiveMaterialTests
 			directory.Path, walletName, key, context, peggedAsset);
 
 		Assert.Equal(0UL, allocation.Index);
-		Assert.Equal(10UL, allocation.PersistedGeneration);
+		Assert.Equal(0UL, allocation.PersistedExternalIndexHighWater);
+		Assert.Equal(9UL, allocation.PersistedGeneration);
 	}
 
 	[Theory]
@@ -158,7 +164,8 @@ public class LiquidReceiveMaterialTests
 					LiquidWalletExternalIndexAllocation allocation = LiquidWalletExternalIndexAllocator.AllocateWithFirstOpenInitialization(
 						directory.Path, walletName, key, context, peggedAsset);
 					Assert.Equal(0UL, allocation.Index);
-					Assert.Equal(7UL, allocation.PersistedGeneration);
+					Assert.Equal(0UL, allocation.PersistedExternalIndexHighWater);
+					Assert.Equal(6UL, allocation.PersistedGeneration);
 				}
 				break;
 		}

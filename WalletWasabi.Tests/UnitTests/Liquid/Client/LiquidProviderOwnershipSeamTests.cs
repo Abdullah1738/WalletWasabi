@@ -688,6 +688,39 @@ public sealed class LiquidProviderOwnershipSeamTests
 	}
 
 	[Fact]
+	public void OpenPeeksNextReceiveIndexAndScriptPubKeyStableAcrossOpens()
+	{
+		using TemporaryDirectory directory = new();
+		string walletDirectory = Directory.CreateDirectory(Path.Combine(directory.Path, "wallets")).FullName;
+		string walletFile = Path.Combine(walletDirectory, "alpha.json");
+		KeyManager.CreateNew(out _, "TestPassword", NBitcoin.Network.RegTest, walletFile);
+		CreatePersistedLiquidState(walletDirectory, walletFile, "TestPassword", "alpha");
+		ElementsPublicNetworkManifest manifest = ElementsPublicNetworkManifest.LiquidMainnet;
+		LiquidWalletIdentity identity = LiquidWalletIdentity.Create(
+			"alpha", walletFile, "local", manifest.ManifestId, new LiquidWalletDirectories(walletDirectory));
+		ElementsNodeExpectation bound = ElementsReviewedNodeExpectationSource.Bind(
+			manifest,
+			new LiquidRpcProfile("local", new Uri("http://127.0.0.1:18884"), "/tmp/cookie", manifest.ChainRpcName, manifest.ManifestId, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)));
+		KeyManager keyManager = KeyManager.FromFile(walletFile);
+		ExtKey master = keyManager.GetMasterExtKey("TestPassword");
+		using var httpClient = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:18884") };
+		using var rpcClient = new ElementsRpcClient(httpClient);
+		using var adapter = new LiquidWalletSignerKeyAdapter(master, _ => null, keyManager.GetNetwork());
+
+		LiquidAuthenticatedWalletStateOwner firstOpen = LiquidAuthenticatedWalletStateOwner.Open(
+			identity, manifest, bound, walletDirectory, master, adapter, rpcClient);
+		LiquidAuthenticatedWalletStateOwner secondOpen = LiquidAuthenticatedWalletStateOwner.Open(
+			identity, manifest, bound, walletDirectory, master, adapter, rpcClient);
+
+		Assert.Equal(firstOpen.LastIndex, secondOpen.LastIndex);
+		Assert.Equal(firstOpen.ReceiveMaterial.NextReceiveScriptPubKey, secondOpen.ReceiveMaterial.NextReceiveScriptPubKey);
+		Assert.Equal(firstOpen.ReceiveMaterial.NextReceiveBlindingPublicKey, secondOpen.ReceiveMaterial.NextReceiveBlindingPublicKey);
+		Assert.Equal(firstOpen.Descriptor, secondOpen.Descriptor);
+		Assert.Equal(firstOpen.PersistenceGeneration, secondOpen.PersistenceGeneration);
+		Assert.Equal(firstOpen.ExternalIndexHighWater, secondOpen.ExternalIndexHighWater);
+	}
+
+	[Fact]
 	public async System.Threading.Tasks.Task ProviderDisposalDrainsPublishedSessionsAndRejectsNewOpensAsync()
 	{
 		using TemporaryDirectory directory = new();
