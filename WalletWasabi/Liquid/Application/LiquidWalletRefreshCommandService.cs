@@ -23,6 +23,15 @@ internal sealed class LiquidWalletRefreshCommandService
 	private const string ContextKeyInfo = "WalletWasabi/Liquid/v1/context";
 	private const string Slip77Info = "WalletWasabi/Liquid/v1/slip77";
 
+	// Bounded acquisition-level retry (LIQUID-REFRESH-GENERATION-RETRY-001). On a live
+	// ~1-minute-block chain a block lands mid-acquisition almost every refresh, tripping
+	// the exact-equality generation fence. That fence trip is a retry signal, not a hard
+	// failure: the whole observation is re-acquired at the new tip. Six attempts with a
+	// short fixed backoff outlive a single 1-minute block but fail fast on an unstable node.
+	private const int AcquisitionMaxAttempts = 6;
+	private static readonly TimeSpan AcquisitionRetryDelay = TimeSpan.FromMilliseconds(400);
+	private const string AcquisitionGenerationFenceFragment = "node generation changed during the ";
+
 	private readonly LiquidAuthenticatedRuntimeProvider _runtimeProvider;
 	private readonly Dependencies _dependencies;
 	private readonly object _fenceGate = new();
@@ -75,7 +84,7 @@ internal sealed class LiquidWalletRefreshCommandService
 				throw new InvalidOperationException("The accepted transaction identifier was not present in the captured session record.");
 			}
 
-			using ElementsWalletRefreshObservation observation = await _dependencies.AcquireObservationAsync(
+			using ElementsWalletRefreshObservation observation = await AcquireObservationWithRetryAsync(
 				session, captured, request.AcceptedTransactionIdHex, cancellationToken).ConfigureAwait(false);
 			if (observation.Candidates.Count == 0)
 			{
@@ -96,6 +105,38 @@ internal sealed class LiquidWalletRefreshCommandService
 			}
 		}
 	}
+
+	// Wraps ONLY the observation acquisition. A forward-block fence trip re-acquires the
+	// whole observation (candidate discovery + raw fetches re-run at the new tip), so each
+	// attempt is internally consistent at that tip. The committed-state path and the
+	// session/active-wallet fences run once, after a consistent observation is acquired.
+	// The retry matches only the refresh-observation generation-fence transient
+	// ("…during the acquisition" / "…during the final observation" / "…during the fee
+	// observation"); the rollback/restart/inconsistency fences ("node status did not match
+	// the generation fence", revision-regression, startup-id-change) and every generic
+	// RPC/IO failure remain fatal and surface on the first attempt.
+	private async Task<ElementsWalletRefreshObservation> AcquireObservationWithRetryAsync(
+		LiquidAuthenticatedWalletSession session,
+		LiquidWalletRefreshStateCapture captured,
+		string? suppliedId,
+		CancellationToken cancellationToken)
+	{
+		for (int attempt = 1; ; attempt++)
+		{
+			try
+			{
+				return await _dependencies.AcquireObservationAsync(
+					session, captured, suppliedId, cancellationToken).ConfigureAwait(false);
+			}
+			catch (ElementsRpcException exception) when (attempt < AcquisitionMaxAttempts && IsAcquisitionGenerationFenceTransient(exception))
+			{
+				await Task.Delay(AcquisitionRetryDelay, cancellationToken).ConfigureAwait(false);
+			}
+		}
+	}
+
+	private static bool IsAcquisitionGenerationFenceTransient(ElementsRpcException exception) =>
+		exception.Message.Contains(AcquisitionGenerationFenceFragment, StringComparison.Ordinal);
 
 	private LiquidWalletUiRefreshResult CommitCandidateBatch(
 		LiquidWalletUiRefreshRequest request,

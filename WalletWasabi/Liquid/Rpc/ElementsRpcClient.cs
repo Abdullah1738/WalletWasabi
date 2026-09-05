@@ -2231,6 +2231,19 @@ public sealed class ElementsRpcClient : IDisposable
 				}
 				rawTransactions.Add(new ElementsWalletRefreshRawTransaction(id, bytes));
 			}
+
+			// The final fence stays inside the disposal region so a fence trip still disposes every
+			// fetched raw transaction via the catch below (buffers are zeroed on Dispose).
+			ElementsNodeStatus finalStatus = await GetNodeStatusCoreAsync(cancellationToken).ConfigureAwait(false);
+			ElementsNodeGenerationObservation finalGeneration =
+				await GetNodeGenerationObservationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
+			if (finalGeneration != generation
+				|| finalStatus.Blocks != generation.Blocks
+				|| !StringComparer.Ordinal.Equals(finalStatus.BestBlockHash, generation.BestBlockHash))
+			{
+				throw InvalidResult(acquisition, "node generation changed during the final observation");
+			}
+			finalStatus.EnsureMatches(expectation);
 		}
 		catch
 		{
@@ -2240,17 +2253,6 @@ public sealed class ElementsRpcClient : IDisposable
 			}
 			throw;
 		}
-
-		ElementsNodeStatus finalStatus = await GetNodeStatusCoreAsync(cancellationToken).ConfigureAwait(false);
-		ElementsNodeGenerationObservation finalGeneration =
-			await GetNodeGenerationObservationCoreAsync(hasGenerationApi, cancellationToken).ConfigureAwait(false);
-		if (finalGeneration != generation
-			|| finalStatus.Blocks != generation.Blocks
-			|| !StringComparer.Ordinal.Equals(finalStatus.BestBlockHash, generation.BestBlockHash))
-		{
-			throw InvalidResult(acquisition, "node generation changed during the final observation");
-		}
-		finalStatus.EnsureMatches(expectation);
 
 		return new ElementsWalletRefreshObservation(
 			new ElementsExpectationBoundNodeObservation(

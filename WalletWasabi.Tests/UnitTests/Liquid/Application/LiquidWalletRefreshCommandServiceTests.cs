@@ -24,6 +24,123 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 	private const string WalletName = "alpha";
 
 	[Fact]
+	public async Task AcquisitionGenerationFenceTransientIsRetriedThenCommitsAsync()
+	{
+		// LIQUID-REFRESH-GENERATION-RETRY-001: a forward-block fence trip on the
+		// refresh-observation acquisition ("node generation changed during the …")
+		// is a retry signal, not a hard failure. The service re-acquires the whole
+		// observation and commits the first internally-consistent one.
+		using var handler = new RejectingHandler();
+		LiquidAuthenticatedWalletSession session = CreateSession(handler);
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session);
+		const string candidateId = "4444444444444444444444444444444444444444444444444444444444444444";
+		ElementsWalletRefreshObservation rpcObservation = CandidateObservation(
+			session.StateOwner.NodeExpectation,
+			session.Manifest,
+			candidateId);
+		LiquidWalletObservationBatch batch = NativeBatch(candidateId, session.Manifest);
+		const int transientsBeforeSuccess = 3;
+		int acquisitionCalls = 0;
+		var dependencies = LiquidWalletRefreshCommandService.Dependencies.CreateForTesting(
+			acquireObservationAsync: (capturedSession, captured, suppliedId, cancellationToken) =>
+			{
+				acquisitionCalls++;
+				if (acquisitionCalls <= transientsBeforeSuccess)
+				{
+					throw AcquisitionTransient();
+				}
+				return Task.FromResult(rpcObservation);
+			},
+			observeNative: _ => batch,
+			save: request => LiquidWalletLoadSaveResult.CreateSaved(
+				request.State.Revision, request.NextGeneration, request.ExternalIndexHighWater, request.InternalIndexHighWater),
+			publish: (_, _, _) => true,
+			stageObserver: _ => { });
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> command =
+			LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
+
+		LiquidWalletUiRefreshResult result = await command(
+			new LiquidWalletUiRefreshRequest(WalletName, LiquidWalletUiRefreshTrigger.Manual, null),
+			CancellationToken.None);
+
+		Assert.Equal(transientsBeforeSuccess + 1, acquisitionCalls);
+		Assert.Equal(LiquidWalletUiRefreshStatus.Committed, result.Status);
+		Assert.Equal(1, result.CandidateCount);
+		Assert.Equal(1, result.AppliedTransactionCount);
+	}
+
+	[Fact]
+	public async Task AcquisitionGenerationFenceTransientExhaustionSurfacesAsync()
+	{
+		// The retry is BOUNDED: a genuinely unstable node (transient on every
+		// attempt) surfaces the exception after exactly the bounded number of
+		// attempts — no infinite loop.
+		using var handler = new RejectingHandler();
+		LiquidAuthenticatedWalletSession session = CreateSession(handler);
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session);
+		int acquisitionCalls = 0;
+		var dependencies = LiquidWalletRefreshCommandService.Dependencies.CreateForTesting(
+			acquireObservationAsync: (capturedSession, captured, suppliedId, cancellationToken) =>
+			{
+				acquisitionCalls++;
+				throw AcquisitionTransient();
+			},
+			observeNative: _ => throw new InvalidOperationException("Native must not run when acquisition never succeeds."),
+			save: _ => throw new InvalidOperationException("Save must not run when acquisition never succeeds."),
+			publish: (_, _, _) => throw new InvalidOperationException("Publish must not run when acquisition never succeeds."),
+			stageObserver: _ => { });
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> command =
+			LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
+
+		ElementsRpcException exception = await Assert.ThrowsAsync<ElementsRpcException>(() => command(
+			new LiquidWalletUiRefreshRequest(WalletName, LiquidWalletUiRefreshTrigger.Manual, null),
+			CancellationToken.None));
+
+		Assert.Equal(6, acquisitionCalls);
+		Assert.Contains("node generation changed during the ", exception.Message, StringComparison.Ordinal);
+	}
+
+	[Fact]
+	public async Task NonRetryableAcquisitionFailureIsNotRetriedAsync()
+	{
+		// Fail-closed is preserved: a non-fence RPC rejection — the
+		// rollback/restart/inconsistency fence "node status did not match the
+		// generation fence" and any generic RPC failure — is NOT a forward-block
+		// transient. It surfaces immediately with no retry.
+		using var handler = new RejectingHandler();
+		LiquidAuthenticatedWalletSession session = CreateSession(handler);
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session);
+		const string fatalMessage =
+			"Elements RPC 'wallet refresh observation' returned an invalid result: node status did not match the generation fence.";
+		int acquisitionCalls = 0;
+		var dependencies = LiquidWalletRefreshCommandService.Dependencies.CreateForTesting(
+			acquireObservationAsync: (capturedSession, captured, suppliedId, cancellationToken) =>
+			{
+				acquisitionCalls++;
+				throw new ElementsRpcException(ElementsRpcFailureKind.Protocol, fatalMessage, method: "wallet refresh observation");
+			},
+			observeNative: _ => throw new InvalidOperationException("Native must not run for a fatal acquisition."),
+			save: _ => throw new InvalidOperationException("Save must not run for a fatal acquisition."),
+			publish: (_, _, _) => throw new InvalidOperationException("Publish must not run for a fatal acquisition."),
+			stageObserver: _ => { });
+		Func<LiquidWalletUiRefreshRequest, CancellationToken, Task<LiquidWalletUiRefreshResult>> command =
+			LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
+
+		ElementsRpcException exception = await Assert.ThrowsAsync<ElementsRpcException>(() => command(
+			new LiquidWalletUiRefreshRequest(WalletName, LiquidWalletUiRefreshTrigger.Manual, null),
+			CancellationToken.None));
+
+		Assert.Equal(1, acquisitionCalls);
+		Assert.Equal(fatalMessage, exception.Message);
+	}
+
+	private static ElementsRpcException AcquisitionTransient() =>
+		new(
+			ElementsRpcFailureKind.Protocol,
+			"Elements RPC 'wallet refresh observation' returned an invalid result: node generation changed during the acquisition.",
+			method: "wallet refresh observation");
+
+	[Fact]
 	public async Task NonemptyCandidateExecutesTypedPipelineInExactOrderAsync()
 	{
 		using var handler = new RejectingHandler();
