@@ -38,10 +38,11 @@ internal sealed class LiquidCoinJoinNativeOperations
 	internal Response BalanceProof(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> balanceContext, ReadOnlyMemory<byte> residual, ReadOnlyMemory<byte> entropy) => Execute(10, pset, balanceContext, residual, entropy);
 	internal Response OwnedDigests(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> context, ReadOnlyMemory<byte> digest, ReadOnlyMemory<byte> authorization, ReadOnlyMemory<byte> owned) => Execute(11, pset, context, digest, authorization, owned);
 	internal Response Assembly(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> context, ReadOnlyMemory<byte> digest, ReadOnlyMemory<byte> authorization, ReadOnlyMemory<byte> signatures) => Execute(12, pset, context, digest, authorization, signatures);
+	internal Response OpenOutput(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> outputIndex, ReadOnlyMemory<byte> receiverKey, ReadOnlyMemory<byte> transactionId, ReadOnlyMemory<byte> script, ReadOnlyMemory<byte> asset, ReadOnlyMemory<byte> value) => Execute(13, pset, outputIndex, receiverKey, transactionId, script, asset, value);
 
 	internal Response Execute(uint operation, params ReadOnlyMemory<byte>[] fields)
 	{
-		if (operation is < 1 or > 12)
+		if (operation is < 1 or > 13)
 			throw new NotSupportedException($"CoinJoin operation {operation} is not supported by this adapter.");
 
 		byte[] request = LiquidCoinJoinFrame.Encode(operation, fields);

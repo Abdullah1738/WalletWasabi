@@ -12,7 +12,6 @@ public sealed class LiquidCoinJoinNativeOperationsTests
 {
 	[Theory]
 	[InlineData(0u)]
-	[InlineData(13u)]
 	[InlineData(uint.MaxValue)]
 	public void UnsupportedOperationFailsClosed(uint operation)
 	{
@@ -44,9 +43,9 @@ public sealed class LiquidCoinJoinNativeOperationsTests
 		string path = LiquidCoinJoinNativeBinding.ResolveLibraryPath();
 		Assert.True(File.Exists(path));
 		Assert.Equal(
-			"511c48e09b2c1e543c62301643c72c1c58a197846b976759436c7a09ac24b7d3",
+			"7ef206f60b7ef0a401828da9071a801937f40329d64c8598c9494398fe79ea80",
 			Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path))));
-		Assert.Equal("228431f2cc15e2b90dc3d44962b332ba7a06062d", LiquidCoinJoinNativeBinding.NativeCommit);
+		Assert.Equal("1d8e9f079d2485477cbfa51838d33ca25d454509", LiquidCoinJoinNativeBinding.NativeCommit);
 	}
 
 	[Fact]

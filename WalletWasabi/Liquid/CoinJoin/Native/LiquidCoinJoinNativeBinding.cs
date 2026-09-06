@@ -8,8 +8,8 @@ namespace WalletWasabi.Liquid.CoinJoin.Native;
 
 internal static unsafe class LiquidCoinJoinNativeBinding
 {
-	internal const string NativeCommit = "228431f2cc15e2b90dc3d44962b332ba7a06062d";
-	private const string MacSha256 = "511c48e09b2c1e543c62301643c72c1c58a197846b976759436c7a09ac24b7d3";
+	internal const string NativeCommit = "1d8e9f079d2485477cbfa51838d33ca25d454509";
+	private const string MacSha256 = "7ef206f60b7ef0a401828da9071a801937f40329d64c8598c9494398fe79ea80";
 	private static readonly Lazy<nint> NativeExport = new(LoadExport, LazyThreadSafetyMode.ExecutionAndPublication);
 
 	internal static string ResolveLibraryPath()
