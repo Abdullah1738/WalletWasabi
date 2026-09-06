@@ -214,7 +214,7 @@ public sealed class LiquidWalletSendExecutionCommandService
 			byte[] descriptorBytes = Encoding.UTF8.GetBytes(session.Descriptor);
 
 			ILiquidWalletSigner keyOwner = session.SignerKeyAdapter;
-			ulong lastIndex = session.LastIndex;
+			ulong lastIndex = session.StateOwner.CatalogLastIndex;
 			ElementsRpcClient rpcClient = session.RpcClient;
 			string walletDataDirectory = session.WalletDataDirectory;
 			string canonicalWalletId = session.Identity.CanonicalWalletId;
@@ -231,7 +231,7 @@ public sealed class LiquidWalletSendExecutionCommandService
 				rpcClient,
 				_manifest.PeggedAssetId,
 				walletDataDirectory,
-				canonicalWalletId,
+				session,
 				_manifest,
 				(request, ct) => AcquireFundingSourceAsync(rpcClient, _manifest.PeggedAssetId, _manifest, session.StateOwner.State, request, ct),
 				(canonicalTransactionIdHex, ct) => ScheduleAcceptedRefreshAsync(recordAcceptedTxid, canonicalWalletId, canonicalTransactionIdHex, ct),

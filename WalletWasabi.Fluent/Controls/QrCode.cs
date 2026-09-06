@@ -41,10 +41,8 @@ public class QrCode : Control
 			.ObserveOn(RxApp.MainThreadScheduler)
 			.Subscribe(matrix =>
 			{
-				if (matrix is { })
-				{
-					FinalMatrix = AddPaddingToMatrix(matrix);
-				}
+				FinalMatrix = matrix is { } ? AddPaddingToMatrix(matrix) : null;
+				InvalidateVisual();
 			});
 
 		_saveCommand = ReactiveCommand.CreateFromTask<string>(SaveQrCodeAsync);

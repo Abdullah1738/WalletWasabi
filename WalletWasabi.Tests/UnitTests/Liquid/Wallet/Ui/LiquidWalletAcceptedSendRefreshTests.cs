@@ -182,7 +182,28 @@ public sealed class LiquidWalletAcceptedSendRefreshTests
 		SetField(session, "<RpcClient>k__BackingField", rpcClient);
 		SetField(session, "<WalletDataDirectory>k__BackingField", AppContext.BaseDirectory);
 		SetField(session, "_manifest", ElementsPublicNetworkManifest.LiquidMainnet);
+		InstallEmptySnapshot(session);
 		return session;
+	}
+
+	internal static void InstallEmptySnapshot(LiquidAuthenticatedWalletSession session)
+	{
+		var manifest = ElementsPublicNetworkManifest.LiquidMainnet;
+		var state = WalletWasabi.Liquid.Wallet.LiquidWalletState.Empty(
+			WalletWasabi.Liquid.Assets.LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId));
+		var allocation = new WalletWasabi.Liquid.Wallet.LiquidWalletExternalIndexAllocation(0, 0, 0, 0, 0, state);
+		var owner = (LiquidAuthenticatedWalletStateOwner)Activator.CreateInstance(typeof(LiquidAuthenticatedWalletStateOwner),
+			BindingFlags.Instance | BindingFlags.NonPublic, null,
+			[allocation, session.Descriptor, 0UL,
+				new LiquidWalletUiReceiveMaterial([0x00, 0x14, .. new byte[20]], [0x02, .. new byte[32]]),
+				WalletName, manifest, ElementsReviewedNodeExpectationSource.Bind(manifest,
+					new LiquidRpcProfile("local", new Uri("http://127.0.0.1:1"), "/tmp/unused", manifest.ChainRpcName,
+						manifest.ManifestId, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1)))], null)!;
+		var handoff = new LiquidWalletRuntimeHandoff(WalletName, manifest.ManifestId,
+			owner.Balances, owner.SelectableOutputs, owner.History, owner.ReceiveMaterial);
+		Type snapshotType = typeof(LiquidAuthenticatedWalletSession).GetNestedType("RefreshSnapshot", BindingFlags.NonPublic)!;
+		SetField(session, "_snapshot", Activator.CreateInstance(snapshotType, BindingFlags.Instance | BindingFlags.NonPublic,
+			null, [owner, handoff], null));
 	}
 
 	private static LiquidWalletIdentity CreateIdentity()

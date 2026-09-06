@@ -563,18 +563,151 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 		Assert.Equal(2UL, result.ResultRevision);
 	}
 
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task RepeatedOutgoingRefreshConfirmsWithoutReapplyingAsync(bool withChange)
+	{
+		using var handler = new RejectingHandler();
+		LiquidAuthenticatedWalletSession session = CreateSession(handler);
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session);
+		string receiveId = new('4', 64);
+		string spendId = new('6', 64);
+		LiquidOutPoint received = LiquidOutPoint.CreateSpendable(LiquidTransactionId.ParseRpcHex(receiveId), 0);
+		string candidateId = receiveId;
+		bool confirmed = false;
+		LiquidWalletObservationBatch batch = NativeBatch(receiveId, session.Manifest);
+		int saves = 0;
+		var dependencies = Dependencies(
+			(_, _, _, _) => Task.FromResult(confirmed
+				? ConfirmedCandidateObservation(session.StateOwner.NodeExpectation, session.Manifest, candidateId)
+				: CandidateObservation(session.StateOwner.NodeExpectation, session.Manifest, candidateId)),
+			observeNative: _ => batch,
+			save: request =>
+			{
+				saves++;
+				return LiquidWalletLoadSaveResult.CreateSaved(request.State.Revision, request.NextGeneration,
+					request.ExternalIndexHighWater, request.InternalIndexHighWater);
+			});
+		var command = LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
+		var request = new LiquidWalletUiRefreshRequest(WalletName, LiquidWalletUiRefreshTrigger.Manual, null);
+		Assert.Equal(1ul, (await command(request, CancellationToken.None)).ResultRevision);
+		candidateId = spendId;
+		batch = NativeBatch(spendId, session.Manifest, [received], withChange ? 40ul : null);
+		Assert.Equal(2ul, (await command(request, CancellationToken.None)).ResultRevision);
+		Assert.Equal(0, (await command(request, CancellationToken.None)).AppliedTransactionCount);
+		confirmed = true;
+		for (int index = 0; index < 3; index++)
+		{
+			LiquidWalletUiRefreshResult result = await command(request, CancellationToken.None);
+			Assert.Equal(0, result.AppliedTransactionCount);
+			Assert.Equal(3ul, result.ResultRevision);
+			Assert.True(result.HandoffPublished);
+			LiquidWalletState state = session.CaptureRefreshState().State;
+			Assert.Equal(2, state.AppliedTransactionCount);
+			Assert.False(state.ContainsUnspent(received));
+			Assert.Equal(withChange ? 1 : 0, state.UnspentOutputCount);
+			Assert.Equal(withChange ? 40 : 0, state.QueryAssetBalance(3, state.PeggedAssetId).AtomicUnits);
+			Assert.True(state.TryGetConfirmation(LiquidTransactionId.ParseRpcHex(spendId), out LiquidConfirmation? confirmation));
+			Assert.Equal(1u, confirmation!.Height);
+		}
+		Assert.Equal(6, saves);
+	}
+
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task ConfirmedParentChildBatchConfirmsBothTransactionsAsync(bool withChange)
+	{
+		using var handler = new RejectingHandler();
+		LiquidAuthenticatedWalletSession session = CreateSession(handler);
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session);
+		// The child sorts before the parent in the native wire batch.
+		string parentId = new('6', 64);
+		string childId = new('4', 64);
+		LiquidOutPoint received = LiquidOutPoint.CreateSpendable(LiquidTransactionId.ParseRpcHex(parentId), 0);
+		LiquidWalletObservationBatch batch = LiquidWalletObservationBatch.Create(
+			[NativeBatch(childId, session.Manifest, [received], withChange ? 40ul : null).GetTransactions()[0],
+			 NativeBatch(parentId, session.Manifest).GetTransactions()[0]]);
+		var dependencies = Dependencies(
+			(_, _, _, _) =>
+			{
+				using ElementsWalletRefreshObservation parent = ConfirmedCandidateObservation(
+					session.StateOwner.NodeExpectation, session.Manifest, parentId);
+				using ElementsWalletRefreshObservation child = ConfirmedCandidateObservation(
+					session.StateOwner.NodeExpectation, session.Manifest, childId);
+				return Task.FromResult(new ElementsWalletRefreshObservation(parent.NodeObservation,
+					[child.Candidates[0], parent.Candidates[0]],
+					[new ElementsWalletRefreshRawTransaction(childId, [1, 2, 3]),
+					 new ElementsWalletRefreshRawTransaction(parentId, [4, 5, 6]),
+					 new ElementsWalletRefreshRawTransaction(new string('5', 64), [7, 8, 9])]));
+			},
+			observeNative: _ => batch,
+			save: request => LiquidWalletLoadSaveResult.CreateSaved(request.State.Revision, request.NextGeneration,
+				request.ExternalIndexHighWater, request.InternalIndexHighWater));
+		var command = LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
+		var request = new LiquidWalletUiRefreshRequest(WalletName, LiquidWalletUiRefreshTrigger.Manual, null);
+		LiquidWalletUiRefreshResult result = await command(request, CancellationToken.None);
+		Assert.Equal(2, result.AppliedTransactionCount);
+		Assert.Equal(4ul, result.ResultRevision);
+		LiquidWalletState state = session.CaptureRefreshState().State;
+		Assert.True(state.TryGetConfirmation(LiquidTransactionId.ParseRpcHex(parentId), out _));
+		Assert.True(state.TryGetConfirmation(LiquidTransactionId.ParseRpcHex(childId), out _));
+		Assert.False(state.ContainsUnspent(received));
+		Assert.Equal(withChange ? 40 : 0, state.QueryAssetBalance(4, state.PeggedAssetId).AtomicUnits);
+		LiquidWalletUiRefreshResult repeated = await command(request, CancellationToken.None);
+		Assert.Equal(0, repeated.AppliedTransactionCount);
+		Assert.Equal(4ul, repeated.ResultRevision);
+		Assert.Same(state, session.CaptureRefreshState().State);
+	}
+
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task ContradictoryRefreshRejectsBeforeSaveAndPublicationAsync(bool changeConfirmation)
+	{
+		using var handler = new RejectingHandler();
+		LiquidAuthenticatedWalletSession session = CreateSession(handler);
+		LiquidAuthenticatedRuntimeProvider provider = CreateProvider(session);
+		string candidateId = new('4', 64);
+		bool contradict = false;
+		int saves = 0;
+		int publications = 0;
+		var dependencies = Dependencies(
+			(_, _, _, _) => Task.FromResult(ConfirmedCandidateObservation(session.StateOwner.NodeExpectation,
+				session.Manifest, candidateId, new string(contradict && changeConfirmation ? '3' : '2', 64))),
+			observeNative: _ => contradict && !changeConfirmation
+				? IrrelevantNativeBatch(candidateId) : NativeBatch(candidateId, session.Manifest),
+			save: request =>
+			{
+				saves++;
+				return LiquidWalletLoadSaveResult.CreateSaved(request.State.Revision, request.NextGeneration,
+					request.ExternalIndexHighWater, request.InternalIndexHighWater);
+			},
+			publish: (_, _, _) => { publications++; return true; });
+		var command = LiquidWalletRefreshCommandService.CreateRefreshCommandForTesting(provider, dependencies);
+		var request = new LiquidWalletUiRefreshRequest(WalletName, LiquidWalletUiRefreshTrigger.Manual, null);
+		Assert.Equal(2ul, (await command(request, CancellationToken.None)).ResultRevision);
+		object snapshot = session.CaptureRefreshSnapshot();
+		contradict = true;
+		await Assert.ThrowsAsync<InvalidOperationException>(() => command(request, CancellationToken.None));
+		Assert.Same(snapshot, session.CaptureRefreshSnapshot());
+		Assert.Equal(1, saves);
+		Assert.Equal(1, publications);
+	}
+
 	private static ElementsWalletRefreshObservation ConfirmedCandidateObservation(
 		ElementsNodeExpectation expectation,
 		ElementsPublicNetworkManifest manifest,
-		string candidateId)
+		string candidateId,
+		string blockHash = "2222222222222222222222222222222222222222222222222222222222222222")
 	{
 		ElementsWalletRefreshObservation empty = EmptyObservation(expectation, manifest);
 		// The observed node tip is blocks = 1 with bestBlockHash of '2's; bind the
 		// confirmation to that exact tip so EnsureBoundToObservedTip passes.
-		const string tipBlockHash = "2222222222222222222222222222222222222222222222222222222222222222";
 		var candidate = new ElementsWalletRefreshCandidate(
 			candidateId,
-			blockHash: tipBlockHash,
+			blockHash: blockHash,
 			blockHeight: 1U,
 			[new ElementsWalletRefreshInput(new string('5', 64))],
 			[new string('5', 64)]);
@@ -617,7 +750,9 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 
 	private static LiquidWalletObservationBatch NativeBatch(
 		string transactionId,
-		ElementsPublicNetworkManifest manifest)
+		ElementsPublicNetworkManifest manifest,
+		LiquidOutPoint[]? inputs = null,
+		ulong? value = 100)
 	{
 		LiquidTransactionId nativeTransactionId = LiquidTransactionId.ParseRpcHex(transactionId);
 		byte[] witnessBinding = Enumerable.Repeat((byte)7, 32).ToArray();
@@ -629,13 +764,13 @@ public sealed class LiquidWalletRefreshCommandServiceTests
 			[LiquidWalletTransactionObservation.Create(
 				nativeTransactionId.ToConsensusBytes(),
 				witnessBinding,
-				[LiquidOutPoint.CreateSpendable(LiquidTransactionId.ParseRpcHex(new string('5', 64)), 0)],
-				[LiquidOwnedOutputObservation.Create(
+				inputs ?? [LiquidOutPoint.CreateSpendable(LiquidTransactionId.ParseRpcHex(new string('5', 64)), 0)],
+				value is null ? [] : [LiquidOwnedOutputObservation.Create(
 					nativeTransactionId.ToConsensusBytes(), 0, witnessBinding,
 					spendKey.GetScriptPubKey(), spendKey.GetCompressedPublicKey(),
 					[0x02, .. Enumerable.Repeat((byte)2, 32)], LiquidKeyBranch.External, 0,
 					WalletWasabi.Liquid.Assets.LiquidAssetId.ParseRpcHex(manifest.PeggedAssetId).ToConsensusBytes(),
-					100)])]);
+					value.Value)])]);
 	}
 
 	private static ElementsWalletRefreshObservation CandidateObservation(

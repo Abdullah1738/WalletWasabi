@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using NBitcoin;
 using WalletWasabi.Liquid.Addresses;
+using WalletWasabi.Liquid.Application;
 using WalletWasabi.Liquid.Cryptography;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
@@ -25,7 +26,7 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 	private readonly Func<string, CancellationToken, Task> _scheduleRefresh;
 	private readonly Func<CancellationToken, Task> _scheduleManualRefresh;
 	private readonly ElementsPublicNetworkManifest _manifest;
-	private readonly string _walletName;
+	private readonly LiquidAuthenticatedWalletSession _session;
 	private string? _cachedChangeAddress;
 	private int _disposed;
 
@@ -40,7 +41,7 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 		ElementsRpcClient rpcClient,
 		string expectedEffectiveFeeAsset,
 		string walletDataDirectory,
-		string walletName,
+		LiquidAuthenticatedWalletSession session,
 		ElementsPublicNetworkManifest manifest,
 		Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<ElementsExpectationBoundRawTransactionBatch>> acquireFundingSource,
 		Func<string, CancellationToken, Task> scheduleRefresh,
@@ -55,7 +56,7 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 		ArgumentNullException.ThrowIfNull(rpcClient);
 		ArgumentException.ThrowIfNullOrEmpty(expectedEffectiveFeeAsset);
 		ArgumentException.ThrowIfNullOrEmpty(walletDataDirectory);
-		ArgumentException.ThrowIfNullOrEmpty(walletName);
+		ArgumentNullException.ThrowIfNull(session);
 		ArgumentNullException.ThrowIfNull(manifest);
 		ArgumentNullException.ThrowIfNull(acquireFundingSource);
 		ArgumentNullException.ThrowIfNull(scheduleRefresh);
@@ -76,7 +77,7 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 		RpcClient = rpcClient;
 		ExpectedEffectiveFeeAsset = expectedEffectiveFeeAsset;
 		WalletDataDirectory = walletDataDirectory;
-		_walletName = walletName;
+		_session = session;
 		_manifest = manifest;
 		_acquireFundingSource = acquireFundingSource;
 		_scheduleRefresh = scheduleRefresh;
@@ -151,9 +152,7 @@ internal sealed class LiquidWalletSendExecutionScope : ILiquidWalletSendExecutio
 
 		try
 		{
-			LiquidWalletInternalIndexAllocation allocation = LiquidWalletInternalIndexAllocator.Allocate(
-				WalletDataDirectory,
-				_walletName,
+			LiquidWalletInternalIndexAllocation allocation = _session.ReserveInternalIndex(
 				ReplayProtectionKey,
 				ExternalWalletNetworkContext);
 			ExtPubKey accountPublicKey = ParseAccountPublicKey(DescriptorString, _manifest);

@@ -229,43 +229,18 @@ internal sealed class LiquidWalletRefreshCommandService
 				: ReferenceEquals(session.Manifest, ElementsPublicNetworkManifest.LiquidTestnet)
 					? LiquidWalletFactsWireV1DescriptorNetworkClass.Test
 					: throw new InvalidOperationException("The refresh manifest has no reviewed descriptor network class.");
-			uint lastIndex = checked((uint)session.LastIndex);
+			uint lastIndex = checked((uint)captured.Owner.CatalogLastIndex);
 			LiquidWalletObservationBatch nativeBatch = _dependencies.ObserveNative(
 				new NativeObservationRequest(sourceEpoch, networkClass, lastIndex, descriptor, slip77, structural));
 
-			// Recent-block discovery on public networks stages every non-coinbase
-			// transaction; only the native observation can prove wallet relevance.
-			// A Confirm row is emitted only for a candidate whose transaction the
-			// native batch actually observed as relevant — at least one owned output,
-			// or at least one input that spends a wallet unspent outpoint (mirroring
-			// the sync session's skip rule: zero owned outputs AND zero wallet spends
-			// means not this wallet's transaction). A candidate that is merely
-			// confirmed (has a BlockHash) but unrelated to the wallet produces an
-			// empty delta, is skipped by the sync session's commit, and must never
-			// reach LiquidWalletState.Confirm, which rejects non-applied
-			// transactions. This preserves confirmation of genuinely-owned
-			// transactions while failing closed on unrelated testnet traffic.
-			var relevantTransactionIds = new HashSet<LiquidTransactionId>();
-			foreach (LiquidWalletTransactionObservation transaction in nativeBatch.GetTransactions())
-			{
-				bool spendsWalletOutpoint = false;
-				if (transaction.OwnedOutputCount == 0)
-				{
-					foreach (LiquidOutPoint input in transaction.GetInputs())
-					{
-						if (captured.State.ContainsUnspent(input))
-						{
-							spendsWalletOutpoint = true;
-							break;
-						}
-					}
-				}
-				if (transaction.OwnedOutputCount > 0 || spendsWalletOutpoint)
-				{
-					relevantTransactionIds.Add(
-						LiquidTransactionId.ParseConsensusBytes(transaction.GetTransactionIdConsensusBytes()));
-				}
-			}
+			// Validate and fold effects first. Applied membership then covers both
+			// replayed no-change sends and new in-batch children, without duplicating
+			// the sync session's relevance rules. Neither fold is published or saved
+			// unless all transaction and confirmation checks succeed.
+			LiquidWalletSyncResult transactionsCommitted = LiquidWalletSyncSession.Open(
+				captured.State, observation.NodeObservation, session.Manifest.PeggedAssetId).Commit(nativeBatch, []);
+			var observedTransactionIds = new HashSet<LiquidTransactionId>(nativeBatch.GetTransactions()
+				.Select(transaction => LiquidTransactionId.ParseConsensusBytes(transaction.GetTransactionIdConsensusBytes())));
 			var confirmations = new List<LiquidWalletSyncConfirmation>();
 			foreach (LiquidWalletSyncBatchPlanner.FetchIntent intent in derivation.Intents)
 			{
@@ -274,7 +249,8 @@ internal sealed class LiquidWalletRefreshCommandService
 				{
 					LiquidTransactionId candidateTransactionId =
 						LiquidTransactionId.ParseRpcHex(candidate.TransactionId);
-					if (relevantTransactionIds.Contains(candidateTransactionId))
+					if (observedTransactionIds.Contains(candidateTransactionId)
+						&& transactionsCommitted.State.ContainsAppliedTransaction(candidateTransactionId))
 					{
 						confirmations.Add(LiquidWalletSyncConfirmation.Create(
 							LiquidWalletSyncConfirmationKind.Confirm,
@@ -284,7 +260,8 @@ internal sealed class LiquidWalletRefreshCommandService
 				}
 			}
 			LiquidWalletSyncResult committed = LiquidWalletSyncSession.Open(
-				captured.State, observation.NodeObservation, session.Manifest.PeggedAssetId).Commit(nativeBatch, confirmations);
+				transactionsCommitted.State, observation.NodeObservation, session.Manifest.PeggedAssetId)
+				.Commit(LiquidWalletObservationBatch.Create([]), confirmations);
 			_dependencies.StageObserver("sync");
 
 			ulong nextGeneration = checked(captured.PersistenceGeneration + 1);
@@ -320,7 +297,7 @@ internal sealed class LiquidWalletRefreshCommandService
 			_dependencies.StageObserver("remove");
 			return new LiquidWalletUiRefreshResult(
 				LiquidWalletUiRefreshStatus.Committed, request.CanonicalWalletId, request.Trigger,
-				request.AcceptedTransactionIdHex, observation.Candidates.Count, committed.AppliedTransactionCount,
+				request.AcceptedTransactionIdHex, observation.Candidates.Count, transactionsCommitted.AppliedTransactionCount,
 				saved.Revision, saved.Generation, request.Trigger == LiquidWalletUiRefreshTrigger.AcceptedSend, published);
 		}
 		finally

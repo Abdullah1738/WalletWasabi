@@ -96,6 +96,29 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 	/// <summary>The persisted internal change-index high-water carried by this owner.</summary>
 	internal ulong InternalIndexHighWater => _allocation.PersistedInternalIndexHighWater;
 
+	// Native catalogs cover both branches inclusively. External high-water is also
+	// the displayed next-receive index; internal high-water is the next unused slot.
+	internal ulong CatalogLastIndex => Math.Max(Math.Max(LastIndex, ExternalIndexHighWater),
+		InternalIndexHighWater == 0 ? 0 : InternalIndexHighWater - 1);
+
+	internal LiquidAuthenticatedWalletStateOwner CreateReceiveReplacement(ExtKey master, byte[] slip77Master)
+	{
+		// The persisted high-water is the displayed current index, not high-water minus one.
+		// Allocate retires that index; its new high-water becomes the next displayed address.
+		ulong index = checked(ExternalIndexHighWater + 1);
+		if (index > LiquidSpendKeyReference.MaximumIndex || CatalogLastIndex > LiquidSpendKeyReference.MaximumIndex)
+		{
+			throw new InvalidOperationException("The Liquid receive issuance exceeds the native catalog bound.");
+		}
+		var allocation = new LiquidWalletExternalIndexAllocation(index, StateRevision,
+			checked(PersistenceGeneration + 1), index, InternalIndexHighWater, State);
+		var receive = LiquidWalletReceiveDerivation.Create(master,
+			ReferenceEquals(_manifest, ElementsPublicNetworkManifest.LiquidMainnet) ? NBitcoin.Network.Main : NBitcoin.Network.TestNet,
+			0, index);
+		return new LiquidAuthenticatedWalletStateOwner(allocation, receive,
+			LiquidSlip77PublicKey.Derive(slip77Master, receive.ScriptPubKey), _walletName, _manifest, NodeExpectation);
+	}
+
 	/// <summary>
 	/// Purely projects a complete replacement owner from a committed
 	/// <paramref name="committedState"/> and its persisted <paramref name="nextGeneration"/>.
@@ -106,7 +129,8 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 	/// </summary>
 	internal LiquidAuthenticatedWalletStateOwner CreateReplacement(
 		LiquidWalletState committedState,
-		ulong nextGeneration)
+		ulong nextGeneration,
+		ulong? internalIndexHighWater = null)
 	{
 		ArgumentNullException.ThrowIfNull(committedState);
 		if (committedState.Revision < StateRevision)
@@ -116,6 +140,10 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 		if (nextGeneration <= PersistenceGeneration)
 		{
 			throw new InvalidOperationException("A replacement owner requires a persistence generation that advances.");
+		}
+		if (internalIndexHighWater < InternalIndexHighWater)
+		{
+			throw new InvalidOperationException("A replacement owner cannot regress the internal index high-water.");
 		}
 		if (!StringComparer.Ordinal.Equals(
 			committedState.PeggedAssetId.CanonicalRpcHex,
@@ -132,7 +160,7 @@ internal sealed class LiquidAuthenticatedWalletStateOwner
 			committedState.Revision,
 			nextGeneration,
 			_allocation.PersistedExternalIndexHighWater,
-			_allocation.PersistedInternalIndexHighWater,
+			internalIndexHighWater ?? _allocation.PersistedInternalIndexHighWater,
 			committedState);
 		// Rebind the durable label set for the current next-receive derivation index
 		// from the committed state. The label map is keyed by the branch-0 index, which

@@ -46,6 +46,15 @@ public sealed class LiquidWalletApplicationClient : IAsyncDisposable
 
 	public Func<LiquidWalletUiSendExecutionRequest, CancellationToken, Task<LiquidWalletUiSendExecutionResult>> SendCommand => _sendCommand;
 
+	/// <summary>Durably advances the displayed receive address once, fenced by the address the caller saw.</summary>
+	public Task<LiquidWalletRuntimeHandoff> IssueNextReceiveAddressAsync(
+		string canonicalWalletId, string expectedConfidentialAddress, CancellationToken cancellationToken)
+	{
+		ThrowIfDisposed();
+		return Task.Run(() => LiquidWalletReceiveIssuanceCommand.Execute(
+			_runtimeProvider, canonicalWalletId, expectedConfidentialAddress, cancellationToken), cancellationToken);
+	}
+
 	/// <summary>
 	/// The single narrow public surface the Fluent receive-label write path
 	/// calls: persists the durable label set bound to the wallet's current
@@ -71,11 +80,11 @@ public sealed class LiquidWalletApplicationClient : IAsyncDisposable
 			?? throw new InvalidOperationException("No authenticated Liquid wallet session is open for the named wallet.");
 
 		uint index = checked((uint)session.StateOwner.LastIndex);
-		await _setReceiveLabelsCommand(
+		await Task.Run(() => _setReceiveLabelsCommand(
 			new LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest(
 				request.CanonicalWalletId,
 				index,
-				request.Labels)).ConfigureAwait(false);
+				request.Labels, request.ExpectedConfidentialAddress, cancellationToken)), cancellationToken).ConfigureAwait(false);
 	}
 
 	public static LiquidWalletApplicationClient Create(LiquidWalletApplicationOptions options)

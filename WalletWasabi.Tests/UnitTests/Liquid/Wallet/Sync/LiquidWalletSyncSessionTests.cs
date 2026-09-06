@@ -222,11 +222,8 @@ public class LiquidWalletSyncSessionTests
 	[Fact]
 	public void CommitRejectsSpendOfUnavailableOutpoint()
 	{
-		// Two observations in one batch both spend the same base-state unspent
-		// outpoint. The intersection marks it spent in both deltas (the base
-		// state still contains it), so the first Apply consumes it and the
-		// second Apply rejects the now-unavailable spend; the whole session
-		// fails closed with no partial application.
+		// Both observations spend the same known wallet output. Consuming it
+		// must not hide it from the second delta's unavailable-spend guard.
 		LiquidTransactionId receiveId = Tx('a');
 		LiquidOwnedOutput received = Output(receiveId, 0, PeggedAsset, 100);
 		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset)
@@ -344,6 +341,139 @@ public class LiquidWalletSyncSessionTests
 		Assert.True(result.State.ContainsUnspent(received.OutPoint));
 		Assert.Equal(100, result.State.QueryAssetBalance(1, PeggedAsset).AtomicUnits);
 		Assert.Equal(1, result.State.AppliedTransactionCount);
+	}
+
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public void OutgoingReplayPreservesEffectsAndRepeatedConfirmation(bool withChange)
+	{
+		LiquidTransactionId receiveId = Tx('a');
+		LiquidTransactionId spendId = Tx('b');
+		LiquidOutPoint received = LiquidOutPoint.CreateSpendable(receiveId, 0);
+		LiquidWalletState state = ReceivedBaseState(receiveId, 100);
+		LiquidWalletObservationBatch batch = Batch(Observation(spendId,
+			withChange ? [OwnedOutput(spendId, 0, PeggedAsset, 40)] : [], [received]));
+		LiquidWalletSyncResult first = Open(state).Commit(batch, []);
+		Assert.Equal(2ul, first.ResultRevision);
+		Assert.Equal(1, first.AppliedTransactionCount);
+		for (int index = 0; index < 3; index++)
+		{
+			LiquidWalletSyncResult replay = Open(first.State).Commit(batch, []);
+			Assert.Same(first.State, replay.State);
+			Assert.Equal(0, replay.AppliedTransactionCount);
+			Assert.Equal(2ul, replay.ResultRevision);
+		}
+
+		LiquidConfirmation confirmation = LiquidConfirmation.Create(ConfirmedBlockHashHex, 7);
+		LiquidWalletSyncConfirmation[] confirmations =
+			[LiquidWalletSyncConfirmation.Create(LiquidWalletSyncConfirmationKind.Confirm, spendId, confirmation)];
+		LiquidWalletSyncResult confirmed = Open(first.State).Commit(batch, confirmations);
+		Assert.Equal(3ul, confirmed.ResultRevision);
+		Assert.Equal(0, confirmed.AppliedTransactionCount);
+		Assert.Equal(1, confirmed.ConfirmationCount);
+		LiquidWalletState restored = LiquidWalletState.RestoreReplaySnapshot(confirmed.State.ExportReplaySnapshot());
+		LiquidWalletSyncResult repeated = Open(restored).Commit(batch, confirmations);
+		Assert.Same(restored, repeated.State);
+		Assert.Equal(0, repeated.ConfirmationCount);
+		Assert.Equal(2, repeated.State.AppliedTransactionCount);
+		Assert.False(repeated.State.ContainsUnspent(received));
+		Assert.Equal(withChange ? 1 : 0, repeated.State.UnspentOutputCount);
+		Assert.Equal(withChange ? 40 : 0, repeated.State.QueryAssetBalance(3, PeggedAsset).AtomicUnits);
+		Assert.Equal(new[] { received }, repeated.State.GetAppliedDelta(spendId)!.GetSpentOutPoints());
+		Assert.True(repeated.State.TryGetConfirmation(spendId, out LiquidConfirmation? recorded));
+		Assert.Equal(confirmation, recorded);
+	}
+
+	[Theory]
+	[InlineData(false, false)]
+	[InlineData(false, true)]
+	[InlineData(true, false)]
+	[InlineData(true, true)]
+	public void ParentChildBatchFoldsDependenciesBeforeSpends(bool childSortsFirst, bool withChange)
+	{
+		LiquidTransactionId parentId = Tx(childSortsFirst ? 'b' : 'a');
+		LiquidTransactionId childId = Tx(childSortsFirst ? 'a' : 'b');
+		LiquidOutPoint received = LiquidOutPoint.CreateSpendable(parentId, 0);
+		LiquidWalletTransactionObservation parent = Observation(parentId,
+			[OwnedOutput(parentId, 0, PeggedAsset, 100)], [LiquidOutPoint.CreateSpendable(Tx('9'), 0)]);
+		LiquidWalletTransactionObservation child = Observation(childId,
+			withChange ? [OwnedOutput(childId, 0, PeggedAsset, 40)] : [], [received]);
+		LiquidWalletObservationBatch batch = childSortsFirst ? Batch(child, parent) : Batch(parent, child);
+		LiquidWalletState empty = LiquidWalletState.Empty(PeggedAsset);
+		LiquidWalletSyncResult result = Open(empty).Commit(batch, []);
+		Assert.Equal(2, result.AppliedTransactionCount);
+		Assert.Equal(2ul, result.ResultRevision);
+		Assert.False(result.State.ContainsUnspent(received));
+		Assert.Equal(withChange ? 1 : 0, result.State.UnspentOutputCount);
+		Assert.Equal(withChange ? 40 : 0, result.State.QueryAssetBalance(2, PeggedAsset).AtomicUnits);
+		Assert.Equal(new[] { received }, result.State.GetAppliedDelta(childId)!.GetSpentOutPoints());
+		Assert.Same(result.State, Open(result.State).Commit(batch, []).State);
+		Assert.Equal(0ul, empty.Revision);
+	}
+
+	[Theory]
+	[InlineData("missing-input", false)]
+	[InlineData("missing-input", true)]
+	[InlineData("extra-input", false)]
+	[InlineData("extra-input", true)]
+	[InlineData("missing-output", true)]
+	[InlineData("changed-value", true)]
+	public void OutgoingReplayRejectsContradictoryEffects(string contradiction, bool withChange)
+	{
+		LiquidTransactionId receiveId = Tx('a');
+		LiquidTransactionId spendId = Tx('b');
+		LiquidOutPoint received = LiquidOutPoint.CreateSpendable(receiveId, 0);
+		LiquidOutPoint extra = LiquidOutPoint.CreateSpendable(receiveId, 1);
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset).Apply(0,
+			Delta(receiveId, [], [Output(receiveId, 0, PeggedAsset, 100), Output(receiveId, 1, PeggedAsset, 50)]));
+		state = Open(state).Commit(Batch(Observation(spendId,
+			withChange ? [OwnedOutput(spendId, 0, PeggedAsset, 40)] : [], [received])), []).State;
+		LiquidOutPoint[] inputs = contradiction == "missing-input"
+			? [LiquidOutPoint.CreateSpendable(Tx('9'), 0)]
+			: contradiction == "extra-input" ? [received, extra] : [received];
+		LiquidOwnedOutputObservation[] outputs = !withChange || contradiction == "missing-output"
+			? [] : [OwnedOutput(spendId, 0, PeggedAsset, contradiction == "changed-value" ? 41ul : 40ul)];
+		AssertBaseStateUntouched(state, () => Open(state).Commit(Batch(Observation(spendId, outputs, inputs)), []));
+	}
+
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public void CommitRejectsCompetingSpendsOfNewParent(bool withChange)
+	{
+		LiquidTransactionId parentId = Tx('c');
+		LiquidOutPoint received = LiquidOutPoint.CreateSpendable(parentId, 0);
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
+		LiquidWalletObservationBatch batch = Batch(
+			Observation(Tx('a'), withChange ? [OwnedOutput(Tx('a'), 0, PeggedAsset, 40)] : [], [received]),
+			Observation(Tx('b'), withChange ? [OwnedOutput(Tx('b'), 0, PeggedAsset, 40)] : [], [received]),
+			Observation(parentId, [OwnedOutput(parentId, 0, PeggedAsset, 100)]));
+		AssertBaseStateUntouched(state, () => Open(state).Commit(batch, []));
+	}
+
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public void CommitRejectsCyclicOwnedDependencies(bool selfReference)
+	{
+		LiquidTransactionId firstId = Tx('a');
+		LiquidTransactionId secondId = Tx('b');
+		LiquidWalletTransactionObservation first = Observation(firstId, [OwnedOutput(firstId, 0, PeggedAsset, 100)],
+			[LiquidOutPoint.CreateSpendable(selfReference ? firstId : secondId, 0)]);
+		LiquidWalletTransactionObservation second = Observation(secondId, [OwnedOutput(secondId, 0, PeggedAsset, 100)],
+			[LiquidOutPoint.CreateSpendable(firstId, 0)]);
+		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
+		AssertBaseStateUntouched(state, () => Open(state).Commit(selfReference ? Batch(first) : Batch(first, second), []));
+	}
+
+	[Fact]
+	public void CommitRejectsNewSpendOfPreviouslyConsumedOutput()
+	{
+		LiquidOutPoint received = LiquidOutPoint.CreateSpendable(Tx('a'), 0);
+		LiquidWalletState state = ReceivedBaseState(Tx('a'), 100);
+		state = Open(state).Commit(Batch(Observation(Tx('b'), [], [received])), []).State;
+		AssertBaseStateUntouched(state, () => Open(state).Commit(Batch(Observation(Tx('c'), [], [received])), []));
 	}
 
 	[Fact]
@@ -747,7 +877,7 @@ public class LiquidWalletSyncSessionTests
 		LiquidWalletTransactionObservation.Create(
 			transactionId.ToConsensusBytes(),
 			new byte[LiquidTransactionWitnessBinding.ByteLength],
-			inputs ?? [LiquidOutPoint.CreateSpendable(transactionId, 0)],
+			inputs ?? [LiquidOutPoint.CreateSpendable(Tx('9'), 0)],
 			ownedOutputs);
 
 	private static LiquidOwnedOutputObservation OwnedOutput(

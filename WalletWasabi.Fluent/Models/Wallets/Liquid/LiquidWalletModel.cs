@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using ReactiveUI;
 using WalletWasabi.Fluent.Infrastructure;
 using WalletWasabi.Liquid.Network;
+using WalletWasabi.Liquid.Application;
 using WalletWasabi.Liquid.Wallet.Ui;
 using System.Collections.Generic;
 
@@ -35,10 +36,11 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	private readonly BehaviorSubject<LiquidWalletUiHistorySnapshot?> _history;
 	private readonly BehaviorSubject<bool> _historyLoaded;
 	private readonly BehaviorSubject<LiquidWalletUiSelectableOutputsSnapshot> _selectableOutputs;
-	private readonly byte[] _nextReceiveScriptPubKey;
-	private readonly byte[] _nextReceiveBlindingPublicKey;
-	private readonly string[] _nextReceiveLabels;
+	private readonly BehaviorSubject<LiquidWalletUiReceiveMaterial> _receiveMaterial;
 	private readonly Func<LiquidWalletUiSetReceiveLabelsRequest, CancellationToken, Task>? _setNextReceiveLabelsCommand;
+	private readonly Func<string, string, CancellationToken, Task<LiquidWalletRuntimeHandoff>>? _issueReceiveCommand;
+	private readonly Func<LiquidWalletRuntimeHandoff?>? _currentHandoff;
+	private readonly BehaviorSubject<bool> _receiveMaterialInvalidated = new(false);
 
 	public LiquidWalletModel(
 		string name,
@@ -48,7 +50,9 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 		ReadOnlyMemory<byte> nextReceiveBlindingPublicKey,
 		IReadOnlyList<string>? nextReceiveLabels = null,
 		Func<LiquidWalletUiSetReceiveLabelsRequest, CancellationToken, Task>? setNextReceiveLabelsCommand = null,
-		LiquidWalletUiSelectableOutputsSnapshot? initialSelectableOutputs = null)
+		LiquidWalletUiSelectableOutputsSnapshot? initialSelectableOutputs = null,
+		Func<string, string, CancellationToken, Task<LiquidWalletRuntimeHandoff>>? issueReceiveCommand = null,
+		Func<LiquidWalletRuntimeHandoff?>? currentHandoff = null)
 	{
 		ArgumentException.ThrowIfNullOrEmpty(name);
 		ArgumentNullException.ThrowIfNull(manifest);
@@ -58,10 +62,10 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 		_manifest = manifest;
 		NetworkManifestId = initialSnapshot.NetworkManifestId;
 		Snapshot = initialSnapshot;
-		_nextReceiveScriptPubKey = nextReceiveScriptPubKey.ToArray();
-		_nextReceiveBlindingPublicKey = nextReceiveBlindingPublicKey.ToArray();
-		_nextReceiveLabels = nextReceiveLabels?.ToArray() ?? [];
+		_receiveMaterial = new(new LiquidWalletUiReceiveMaterial(nextReceiveScriptPubKey.Span, nextReceiveBlindingPublicKey.Span, nextReceiveLabels));
 		_setNextReceiveLabelsCommand = setNextReceiveLabelsCommand;
+		_issueReceiveCommand = issueReceiveCommand;
+		_currentHandoff = currentHandoff;
 
 		_balances = new BehaviorSubject<LiquidWalletUiSnapshot>(initialSnapshot);
 		_loaded = new BehaviorSubject<bool>(true);
@@ -218,7 +222,46 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	/// open time. The receive command calls this.
 	/// </summary>
 	public LiquidWalletUiReceiveAddress CreateNextReceiveAddress() =>
-		CreateReceiveAddress(_nextReceiveScriptPubKey, _nextReceiveBlindingPublicKey);
+		IsReceiveMaterialInvalidated
+			? throw new InvalidOperationException("Liquid receive material is unavailable until the wallet is reopened.")
+			: CreateReceiveAddress(_receiveMaterial.Value.NextReceiveScriptPubKey, _receiveMaterial.Value.NextReceiveBlindingPublicKey);
+
+	public IObservable<LiquidWalletUiReceiveMaterial> ReceiveMaterial => _receiveMaterial.AsObservable();
+
+	public void RefreshReceiveMaterial(LiquidWalletRuntimeHandoff handoff)
+	{
+		if (handoff.CanonicalWalletId != Name || handoff.NetworkManifestId != NetworkManifestId)
+		{
+			throw new InvalidOperationException("The Liquid receive handoff does not match this wallet.");
+		}
+		_receiveMaterial.OnNext(handoff.ReceiveMaterial);
+	}
+
+	public bool IsReceiveMaterialInvalidated => _receiveMaterialInvalidated.Value;
+	public IObservable<bool> ReceiveMaterialInvalidated => _receiveMaterialInvalidated.AsObservable();
+
+	public void InvalidateReceiveMaterial() => _receiveMaterialInvalidated.OnNext(true);
+
+	public async Task IssueNextReceiveAddressAsync(string expectedAddress, CancellationToken cancellationToken)
+	{
+		if (IsReceiveMaterialInvalidated)
+			throw new InvalidOperationException("Liquid receive material is unavailable until the wallet is reopened.");
+		var command = _issueReceiveCommand ?? throw new InvalidOperationException("The Liquid receive issuance command is not wired.");
+		try
+		{
+			var handoff = await command(Name, expectedAddress, cancellationToken).ConfigureAwait(false);
+			RefreshReceiveMaterial(handoff);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (LiquidWalletReceiveIssuanceCommand.LiquidWalletReceiveIssuanceUncertainException)
+		{
+			InvalidateReceiveMaterial();
+			throw;
+		}
+	}
 
 	/// <summary>
 	/// The durable label set bound to the wallet's next receive derivation
@@ -226,7 +269,7 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	/// the address is unlabeled). Read-only projection; labels carry no key
 	/// material.
 	/// </summary>
-	public IReadOnlyList<string> NextReceiveLabels => [.. _nextReceiveLabels];
+	public IReadOnlyList<string> NextReceiveLabels => _receiveMaterial.Value.NextReceiveLabels;
 
 	/// <summary>
 	/// Persists a durable label set for the wallet's current next-receive
@@ -237,18 +280,33 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	/// session layer. Fail-closed: any rejection from the landed surface
 	/// surfaces as-is. Throws when no write surface is wired.
 	/// </summary>
-	public Task SetNextReceiveLabelsAsync(
+	public async Task SetNextReceiveLabelsAsync(
 		IReadOnlyList<string> labels,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		string expectedAddress)
 	{
 		ArgumentNullException.ThrowIfNull(labels);
+		if (IsReceiveMaterialInvalidated)
+			throw new InvalidOperationException("Liquid receive material is unavailable until the wallet is reopened.");
 		if (_setNextReceiveLabelsCommand is not { } command)
 		{
 			throw new InvalidOperationException(
 				"The Liquid receive-label write surface is not wired for this wallet session.");
 		}
 
-		return command(new LiquidWalletUiSetReceiveLabelsRequest(Name, labels), cancellationToken);
+		try
+		{
+			await command(new LiquidWalletUiSetReceiveLabelsRequest(Name, labels, expectedAddress), cancellationToken).ConfigureAwait(false);
+		}
+		catch (LiquidWalletReceiveIssuanceCommand.LiquidWalletReceiveIssuanceUncertainException)
+		{
+			InvalidateReceiveMaterial();
+			throw;
+		}
+		if (_currentHandoff?.Invoke() is { } handoff)
+		{
+			RefreshReceiveMaterial(handoff);
+		}
 	}
 
 	/// <summary>
@@ -303,6 +361,8 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 		_history.Dispose();
 		_historyLoaded.Dispose();
 		_selectableOutputs.Dispose();
+		_receiveMaterial.Dispose();
+		_receiveMaterialInvalidated.Dispose();
 	}
 
 	// An empty selectable set at the balance snapshot's revision: an empty

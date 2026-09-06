@@ -818,6 +818,12 @@ internal sealed class LiquidWalletState
 		return _unspentOutputs.ContainsKey(outPoint);
 	}
 
+	internal bool ContainsKnownOutput(LiquidOutPoint outPoint)
+	{
+		ArgumentNullException.ThrowIfNull(outPoint);
+		return _knownOutputs.ContainsKey(outPoint);
+	}
+
 	public bool TryGetConfirmation(
 		LiquidTransactionId transactionId,
 		out LiquidConfirmation? confirmation)

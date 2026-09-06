@@ -19,16 +19,20 @@ public sealed class LiquidWalletUiSetReceiveLabelsRequest
 {
 	public LiquidWalletUiSetReceiveLabelsRequest(
 		string canonicalWalletId,
-		IReadOnlyList<string> labels)
+		IReadOnlyList<string> labels,
+		string expectedConfidentialAddress)
 	{
 		ArgumentException.ThrowIfNullOrEmpty(canonicalWalletId);
 		ArgumentNullException.ThrowIfNull(labels);
+		ArgumentException.ThrowIfNullOrEmpty(expectedConfidentialAddress);
 
 		CanonicalWalletId = canonicalWalletId;
 		Labels = labels.ToArray();
+		ExpectedConfidentialAddress = expectedConfidentialAddress;
 	}
 
 	public string CanonicalWalletId { get; }
+	public string ExpectedConfidentialAddress { get; }
 
 	/// <summary>
 	/// The label set to bind to the current next-receive derivation index, as

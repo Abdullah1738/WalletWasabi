@@ -567,7 +567,7 @@ public class LiquidWalletRecoverySyncTests
 		LiquidWalletTransactionObservation.Create(
 			transactionId.ToConsensusBytes(),
 			new byte[LiquidTransactionWitnessBinding.ByteLength],
-			inputs ?? [LiquidOutPoint.CreateSpendable(transactionId, 0)],
+			inputs ?? [LiquidOutPoint.CreateSpendable(Tx('9'), 0)],
 			ownedOutputs);
 
 	private static LiquidOwnedOutputObservation OwnedOutput(

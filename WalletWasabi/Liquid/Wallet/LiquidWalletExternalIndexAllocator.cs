@@ -94,10 +94,13 @@ public static class LiquidWalletExternalIndexAllocator
 	/// initializer cannot interleave and every other failure keeps the landed fail-closed
 	/// exception surface. Opening a wallet is idempotent with respect to the receive index:
 	/// this loads the persisted state and presents the current next-receive index — the first
-	/// never-issued external index, exactly the persisted high-water — WITHOUT advancing the
+	/// current external index, exactly the persisted high-water — WITHOUT advancing the
 	/// high-water or persisting anything. The next-receive address is therefore
 	/// deterministic across opens that observe no intervening issuance or received funds;
-	/// durable issuance remains the explicit <see cref="Allocate"/> operation.
+	/// The application New Address transition calls <see cref="Allocate"/> once to retire H,
+	/// then displays the persisted H+1 (not Allocate's returned H). Thus no schema change is
+	/// needed: H is the application's current index, while Allocate retains its low-level
+	/// next-slot semantics. A failed publication may leave a durable gap; it never reuses H.
 	/// </summary>
 	internal static LiquidWalletExternalIndexAllocation AllocateWithFirstOpenInitialization(
 		string walletDataDirectory,

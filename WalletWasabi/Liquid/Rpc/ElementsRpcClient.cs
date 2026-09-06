@@ -1800,6 +1800,11 @@ public sealed class ElementsRpcClient : IDisposable
 			MaxRawTransactionHexBytes,
 			"the raw-transaction response limit",
 			cancellationToken).ConfigureAwait(false);
+		return Convert.FromHexString(ValidateRawTransactionHex(result));
+	}
+
+	private static string ValidateRawTransactionHex(JsonElement result)
+	{
 		if (result.ValueKind != JsonValueKind.String || result.GetString() is not { } text)
 		{
 			throw InvalidResult("getrawtransaction", "a canonical raw transaction is required");
@@ -1823,7 +1828,7 @@ public sealed class ElementsRpcClient : IDisposable
 			}
 		}
 
-		return Convert.FromHexString(text);
+		return text;
 	}
 
 	private async Task<JsonElement> CallWithResponseLimitsAsync(
@@ -1880,8 +1885,8 @@ public sealed class ElementsRpcClient : IDisposable
 	/// cap of MaxRawTransactionCount, raw
 	/// fetches, the returned candidates, block metadata, and confirmations cover only the final
 	/// supported candidates; skipped rows are never raw-fetched or staged native. A dependency that
-	/// is itself a supported candidate is raw-fetched exactly once as the candidate and never again
-	/// in the dependency loop, so every returned raw transaction ID is unique. Any missing,
+	/// is itself a supported candidate reuses its validated verbose hex, as do all supported candidates,
+	/// with no second fetch in either raw loop, so every returned raw transaction ID is unique. Any missing,
 	/// malformed, or conflicting metadata/raw bytes, and any generation change after status, fee,
 	/// mempool, every block hash, every block, every verbose lookup, every raw fetch, and the final
 	/// status, fails the whole acquisition. No managed transaction parser, no consensus claim, no
@@ -2117,6 +2122,8 @@ public sealed class ElementsRpcClient : IDisposable
 		// is terminal/fail-closed, never silently filtered.
 		var supportedCandidates = new List<ElementsWalletRefreshCandidate>(MaxRefreshSelectedCandidates);
 		var supportedIds = new List<string>(MaxRefreshSelectedCandidates);
+		var candidateRawHex = new Dictionary<string, string>(StringComparer.Ordinal);
+		long retainedCandidateBytes = 0;
 		var distinctDependencies = new HashSet<string>(StringComparer.Ordinal);
 		for (int index = 0; index < selectedIds.Count && supportedIds.Count < MaxRefreshSelectedCandidates; index++)
 		{
@@ -2157,6 +2164,13 @@ public sealed class ElementsRpcClient : IDisposable
 					acquisition,
 					"a non-skippable candidate carries a coinbase input");
 			}
+			string hex = ValidateRawTransactionHex(RequiredProperty(verbose, "hex", "getrawtransaction"));
+			retainedCandidateBytes = checked(retainedCandidateBytes + hex.Length / 2);
+			if (retainedCandidateBytes > MaxRawTransactionBatchBytes)
+			{
+				throw InvalidResult(acquisition, "the aggregate raw transaction byte limit was exceeded");
+			}
+			candidateRawHex.Add(candidateId, hex);
 			distinctDependencies.UnionWith(candidateDependencies);
 			supportedCandidates.Add(candidate);
 			supportedIds.Add(candidateId);
@@ -2164,7 +2178,7 @@ public sealed class ElementsRpcClient : IDisposable
 
 		// Global candidate+dependency cap before any raw fetch, over the final supported candidates
 		// only. A supported candidate can itself be a dependency of another supported candidate; such an
-		// ID is raw-fetched exactly once as a candidate, so dependencies already in the supported set are
+		// ID reuses its verbose hex as a candidate, so dependencies already in the supported set are
 		// excluded from both the count and the dependency fetch loop. Exceeding the cap is terminal,
 		// never a reason to silently omit a dependency. Skipped coinbase rows contribute neither a
 		// candidate nor a dependency.
@@ -2185,7 +2199,7 @@ public sealed class ElementsRpcClient : IDisposable
 				"the candidate-plus-dependency transaction limit was exceeded");
 		}
 
-		// Complete raw fetch of every supported candidate and every required distinct dependency under
+		// Materialize validated candidate hex and fetch every required distinct external dependency under
 		// the landed per-transaction MaxRawTransactionBytes and aggregate MaxRawTransactionBatchBytes
 		// bounds. Skipped coinbases are never raw-fetched or passed native.
 		var rawTransactions = new List<ElementsWalletRefreshRawTransaction>(globalRawCount);
@@ -2194,25 +2208,28 @@ public sealed class ElementsRpcClient : IDisposable
 		{
 			foreach (string id in supportedIds)
 			{
-				blockHashByCandidate.TryGetValue(id, out string? blockHash);
-				byte[] bytes = await FetchRefreshRawTransactionAsync(
-					id,
-					blockHash,
-					generation,
-					acquisition,
-					hasGenerationApi,
-					cancellationToken).ConfigureAwait(false);
-				aggregateBytes = checked(aggregateBytes + bytes.Length);
-				if (aggregateBytes > MaxRawTransactionBatchBytes)
+				cancellationToken.ThrowIfCancellationRequested();
+				byte[] bytes = Convert.FromHexString(candidateRawHex[id]);
+				candidateRawHex.Remove(id);
+				try
 				{
-					throw InvalidResult(acquisition, "the aggregate raw transaction byte limit was exceeded");
+					// Reuse removes only the RPC, not the per-raw generation fence.
+					await EnsureRefreshGenerationAsync(generation, acquisition, hasGenerationApi, cancellationToken).ConfigureAwait(false);
+					aggregateBytes = checked(aggregateBytes + bytes.Length);
+					if (aggregateBytes > MaxRawTransactionBatchBytes)
+					{
+						throw InvalidResult(acquisition, "the aggregate raw transaction byte limit was exceeded");
+					}
+					rawTransactions.Add(new ElementsWalletRefreshRawTransaction(id, bytes));
 				}
-				rawTransactions.Add(new ElementsWalletRefreshRawTransaction(id, bytes));
+				finally
+				{
+					CryptographicOperations.ZeroMemory(bytes);
+				}
 			}
 			foreach (string id in distinctDependencies.OrderBy(static d => d, StringComparer.Ordinal))
 			{
-				// A dependency that is itself a supported candidate was already raw-fetched in the
-				// candidate loop above; every global raw ID is fetched exactly once.
+				// Candidate dependencies were already materialized above; only external IDs need fetching.
 				if (supportedSet.Contains(id))
 				{
 					continue;
@@ -2224,12 +2241,19 @@ public sealed class ElementsRpcClient : IDisposable
 					acquisition,
 					hasGenerationApi,
 					cancellationToken).ConfigureAwait(false);
-				aggregateBytes = checked(aggregateBytes + bytes.Length);
-				if (aggregateBytes > MaxRawTransactionBatchBytes)
+				try
 				{
-					throw InvalidResult(acquisition, "the aggregate raw transaction byte limit was exceeded");
+					aggregateBytes = checked(aggregateBytes + bytes.Length);
+					if (aggregateBytes > MaxRawTransactionBatchBytes)
+					{
+						throw InvalidResult(acquisition, "the aggregate raw transaction byte limit was exceeded");
+					}
+					rawTransactions.Add(new ElementsWalletRefreshRawTransaction(id, bytes));
 				}
-				rawTransactions.Add(new ElementsWalletRefreshRawTransaction(id, bytes));
+				finally
+				{
+					CryptographicOperations.ZeroMemory(bytes);
+				}
 			}
 
 			// The final fence stays inside the disposal region so a fence trip still disposes every
@@ -2274,8 +2298,16 @@ public sealed class ElementsRpcClient : IDisposable
 	{
 		var request = new ElementsRawTransactionRequest(transactionId, blockHash);
 		byte[] bytes = await GetRawTransactionBytesCoreAsync(request, cancellationToken).ConfigureAwait(false);
-		await EnsureRefreshGenerationAsync(generation, acquisition, hasGenerationApi, cancellationToken).ConfigureAwait(false);
-		return bytes;
+		try
+		{
+			await EnsureRefreshGenerationAsync(generation, acquisition, hasGenerationApi, cancellationToken).ConfigureAwait(false);
+			return bytes;
+		}
+		catch
+		{
+			CryptographicOperations.ZeroMemory(bytes);
+			throw;
+		}
 	}
 
 	private async Task EnsureRefreshGenerationAsync(
@@ -2787,7 +2819,7 @@ public sealed class ElementsRpcClient : IDisposable
 	// covers 16_384 transactions at a few KB each while remaining a finite fail-closed bound.
 	private const int MaxRawTransactionBatchBytes = 268_435_456;
 
-	// Candidate + distinct-dependency raw fetch count. Each supported candidate costs one raw fetch
+	// Candidate + distinct-dependency raw count. Each supported candidate contributes its verbose hex
 	// plus its distinct previous-transaction dependencies; 2× the candidate cap covers a candidate set
 	// whose every member pulls a distinct dependency, with no double-counting of shared dependencies.
 	private const int MaxRawTransactionCount = 16_384;

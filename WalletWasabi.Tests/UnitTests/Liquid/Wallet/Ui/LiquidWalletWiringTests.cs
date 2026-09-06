@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Reactive.Threading.Tasks;
+using System.Reactive.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -549,7 +550,8 @@ public class LiquidWalletWiringTests
 		long peggedAtomic,
 		long? issuedAtomic = null,
 		IReadOnlyList<string>? nextReceiveLabels = null,
-		Func<LiquidWalletUiSetReceiveLabelsRequest, CancellationToken, Task>? setNextReceiveLabelsCommand = null)
+		Func<LiquidWalletUiSetReceiveLabelsRequest, CancellationToken, Task>? setNextReceiveLabelsCommand = null,
+		Func<string, string, CancellationToken, Task<LiquidWalletRuntimeHandoff>>? issueReceiveCommand = null)
 	{
 		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
 		ulong revision = 0;
@@ -582,7 +584,8 @@ public class LiquidWalletWiringTests
 			BlindingKey,
 			nextReceiveLabels,
 			setNextReceiveLabelsCommand,
-			selectableOutputs);
+			selectableOutputs,
+			issueReceiveCommand);
 	}
 
 	// Wraps a wallet state in the landed external-index allocation the
@@ -1111,6 +1114,151 @@ public class LiquidWalletWiringTests
 		finally
 		{
 			window.Close();
+		}
+	}
+
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public async Task ReceiveViewNewAddressUpdatesAddressAndQrThroughInjectedIssuanceAsync()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using ServicesScope _ = InstallTestServices(uiContext.Services.UiConfig);
+		using var nextKey = new Key();
+		LiquidWalletUiReceiveMaterial next = new(
+			LiquidSpendKeyReference.Create(nextKey.PubKey.ToBytes(), LiquidKeyBranch.External, 1).GetScriptPubKey(), nextKey.PubKey.ToBytes());
+		LiquidWalletRuntimeHandoff? issued = null;
+		LiquidWalletModel? model = null;
+		Task<LiquidWalletRuntimeHandoff> Issue(string wallet, string expected, CancellationToken token)
+		{
+			issued = new LiquidWalletRuntimeHandoff(wallet, Manifest.ManifestId, model!.Snapshot!, model.SelectableOutputsSnapshot!,
+				CreateHistory(wallet, model.Snapshot!.Revision), next);
+			return Task.FromResult(issued);
+		}
+		using (model = CreateModel("liquid-recv-issue", 1_000, issueReceiveCommand: Issue))
+		{
+		LiquidReceiveViewModel receive = new(uiContext, model);
+		receive.OnNavigatedTo(false);
+		string oldAddress = receive.ConfidentialAddressText;
+		IObservable<bool[,]>? oldQr = receive.QrCode;
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidReceiveView { DataContext = receive };
+		var window = new Avalonia.Controls.Window { Width = 800, Height = 600, Content = view };
+		window.Show();
+		try
+		{
+			view.Measure(new Avalonia.Size(800, 600));
+			view.Arrange(new Avalonia.Rect(0, 0, 800, 600));
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			await receive.NewAddress.Execute().ToTask();
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.NotNull(issued);
+			Assert.NotEqual(oldAddress, receive.ConfidentialAddressText);
+			Assert.NotSame(oldQr, receive.QrCode);
+			Assert.True(await receive.NewAddress.CanExecute.Take(1).ToTask());
+		}
+		finally { window.Close(); }
+		}
+	}
+
+	[Avalonia.Headless.XUnit.AvaloniaTheory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task ReceiveViewUncertainIssuanceInvalidatesAllWriteCommandsAndStaysStickyAsync(bool labels)
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using ServicesScope _ = InstallTestServices(uiContext.Services.UiConfig);
+		Task<LiquidWalletRuntimeHandoff> Issue(string wallet, string expected, CancellationToken token) =>
+			throw new LiquidWalletReceiveIssuanceCommand.LiquidWalletReceiveIssuanceUncertainException("uncertain", new InvalidOperationException());
+		Task SetLabels(LiquidWalletUiSetReceiveLabelsRequest request, CancellationToken token) =>
+			throw new LiquidWalletReceiveIssuanceCommand.LiquidWalletReceiveIssuanceUncertainException("uncertain", new InvalidOperationException());
+		using LiquidWalletModel model = CreateModel("liquid-recv-uncertain", 1_000,
+			issueReceiveCommand: Issue, setNextReceiveLabelsCommand: SetLabels);
+		LiquidReceiveViewModel receive = new(uiContext, model);
+		receive.OnNavigatedTo(false);
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidReceiveView { DataContext = receive };
+		var window = new Avalonia.Controls.Window { Width = 800, Height = 600, Content = view };
+		window.Show();
+		try
+		{
+			view.Measure(new Avalonia.Size(800, 600));
+			view.Arrange(new Avalonia.Rect(0, 0, 800, 600));
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			var qr = view.GetVisualDescendants().OfType<WalletWasabi.Fluent.Controls.QrCode>().Single();
+			// Prime the real control's cached matrix before invalidating the observable source.
+			qr.Matrix = await receive.QrCode!.FirstAsync().ToTask();
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.True(qr.IsEffectivelyVisible);
+			await (labels ? receive.SaveLabel : receive.NewAddress).Execute().ToTask();
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.True(receive.ReceiveMaterialUnavailable);
+			Assert.Equal("", receive.ConfidentialAddressText);
+			Assert.Equal("", receive.UnconfidentialAddressText);
+			Assert.NotNull(receive.LabelSaveErrorText);
+			Assert.False(receive.CopyAddressCommand.CanExecute(null));
+			Assert.False(await receive.NewAddress.CanExecute.Take(1).ToTask());
+			Assert.False(await receive.SaveLabel.CanExecute.Take(1).ToTask());
+			Assert.Null(receive.QrCode);
+			Assert.False(qr.IsEffectivelyVisible);
+			LiquidReceiveViewModel reopened = new(uiContext, model);
+			reopened.OnNavigatedTo(false);
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.True(reopened.ReceiveMaterialUnavailable);
+		}
+		finally { window.Close(); }
+	}
+
+	[Avalonia.Headless.XUnit.AvaloniaTheory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task ReceiveViewOpenedDuringPendingWriteObservesLaterInvalidationAsync(bool labels)
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using ServicesScope _ = InstallTestServices(uiContext.Services.UiConfig);
+		var completion = new TaskCompletionSource<LiquidWalletRuntimeHandoff>(TaskCreationOptions.RunContinuationsAsynchronously);
+		using LiquidWalletModel model = CreateModel("liquid-recv-deferred", 1_000,
+			issueReceiveCommand: (_, _, _) => completion.Task,
+			setNextReceiveLabelsCommand: (_, _) => completion.Task);
+		LiquidReceiveViewModel first = new(uiContext, model);
+		first.OnNavigatedTo(false);
+		Task pending = (labels ? first.SaveLabel : first.NewAddress).Execute().ToTask();
+		Assert.False(pending.IsCompleted);
+		LiquidReceiveViewModel second = new(uiContext, model);
+		second.OnNavigatedTo(false);
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidReceiveView { DataContext = second };
+		var window = new Avalonia.Controls.Window { Width = 800, Height = 600, Content = view };
+		window.Show();
+		try
+		{
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			var qr = view.GetVisualDescendants().OfType<WalletWasabi.Fluent.Controls.QrCode>().Single();
+			qr.Matrix = await second.QrCode!.FirstAsync().ToTask();
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.True(qr.IsEffectivelyVisible);
+			Assert.NotEmpty(second.ConfidentialAddressText);
+			completion.SetException(new LiquidWalletReceiveIssuanceCommand.LiquidWalletReceiveIssuanceUncertainException(
+				"uncertain", new InvalidOperationException()));
+			await pending;
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.True(first.ReceiveMaterialUnavailable);
+			Assert.True(second.ReceiveMaterialUnavailable);
+			Assert.Empty(second.ConfidentialAddressText);
+			Assert.Empty(second.UnconfidentialAddressText);
+			Assert.Null(second.QrCode);
+			Assert.False(qr.IsEffectivelyVisible);
+			Assert.Null(qr.Matrix);
+			Assert.False(second.CopyAddressCommand.CanExecute(null));
+			Assert.False(await second.NewAddress.CanExecute.Take(1).ToTask());
+			Assert.False(await second.SaveLabel.CanExecute.Take(1).ToTask());
+			LiquidReceiveViewModel reopened = new(uiContext, model);
+			Assert.True(reopened.ReceiveMaterialUnavailable);
+			Assert.False(reopened.CopyAddressCommand.CanExecute(null));
+			reopened.OnNavigatedTo(false);
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.True(reopened.ReceiveMaterialUnavailable);
+		}
+		finally
+		{
+			window.Close();
+			((INavigatable)first).OnNavigatedFrom(false);
+			((INavigatable)second).OnNavigatedFrom(false);
 		}
 	}
 

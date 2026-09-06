@@ -166,6 +166,7 @@ public sealed class LiquidWalletSendExecutionCommandServiceLifetimeTests
 		SetField(session, "<RpcClient>k__BackingField", rpcClient);
 		SetField(session, "<WalletDataDirectory>k__BackingField", AppContext.BaseDirectory);
 		SetField(session, "_manifest", ElementsPublicNetworkManifest.LiquidMainnet);
+		LiquidWalletAcceptedSendRefreshTests.InstallEmptySnapshot(session);
 		return session;
 	}
 

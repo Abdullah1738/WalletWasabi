@@ -35,6 +35,7 @@ internal sealed class LiquidWalletReceiveDerivation
 
 		ExtKey accountKey = authenticatedMaster.Derive(
 			new KeyPath($"{PurposeBranch}h/{CoinTypeBranch}h/{account}h"));
+		using var accountPrivateKey = accountKey.PrivateKey;
 		ExtPubKey accountPublicKey = accountKey.Neuter();
 		ExtPubKey spendPublicKey = accountPublicKey.Derive(0).Derive((uint)externalIndex);
 		string descriptorBody = $"elwpkh({accountPublicKey.ToString(network)}/<0;1>/*)";

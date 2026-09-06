@@ -90,6 +90,10 @@ public class ElementsWalletRefreshObservationTests
 		Assert.Equal(
 			[candidateId, previousId],
 			observation.RawTransactions.Select(raw => raw.TransactionId).ToArray());
+		Assert.Equal(0, RawFetchCount(harness, candidateId));
+		Assert.Equal(1, RawFetchCount(harness, previousId));
+		Assert.Equal(2, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
+		Assert.Equal(Convert.FromHexString(hex), observation.RawTransactions[0].GetTransactionBytes());
 	}
 
 	[Fact]
@@ -133,6 +137,9 @@ public class ElementsWalletRefreshObservationTests
 		Assert.False(observation.HasTransactionIdValidation);
 		Assert.False(observation.HasBlockMembershipAuthority);
 		Assert.False(observation.HasCurrentnessAuthority);
+		Assert.Equal(8, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
+		Assert.Equal(observation.Candidates.Select(candidate => candidate.TransactionId), observation.RawTransactions.Select(raw => raw.TransactionId));
+		Assert.DoesNotContain(harness.Handler.Parameters, IsRawFetch);
 	}
 
 	[Fact]
@@ -153,7 +160,8 @@ public class ElementsWalletRefreshObservationTests
 		Assert.Equal(67, observation.Candidates.Count);
 		Assert.Equal(Id(0x01), observation.Candidates[0].TransactionId);
 		Assert.Equal(67, observation.RawTransactions.Count);
-		Assert.Equal(134, harness.Handler.Methods.Count(m => m == "getrawtransaction"));
+		Assert.Equal(67, harness.Handler.Methods.Count(m => m == "getrawtransaction"));
+		Assert.DoesNotContain(harness.Handler.Parameters, IsRawFetch);
 	}
 
 	[Fact]
@@ -173,7 +181,7 @@ public class ElementsWalletRefreshObservationTests
 			"getblock" => Envelope(invocation.Id, BlockResult()),
 			"getrawtransaction" when IsVerbose(invocation) => Envelope(
 				invocation.Id,
-				$$"""{"txid":"{{candidateId}}","vin":[{"txid":"{{previousA}}"},{"txid":"{{previousA}}"},{"txid":"{{previousC}}"},{"txid":"{{previousB}}"}]}"""),
+				$$"""{"txid":"{{candidateId}}","hex":"010203","vin":[{"txid":"{{previousA}}"},{"txid":"{{previousA}}"},{"txid":"{{previousC}}"},{"txid":"{{previousB}}"}]}"""),
 			_ => RefreshCapBaseResult(invocation),
 		});
 
@@ -192,14 +200,17 @@ public class ElementsWalletRefreshObservationTests
 		Assert.Equal([false, false, false, false], candidate.Inputs.Select(input => input.IsCoinbase).ToArray());
 		Assert.Equal([previousA, previousC, previousB], candidate.PreviousTransactionIds);
 		Assert.Equal([candidateId, previousA, previousB, previousC], observation.RawTransactions.Select(raw => raw.TransactionId).ToArray());
-		Assert.Equal(1, RawFetchCount(harness, candidateId));
+		Assert.Equal(0, RawFetchCount(harness, candidateId));
+		Assert.Equal(4, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
 		Assert.Equal(1, RawFetchCount(harness, previousA));
 		Assert.Equal(1, RawFetchCount(harness, previousB));
 		Assert.Equal(1, RawFetchCount(harness, previousC));
 	}
 
-	[Fact]
-	public async Task SupportedCandidateDependingOnSupportedCandidateFetchesEachRawExactlyOnceAsync()
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task SupportedCandidateDependingOnSupportedCandidateFetchesEachRawExactlyOnceAsync(bool reverseOrder)
 	{
 		// Supported candidate B depends on supported candidate A: A is a dependency that is itself a
 		// supported candidate, so it must be raw-fetched exactly once (as the candidate, in supported
@@ -216,32 +227,36 @@ public class ElementsWalletRefreshObservationTests
 				ExtractRequestedTransactionId(invocation.Parameters) switch
 				{
 					var requested when requested == candidateB =>
-						$$"""{"txid":"{{candidateB}}","vin":[{"txid":"{{candidateA}}"}]}""",
+						$$"""{"txid":"{{candidateB}}","hex":"040506","vin":[{"txid":"{{candidateA}}"}]}""",
 					var requested =>
-						$$"""{"txid":"{{requested}}","vin":[]}""",
+						$$"""{"txid":"{{requested}}","hex":"010203","vin":[]}""",
 				}),
 			_ => RefreshCapBaseResult(invocation),
 		});
 
+		string[] candidateIds = reverseOrder ? [candidateB, candidateA] : [candidateA, candidateB];
 		using ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
 			ValidExpectation(),
 			PeggedAsset,
-			[candidateA, candidateB],
+			candidateIds,
 			null,
 			CancellationToken.None);
 
-		Assert.Equal([candidateA, candidateB], observation.Candidates.Select(candidate => candidate.TransactionId).ToArray());
-		ElementsWalletRefreshCandidate b = observation.Candidates[1];
+		Assert.Equal(candidateIds, observation.Candidates.Select(candidate => candidate.TransactionId).ToArray());
+		ElementsWalletRefreshCandidate b = observation.Candidates.Single(candidate => candidate.TransactionId == candidateB);
 		Assert.Equal([candidateA], b.PreviousTransactionIds);
 		Assert.Equal(
 			new string?[] { candidateA },
 			b.Inputs.Select(input => input.PreviousTransactionId).ToArray());
 		Assert.Equal(
-			[candidateA, candidateB],
+			candidateIds,
 			observation.RawTransactions.Select(raw => raw.TransactionId).ToArray());
 		Assert.Equal(2, observation.RawTransactions.Count);
-		Assert.Equal(1, RawFetchCount(harness, candidateA));
-		Assert.Equal(1, RawFetchCount(harness, candidateB));
+		Assert.Equal(0, RawFetchCount(harness, candidateA));
+		Assert.Equal(0, RawFetchCount(harness, candidateB));
+		Assert.Equal(2, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
+		Assert.Equal(new byte[] { 1, 2, 3 }, observation.RawTransactions.Single(raw => raw.TransactionId == candidateA).GetTransactionBytes());
+		Assert.Equal(new byte[] { 4, 5, 6 }, observation.RawTransactions.Single(raw => raw.TransactionId == candidateB).GetTransactionBytes());
 	}
 
 	[Fact]
@@ -274,7 +289,7 @@ public class ElementsWalletRefreshObservationTests
 					int sliceEnd = (candidateIndex + 1) * dependencyIds.Length / candidateIds.Length;
 					vin = $$"""[{{string.Join(',', dependencyIds.Skip(sliceStart).Take(sliceEnd - sliceStart).Select(d => $$"""{"txid":"{{d}}"}"""))}}]""";
 				}
-				return Envelope(invocation.Id, $$"""{"txid":"{{requestedId}}","vin":{{vin}}}""");
+				return Envelope(invocation.Id, $$"""{"txid":"{{requestedId}}","hex":"010203","vin":{{vin}}}""");
 			}
 			return RefreshCapBaseResult(invocation);
 		});
@@ -413,7 +428,7 @@ public class ElementsWalletRefreshObservationTests
 					var requested when requested == coinbaseId =>
 						$$"""{"txid":"{{coinbaseId}}","vin":[{"coinbase":"00"}]}""",
 					var requested =>
-						$$"""{"txid":"{{requested}}","vin":[{"txid":"{{sharedDependencyId}}"}]}""",
+						$$"""{"txid":"{{requested}}","hex":"010203","vin":[{"txid":"{{sharedDependencyId}}"}]}""",
 				}),
 			_ => RefreshCapBaseResult(invocation),
 		});
@@ -436,7 +451,8 @@ public class ElementsWalletRefreshObservationTests
 		Assert.Equal(42u, observation.Candidates[63].BlockHeight);
 		Assert.Equal(65, observation.RawTransactions.Count);
 		Assert.Equal(0, RawFetchCount(harness, coinbaseId));
-		Assert.Equal(1, RawFetchCount(harness, spendId));
+		Assert.Equal(0, RawFetchCount(harness, spendId));
+		Assert.Equal(66, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
 		Assert.Equal(1, RawFetchCount(harness, sharedDependencyId));
 	}
 
@@ -553,6 +569,126 @@ public class ElementsWalletRefreshObservationTests
 		await competingProbe.WaitAsync(System.TimeSpan.FromSeconds(5));
 	}
 
+	[Theory]
+	[InlineData(null)]
+	[InlineData("null")]
+	[InlineData("123")]
+	[InlineData("\"\"")]
+	[InlineData("\"010\"")]
+	[InlineData("\"AA\"")]
+	[InlineData("\"gg\"")]
+	[InlineData("\"\\u0030\\u0031\"")]
+	public async Task InvalidVerboseHexFailsClosedWithoutRawFallbackAsync(string? hexJson)
+	{
+		string candidateId = Id(0xC8);
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getrawtransaction" when IsVerbose(invocation) => Envelope(invocation.Id,
+				$$"""{"txid":"{{candidateId}}","vin":[]{{(hexJson is null ? "" : ",\"hex\":" + hexJson)}}}"""),
+			_ => ValidRefreshResult(invocation, candidateId, Id(0xC9)),
+		});
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(() => harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(), PeggedAsset, [candidateId], null, CancellationToken.None));
+
+		Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+		Assert.Equal("getrawtransaction", exception.Method);
+		Assert.Equal(1, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
+		Assert.DoesNotContain(harness.Handler.Parameters, IsRawFetch);
+		Assert.Equal(1, harness.Handler.Methods.Count(method => method == "getnetworkinfo"));
+	}
+
+	[Theory]
+	[InlineData(8 * 1024 * 1024 - 1022, "JSON string limit")]
+	[InlineData(8 * 1024 * 1024 + 2, "eight-megabyte limit")]
+	public async Task OversizedVerboseHexFailsClosedWithoutRawFallbackAsync(int hexLength, string reason)
+	{
+		string candidateId = Id(0xC8);
+		string hex = new('a', hexLength);
+		using var harness = new ElementsRpcHarness(invocation => invocation.Method switch
+		{
+			"getrawtransaction" when IsVerbose(invocation) => Envelope(invocation.Id,
+				$$"""{"txid":"{{candidateId}}","hex":"{{hex}}","vin":[]}"""),
+			_ => ValidRefreshResult(invocation, candidateId, Id(0xC9)),
+		});
+
+		var exception = await Assert.ThrowsAsync<ElementsRpcException>(() => harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(), PeggedAsset, [candidateId], null, CancellationToken.None));
+
+		Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+		Assert.Contains(reason, exception.Message, StringComparison.Ordinal);
+		Assert.Equal(1, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
+		Assert.DoesNotContain(harness.Handler.Parameters, IsRawFetch);
+	}
+
+	[Theory]
+	[InlineData(1, false)] // Post-verbose fence.
+	[InlineData(2, false)] // First candidate materialization fence.
+	[InlineData(3, false)] // Second candidate materialization fence.
+	[InlineData(4, false)] // External dependency fence.
+	[InlineData(5, false)] // Final status/generation fence.
+	[InlineData(1, true)]
+	[InlineData(2, true)]
+	[InlineData(3, true)]
+	[InlineData(4, true)]
+	[InlineData(5, true)]
+	public async Task ReusedCandidateHexPreservesEveryRawFenceAndCancellationAsync(int fence, bool cancel)
+	{
+		string candidateA = Id(0xD0);
+		string candidateB = Id(0xD2);
+		string dependencyId = Id(0xD1);
+		int verboseCalls = 0;
+		int fences = 0;
+		bool injectFailure = true;
+		using var cancellation = new CancellationTokenSource();
+		using var harness = new ElementsRpcHarness(invocation =>
+		{
+			if (invocation.Method == "getrawtransaction" && IsVerbose(invocation))
+			{
+				verboseCalls++;
+			}
+			if (injectFailure && invocation.Method == "getnodegeneration" && verboseCalls == 2 && ++fences == fence)
+			{
+				if (cancel)
+				{
+					cancellation.Cancel();
+					cancellation.Token.ThrowIfCancellationRequested();
+				}
+				return Envelope(invocation.Id, GenerationResult(StartupId, 10, 42, BestBlockHash));
+			}
+			return ValidRefreshResult(invocation, candidateA, dependencyId);
+		});
+
+		Task<ElementsWalletRefreshObservation> refresh = harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(), PeggedAsset, [candidateA, candidateB], null, cancellation.Token);
+		if (cancel)
+		{
+			await Assert.ThrowsAnyAsync<OperationCanceledException>(() => refresh);
+		}
+		else
+		{
+			var exception = await Assert.ThrowsAsync<ElementsRpcException>(() => refresh);
+			Assert.Equal(ElementsRpcFailureKind.Protocol, exception.FailureKind);
+			Assert.Contains("node generation changed", exception.Message, StringComparison.Ordinal);
+		}
+		Assert.Equal(fence, fences);
+		Assert.Equal(2, verboseCalls);
+		Assert.Equal(0, RawFetchCount(harness, candidateA));
+		Assert.Equal(0, RawFetchCount(harness, candidateB));
+		Assert.Equal(fence >= 4 ? 1 : 0, RawFetchCount(harness, dependencyId));
+		Assert.Equal(fence == 5 ? 2 : 1, harness.Handler.Methods.Count(method => method == "getnetworkinfo"));
+
+		// A separate attempt must reacquire both verbose payloads and the dependency, with the lock released.
+		injectFailure = false;
+		using ElementsWalletRefreshObservation observation = await harness.Client.GetWalletRefreshObservationAsync(
+			ValidExpectation(), PeggedAsset, [candidateA, candidateB], null, CancellationToken.None);
+		Assert.Equal(4, verboseCalls);
+		Assert.Equal(0, RawFetchCount(harness, candidateA));
+		Assert.Equal(0, RawFetchCount(harness, candidateB));
+		Assert.Equal(fence >= 4 ? 2 : 1, RawFetchCount(harness, dependencyId));
+		Assert.Equal([candidateA, candidateB, dependencyId], observation.RawTransactions.Select(raw => raw.TransactionId));
+	}
+
 	private static async Task AssertDriftFailsAsync(string changeAfterMethod, int expectedNetworkCalls)
 	{
 		string candidateId = Id(0xD0);
@@ -593,7 +729,7 @@ public class ElementsWalletRefreshObservationTests
 		}
 		else
 		{
-			Assert.Equal(1, RawFetchCount(harness, candidateId));
+			Assert.Equal(0, RawFetchCount(harness, candidateId));
 			Assert.Equal(1, RawFetchCount(harness, dependencyId));
 		}
 	}
@@ -619,7 +755,7 @@ public class ElementsWalletRefreshObservationTests
 			"getblock" => Envelope(invocation.Id, BlockResult()),
 			"getrawtransaction" when IsVerbose(invocation) => Envelope(
 				invocation.Id,
-				$$"""{"txid":"{{candidateId}}","vin":[]}"""),
+				$$"""{"txid":"{{candidateId}}","hex":"010203","vin":[]}"""),
 			"getrawtransaction" => Envelope(invocation.Id, JsonSerializer.Serialize("010203")),
 			_ => throw new System.InvalidOperationException($"Unexpected RPC method '{invocation.Method}' with parameters '{invocation.Parameters}'."),
 		});
@@ -642,7 +778,8 @@ public class ElementsWalletRefreshObservationTests
 		Assert.Equal(42, observation.NodeObservation.Generation.Blocks);
 		Assert.Equal(BestBlockHash, observation.NodeObservation.Generation.BestBlockHash);
 		Assert.DoesNotContain(harness.Handler.Methods, method => method == "getnodegeneration");
-		Assert.Equal(1, RawFetchCount(harness, candidateId));
+		Assert.Equal(0, RawFetchCount(harness, candidateId));
+		Assert.Equal(1, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
 	}
 
 	[Fact]
@@ -668,7 +805,8 @@ public class ElementsWalletRefreshObservationTests
 		Assert.Equal(paymentId, candidate.TransactionId);
 		Assert.Equal(paymentBlockHash, candidate.BlockHash);
 		Assert.Equal((uint)paymentHeight, candidate.BlockHeight);
-		Assert.Equal(1, RawFetchCount(harness, paymentId));
+		Assert.Equal(0, RawFetchCount(harness, paymentId));
+		Assert.Equal(1, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
 		// The walk covered every height from the tip down to the floor (0), not just the recent window.
 		Assert.Equal(tip + 1, harness.Handler.Methods.Count(method => method == "getblock"));
 	}
@@ -788,7 +926,10 @@ public class ElementsWalletRefreshObservationTests
 		Assert.Equal(paymentId, payment.TransactionId);
 		Assert.Equal(paymentBlockHash, payment.BlockHash);
 		Assert.Equal((uint)paymentHeight, payment.BlockHeight);
-		Assert.Equal(1, RawFetchCount(harness, paymentId));
+		Assert.Equal(0, RawFetchCount(harness, paymentId));
+		Assert.Equal(91, harness.Handler.Methods.Count(method => method == "getrawtransaction"));
+		Assert.DoesNotContain(harness.Handler.Parameters, IsRawFetch);
+		Assert.Equal(tip - anchor + 1, harness.Handler.Methods.Count(method => method == "getblock"));
 	}
 
 	private static int RawFetchCount(ElementsRpcHarness harness, string transactionId) =>
@@ -862,7 +1003,7 @@ public class ElementsWalletRefreshObservationTests
 
 	private static string ValidRefreshResult(RpcInvocation invocation, string candidateId, string dependencyId) =>
 		invocation.Method == "getrawtransaction" && IsVerbose(invocation)
-			? Envelope(invocation.Id, $$"""{"txid":"{{ExtractRequestedTransactionId(invocation.Parameters)}}","vin":[{"txid":"{{dependencyId}}"}]}""")
+			? Envelope(invocation.Id, $$"""{"txid":"{{ExtractRequestedTransactionId(invocation.Parameters)}}","hex":"010203","vin":[{"txid":"{{dependencyId}}"}]}""")
 			: invocation.Method == "getrawmempool"
 				? Envelope(invocation.Id, "[]")
 				: RefreshCapBaseResult(invocation);
@@ -981,7 +1122,7 @@ public class ElementsWalletRefreshObservationTests
 	private static string VerboseTransactionResult(RpcInvocation invocation)
 	{
 		string requestedId = ExtractRequestedTransactionId(invocation.Parameters);
-		return $"{{\"txid\":\"{requestedId}\",\"vin\":[]}}";
+		return $"{{\"txid\":\"{requestedId}\",\"hex\":\"010203\",\"vin\":[]}}";
 	}
 
 	private static string ExtractRequestedTransactionId(string parameters)

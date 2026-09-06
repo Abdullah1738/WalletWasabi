@@ -7,6 +7,7 @@ using NBitcoin;
 using WalletWasabi.Blockchain.Keys;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
+using WalletWasabi.Liquid.Wallet;
 using WalletWasabi.Liquid.Wallet.Ui;
 
 namespace WalletWasabi.Liquid.Application;
@@ -184,6 +185,66 @@ internal sealed class LiquidAuthenticatedWalletSession : IAsyncDisposable
 				owner.MinConfirmedHeight,
 				acceptedTransactionIds,
 				acceptedVersions);
+		}
+	}
+
+	internal LiquidWalletInternalIndexAllocation ReserveInternalIndex(byte[] replayKey, byte[] context)
+	{
+		lock (_refreshGate)
+		lock (LiquidWalletLoadSave.GenerationFence)
+		{
+			RefreshSnapshot captured = _snapshot;
+			LiquidAuthenticatedWalletStateOwner owner = captured.Owner;
+			LiquidWalletLoadSaveResult loaded = LiquidWalletLoadSave.Load(
+				WalletDataDirectory, Identity.CanonicalWalletId, replayKey, context);
+			if (loaded.Generation != owner.PersistenceGeneration
+				|| loaded.Revision != owner.StateRevision
+				|| loaded.ExternalIndexHighWater != owner.ExternalIndexHighWater
+				|| loaded.InternalIndexHighWater != owner.InternalIndexHighWater)
+			{
+				throw new InvalidOperationException("The Liquid wallet state changed before change reservation.");
+			}
+			if (owner.InternalIndexHighWater > LiquidSpendKeyReference.MaximumIndex
+				|| owner.CatalogLastIndex > LiquidSpendKeyReference.MaximumIndex)
+			{
+				throw new InvalidOperationException("The Liquid change reservation exceeds the native catalog bound.");
+			}
+
+			// Project before saving. Keep the public handoff: reservation changes no balances,
+			// history or receive material. A new snapshot still invalidates every stale capture.
+			LiquidAuthenticatedWalletStateOwner replacement = owner.CreateReplacement(
+				loaded.State!, checked(loaded.Generation + 1), checked(loaded.InternalIndexHighWater + 1));
+			var snapshot = new RefreshSnapshot(replacement, captured.PublicHandoff);
+			LiquidWalletInternalIndexAllocation allocation = LiquidWalletInternalIndexAllocator.Allocate(
+				WalletDataDirectory, Identity.CanonicalWalletId, replayKey, context);
+			if (allocation.PersistedGeneration != replacement.PersistenceGeneration
+				|| allocation.StateRevision != replacement.StateRevision
+				|| allocation.PersistedExternalIndexHighWater != replacement.ExternalIndexHighWater
+				|| allocation.PersistedInternalIndexHighWater != replacement.InternalIndexHighWater)
+			{
+				throw new InvalidOperationException("The Liquid change reservation violated its exact fences.");
+			}
+			_snapshot = snapshot;
+			return allocation;
+		}
+	}
+
+	internal void CommitReceiveSnapshot(
+		LiquidWalletRefreshStateCapture captured,
+		LiquidAuthenticatedWalletStateOwner replacement,
+		LiquidWalletRuntimeHandoff handoff,
+		Action persist)
+	{
+		lock (_refreshGate)
+		lock (LiquidWalletLoadSave.GenerationFence)
+		{
+			if (!ValidateRefreshState(captured))
+			{
+				throw new InvalidOperationException("The Liquid wallet snapshot changed before the receive write.");
+			}
+			var snapshot = new RefreshSnapshot(replacement, handoff);
+			persist();
+			_snapshot = snapshot;
 		}
 	}
 

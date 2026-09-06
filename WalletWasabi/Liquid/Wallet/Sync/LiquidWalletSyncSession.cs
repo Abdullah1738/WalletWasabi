@@ -90,29 +90,25 @@ internal sealed class LiquidWalletSyncSession
 		LiquidWalletState state = _baseState;
 		ulong expectedRevision = BaseRevision;
 		int skippedTransactionCount = 0;
-		IReadOnlyList<LiquidWalletTransactionObservation> transactions = observations.GetTransactions();
+		IReadOnlyList<LiquidWalletTransactionObservation> transactions = OrderByDependencies(observations);
 		for (int index = 0; index < transactions.Count; index++)
 		{
 			LiquidWalletTransactionObservation observation = transactions[index];
 			LiquidTransactionId transactionId = LiquidTransactionId.ParseConsensusBytes(
 				observation.GetTransactionIdConsensusBytes());
 
+			LiquidOutPoint[] spentOutPoints = ComputeSpentOutPoints(state, observation);
+			LiquidOwnedOutput[] createdOutputs = ProjectCreatedOutputs(observation);
 			if (state.GetAppliedDelta(transactionId) is LiquidWalletTransactionDelta appliedDelta)
 			{
-				LiquidOutPoint[] replaySpent = ComputeSpentOutPoints(observation);
-				LiquidOwnedOutput[] replayCreated = ProjectCreatedOutputs(observation);
-				if (IsIdenticalReplay(appliedDelta, replaySpent, replayCreated))
+				if (!IsIdenticalReplay(appliedDelta, spentOutPoints, createdOutputs))
 				{
-					// Exact idempotent replay of an already-applied transaction:
-					// skip it without advancing the revision. Any deviation falls
-					// through to Apply, whose double-apply guard fails closed.
-					skippedTransactionCount++;
-					continue;
+					throw new InvalidOperationException("A Liquid wallet transaction replay contradicts its applied effects.");
 				}
+				skippedTransactionCount++;
+				continue;
 			}
 
-			LiquidOutPoint[] spentOutPoints = ComputeSpentOutPoints(observation);
-			LiquidOwnedOutput[] createdOutputs = ProjectCreatedOutputs(observation);
 			if (spentOutPoints.Length == 0 && createdOutputs.Length == 0)
 			{
 				// Recent-block discovery on public networks stages every
@@ -208,14 +204,70 @@ internal sealed class LiquidWalletSyncSession
 		return true;
 	}
 
-	private LiquidOutPoint[] ComputeSpentOutPoints(LiquidWalletTransactionObservation observation)
+	private static IReadOnlyList<LiquidWalletTransactionObservation> OrderByDependencies(LiquidWalletObservationBatch observations)
+	{
+		IReadOnlyList<LiquidWalletTransactionObservation> transactions = observations.GetTransactions();
+		var creators = new Dictionary<LiquidOutPoint, int>();
+		for (int index = 0; index < transactions.Count; index++)
+		{
+			foreach (LiquidOwnedOutputObservation output in transactions[index].GetOwnedOutputs())
+			{
+				creators.Add(LiquidOutPoint.CreateSpendable(
+					LiquidTransactionId.ParseConsensusBytes(output.GetTransactionIdConsensusBytes()), output.OutputIndex), index);
+			}
+		}
+
+		// Wire order is by txid, not ancestry. Fold owned parents before their
+		// children; keep the original order among ready transactions.
+		var dependents = new List<int>[transactions.Count];
+		var dependencyCounts = new int[transactions.Count];
+		var ready = new SortedSet<int>();
+		for (int index = 0; index < transactions.Count; index++)
+		{
+			foreach (LiquidOutPoint input in transactions[index].GetInputs())
+			{
+				if (creators.TryGetValue(input, out int parent))
+				{
+					(dependents[parent] ??= []).Add(index);
+					dependencyCounts[index]++;
+				}
+			}
+			if (dependencyCounts[index] == 0)
+			{
+				ready.Add(index);
+			}
+		}
+		var ordered = new List<LiquidWalletTransactionObservation>(transactions.Count);
+		while (ready.Count > 0)
+		{
+			int index = ready.Min;
+			ready.Remove(index);
+			ordered.Add(transactions[index]);
+			foreach (int child in dependents[index] ?? [])
+			{
+				if (--dependencyCounts[child] == 0)
+				{
+					ready.Add(child);
+				}
+			}
+		}
+		if (ordered.Count != transactions.Count)
+		{
+			throw new InvalidOperationException("A Liquid wallet observation batch contains cyclic owned-output dependencies.");
+		}
+		return ordered;
+	}
+
+	private static LiquidOutPoint[] ComputeSpentOutPoints(LiquidWalletState state, LiquidWalletTransactionObservation observation)
 	{
 		IReadOnlyList<LiquidOutPoint> inputs = observation.GetInputs();
 		var spent = new List<LiquidOutPoint>(inputs.Count);
 		for (int index = 0; index < inputs.Count; index++)
 		{
 			LiquidOutPoint input = inputs[index];
-			if (_baseState.ContainsUnspent(input))
+			// Consumed outputs still identify wallet spends on replay and must
+			// reach Apply's unavailable-output guard for a conflicting spender.
+			if (state.ContainsKnownOutput(input))
 			{
 				spent.Add(input);
 			}

@@ -47,7 +47,7 @@ public sealed class LiquidWalletReceiveLabelCommandServiceTests
 		// The session's next-receive index is LastIndex (0). Label it.
 		LiquidAuthenticatedWalletStateOwner replacement = await command(
 			new LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest(
-				WalletName, 0, ["savings", "vault"]));
+				WalletName, 0, ["savings", "vault"], ExpectedAddress(session)));
 
 		LiquidWalletReceiveLabelCommandService.SaveRequest save = Assert.Single(saves);
 		Assert.Equal(1UL, save.NextGeneration);
@@ -99,7 +99,7 @@ public sealed class LiquidWalletReceiveLabelCommandServiceTests
 			LiquidWalletReceiveLabelCommandService.CreateSetReceiveLabelsCommandForTesting(provider, dependencies);
 
 		LiquidAuthenticatedWalletStateOwner replacement = await command(
-			new LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest(WalletName, 0, []));
+			new LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest(WalletName, 0, [], ExpectedAddress(session)));
 
 		Assert.Null(replacement.State.GetReceiveLabels(0));
 		Assert.Null(session.StateOwner.State.GetReceiveLabels((uint)session.LastIndex));
@@ -117,20 +117,19 @@ public sealed class LiquidWalletReceiveLabelCommandServiceTests
 				save: request =>
 				{
 					saveCalled = true;
-					// The durable save fences a concurrent generation change: the captured
-					// base generation no longer matches the readable current state.
-					throw new InvalidOperationException("The Liquid wallet persistence generation changed during save.");
+					throw new InvalidOperationException("Save must not run after a stale-generation rejection.");
 				},
-				publish: (_, _, _) => true);
+				publish: (_, _, _) => true,
+				validate: _ => throw new InvalidOperationException("The Liquid wallet persistence generation changed during save."));
 		Func<LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest, Task<LiquidAuthenticatedWalletStateOwner>> command =
 			LiquidWalletReceiveLabelCommandService.CreateSetReceiveLabelsCommandForTesting(provider, dependencies);
 
 		InvalidOperationException failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-			command(new LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest(WalletName, 0, ["x"])));
+			command(new LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest(WalletName, 0, ["x"], ExpectedAddress(session))));
 
 		// The stale-write rejection surfaces and the write is not persisted.
 		Assert.Equal("The Liquid wallet persistence generation changed during save.", failure.Message);
-		Assert.True(saveCalled);
+		Assert.False(saveCalled);
 		Assert.Null(session.StateOwner.State.GetReceiveLabels(0));
 	}
 
@@ -154,13 +153,18 @@ public sealed class LiquidWalletReceiveLabelCommandServiceTests
 
 		await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
 			command(new LiquidWalletReceiveLabelCommandService.SetReceiveLabelsRequest(
-				WalletName, 0, [new string('x', LiquidWalletLabelSet.MaximumLabelUtf8ByteCount + 1)])));
+				WalletName, 0, [new string('x', LiquidWalletLabelSet.MaximumLabelUtf8ByteCount + 1)], ExpectedAddress(session))));
 
 		Assert.False(saveCalled);
 	}
 
 	private static LiquidAuthenticatedRuntimeProvider CreateProvider(LiquidAuthenticatedWalletSession session) =>
 		CreateProvider(session, ElementsPublicNetworkManifest.LiquidMainnet);
+
+	private static string ExpectedAddress(LiquidAuthenticatedWalletSession session) =>
+		LiquidWalletUiFacade.CreateReceiveAddress(session.Manifest,
+			session.StateOwner.ReceiveMaterial.NextReceiveScriptPubKey,
+			session.StateOwner.ReceiveMaterial.NextReceiveBlindingPublicKey).ConfidentialAddressText;
 
 	private static LiquidAuthenticatedRuntimeProvider CreateProvider(LiquidAuthenticatedWalletSession session, ElementsPublicNetworkManifest manifest)
 	{

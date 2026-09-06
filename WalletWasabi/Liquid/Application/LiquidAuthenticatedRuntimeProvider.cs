@@ -10,6 +10,8 @@ using NBitcoin;
 using WalletWasabi.Blockchain.Keys;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Rpc;
+using WalletWasabi.Liquid.Transactions;
+using WalletWasabi.Liquid.Wallet;
 using WalletWasabi.Liquid.Wallet.Ui;
 
 namespace WalletWasabi.Liquid.Application;
@@ -24,10 +26,6 @@ internal sealed class ElementsPublicNetworkManifestSource
 
 internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 {
-	private const uint ReplayContextBranchIndex = 1108790945;
-	private const string ReplayKeyInfo = "WalletWasabi/Liquid/v1/replay";
-	private const string ContextKeyInfo = "WalletWasabi/Liquid/v1/context";
-
 	private readonly LiquidRpcProfileSource _rpcProfileSource;
 	private readonly LiquidWalletDirectories _walletDirectories;
 	private readonly ElementsPublicNetworkManifestSource _manifestSource;
@@ -113,7 +111,8 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 				new NetworkCredential(lease.Username.ToString(), lease.Password.ToString()),
 				new ElementsRpcTimeouts(profile.ConnectTimeout, profile.RequestTimeout, profile.RequestTimeout));
 			providerOwnsRpcClient = true;
-			Func<string, (int Account, int Change, int Index)?> outpointLocator = BuildOutpointLocator(identity, root);
+			LiquidAuthenticatedWalletSession? signingSession = null;
+			Func<string, (int Account, int Change, int Index)?> outpointLocator = BuildOutpointLocator(() => signingSession);
 			adapter = new LiquidWalletSignerKeyAdapter(root, outpointLocator, keyManager.GetNetwork());
 			LiquidAuthenticatedWalletStateOwner stateOwner = LiquidAuthenticatedWalletStateOwner.Open(
 				identity,
@@ -165,6 +164,7 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 				lastIndex,
 				_walletDirectories.WalletDirectory,
 				_sendRefreshSink);
+			signingSession = candidate;
 #pragma warning restore CA2000
 			adapter = null;
 			providerOwnsRpcClient = false;
@@ -521,68 +521,22 @@ internal sealed class LiquidAuthenticatedRuntimeProvider : IAsyncDisposable
 		}
 	}
 
-	private Func<string, (int Account, int Change, int Index)?> BuildOutpointLocator(LiquidWalletIdentity identity, ExtKey root)
+	private static Func<string, (int Account, int Change, int Index)?> BuildOutpointLocator(
+		Func<LiquidAuthenticatedWalletSession?> getSession)
 	{
-		string walletDataDir = _walletDirectories.WalletDirectory;
-		string walletName = identity.CanonicalWalletId;
-		ExtKey replayContextChild = root.Derive(new KeyPath(ReplayContextBranchIndex | 0x80000000U));
-		byte[] keyMaterial = replayContextChild.PrivateKey.ToBytes();
-		try
+		return outpointHex =>
 		{
-			byte[] salt = ComputePersistenceSalt(identity);
-			byte[] key = LiquidKeyDomain.DeriveHkdf(keyMaterial, salt, ReplayKeyInfo);
-			byte[] externalWalletNetworkContext = LiquidKeyDomain.DeriveHkdf(keyMaterial, salt, ContextKeyInfo);
-			try
+			// This closure belongs to one authenticated lifetime, including a leased send
+			// draining after provider detachment. It never follows a later wallet reopen.
+			if (getSession() is not { } session)
 			{
-				Dictionary<string, (int Account, int Change, int Index)> map = new(StringComparer.Ordinal);
-				string filePath = Path.Combine(walletDataDir, walletName + ".lwwal");
-				if (File.Exists(filePath))
-				{
-					foreach (KeyValuePair<string, LiquidWalletUiOutpointCoordinate> entry in
-						LiquidWalletUiFacade.LoadAndGetOutpointSpendCoordinates(
-							walletDataDir,
-							walletName,
-							key,
-							externalWalletNetworkContext))
-					{
-						map[entry.Key] = (entry.Value.Account, entry.Value.Change, entry.Value.Index);
-					}
-				}
-
-				return outpointHex =>
-				{
-					try
-					{
-						return outpointHex is not null && map.TryGetValue(outpointHex, out (int Account, int Change, int Index) coordinates)
-							? coordinates
-							: null;
-					}
-					catch (Exception)
-					{
-						return null;
-					}
-				};
+				return null;
 			}
-			finally
-			{
-				CryptographicOperations.ZeroMemory(key);
-				CryptographicOperations.ZeroMemory(externalWalletNetworkContext);
-			}
-		}
-		finally
-		{
-			CryptographicOperations.ZeroMemory(keyMaterial);
-		}
-	}
-
-	private static byte[] ComputePersistenceSalt(LiquidWalletIdentity identity)
-	{
-		byte[] networkGenesisDisplay = Encoding.UTF8.GetBytes(identity.NetworkManifestId);
-		byte[] canonicalWalletId = Encoding.UTF8.GetBytes(identity.CanonicalWalletId);
-		byte[] saltInput = new byte[networkGenesisDisplay.Length + canonicalWalletId.Length];
-		networkGenesisDisplay.CopyTo(saltInput, 0);
-		canonicalWalletId.CopyTo(saltInput, networkGenesisDisplay.Length);
-		return SHA256.HashData(saltInput);
+			LiquidWalletState state = session.StateOwner.State;
+			LiquidOutPoint outpoint = LiquidOutPoint.ParseSpendableConsensusBytes(Convert.FromHexString(outpointHex));
+			LiquidOwnedOutput? output = state.GetUnspentOutputs().FirstOrDefault(output => output.OutPoint == outpoint);
+			return output is null ? null : (0, (int)output.SpendKey.Branch, (int)output.SpendKey.Index);
+		};
 	}
 
 	private void ValidateIdentity(LiquidWalletIdentity identity)

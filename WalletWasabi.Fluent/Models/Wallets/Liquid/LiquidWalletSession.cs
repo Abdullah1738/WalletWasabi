@@ -291,7 +291,9 @@ public sealed class LiquidWalletSession : IAsyncDisposable
 				current.ReceiveMaterial.NextReceiveBlindingPublicKey,
 				current.ReceiveMaterial.NextReceiveLabels,
 				session.SetNextReceiveLabelsAsync,
-				current.SelectableOutputs);
+				current.SelectableOutputs,
+				client.IssueNextReceiveAddressAsync,
+				() => client.CurrentHandoff);
 
 			// Feed the already-produced history into the model so a funded
 			// wallet presents its retained history instead of the "not

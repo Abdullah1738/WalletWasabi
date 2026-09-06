@@ -15,6 +15,8 @@
     <DockPanel LastChildFill="True">
 
       <StackPanel DockPanel.Dock="Bottom" HorizontalAlignment="Stretch" Spacing="20">
+        <Button x:Name="NewAddressButton" Content="New Address" Command="{Binding NewAddress}"
+                HorizontalAlignment="Center" />
         <!-- The receive label for the currently-shown next receive address:
              comma-separated suggestion labels, consistent with the BTC
              Receive flow. Shown joined on open; an empty field clears the
@@ -61,10 +63,10 @@
       </StackPanel>
 
       <!-- QR binding of the confidential form. -->
-      <AdorningContentControl HorizontalAlignment="Center" VerticalAlignment="Center" ClipToBounds="False">
+      <AdorningContentControl IsVisible="{Binding ReceiveMaterialAvailable}" HorizontalAlignment="Center" VerticalAlignment="Center" ClipToBounds="False">
         <AdorningContentControl.Adornment>
           <Panel Margin="5 0 -5 20">
-            <Button Command="{Binding #QrCode.SaveCommand}" CommandParameter="{Binding ConfidentialAddressText}" ToolTip.Tip="Save" Classes="plain icon"
+             <Button Command="{Binding #QrCode.SaveCommand}" CommandParameter="{Binding ConfidentialAddressText}" IsEnabled="{Binding ReceiveMaterialAvailable}" ToolTip.Tip="Save" Classes="plain icon"
                     HorizontalAlignment="Right" VerticalAlignment="Bottom">
               <PathIcon Data="{StaticResource save_regular}" />
             </Button>
@@ -72,7 +74,7 @@
         </AdorningContentControl.Adornment>
         <Viewbox Margin="20" MaxHeight="270" MinHeight="100">
           <PrivacyContentControl Height="264" PrivacyReplacementMode="Icon">
-            <QrCode x:Name="QrCode" Matrix="{Binding QrCode^}" />
+             <QrCode x:Name="QrCode" IsVisible="{Binding ReceiveMaterialAvailable}" Matrix="{Binding QrCode^}" />
           </PrivacyContentControl>
         </Viewbox>
       </AdorningContentControl>

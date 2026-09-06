@@ -57,13 +57,20 @@ internal sealed class LiquidWalletReceiveLabelCommandService
 	private Task<LiquidAuthenticatedWalletStateOwner> ExecuteAsync(SetReceiveLabelsRequest request)
 	{
 		ArgumentNullException.ThrowIfNull(request);
+		request.CancellationToken.ThrowIfCancellationRequested();
 		// Validate the label set before acquiring any session or persistence resource.
 		LiquidWalletLabelSet labelSet = LiquidWalletLabelSet.Create(request.Labels);
 
 		using LiquidWalletOperationLease operationLease = _runtimeProvider.AcquireOperation(request.CanonicalWalletId);
 		LiquidAuthenticatedWalletSession session = operationLease.Session;
-		object snapshotReference = session.CaptureRefreshSnapshot();
-		LiquidAuthenticatedWalletStateOwner captured = session.StateOwner;
+		LiquidWalletRefreshStateCapture capture = session.CaptureRefreshState();
+		LiquidAuthenticatedWalletStateOwner captured = capture.Owner;
+		if (request.Index != captured.LastIndex || !StringComparer.Ordinal.Equals(request.ExpectedConfidentialAddress,
+			LiquidWalletUiFacade.CreateReceiveAddress(session.Manifest, captured.ReceiveMaterial.NextReceiveScriptPubKey,
+				captured.ReceiveMaterial.NextReceiveBlindingPublicKey).ConfidentialAddressText))
+		{
+			throw new InvalidOperationException("The Liquid receive address changed before the label write.");
+		}
 
 		// Apply the label set to the captured (never mutated) state. The label map is durable
 		// metadata, not a transaction transition, so the revision is unchanged.
@@ -78,6 +85,7 @@ internal sealed class LiquidWalletReceiveLabelCommandService
 		try
 		{
 			ExtKey replayChild = session.AuthenticatedMaster.Derive(new KeyPath(ReplayContextBranchIndex | 0x80000000U));
+			using var replayPrivateKey = replayChild.PrivateKey;
 			replayChildMaterial = replayChild.PrivateKey.ToBytes();
 			byte[] manifestId = Encoding.UTF8.GetBytes(session.Manifest.ManifestId);
 			byte[] walletId = Encoding.UTF8.GetBytes(session.Identity.CanonicalWalletId);
@@ -91,16 +99,6 @@ internal sealed class LiquidWalletReceiveLabelCommandService
 			context = LiquidKeyDomain.DeriveHkdf(replayChildMaterial, salt, ContextKeyInfo);
 
 			LiquidAuthenticatedWalletStateOwner replacement = captured.CreateReplacement(labeledState, nextGeneration);
-			LiquidWalletReceiveLabelAllocation saved = _dependencies.Save(new SaveRequest(
-				session.WalletDataDirectory,
-				session.Identity.CanonicalWalletId,
-				labeledState,
-				nextGeneration,
-				captured.PersistenceGeneration,
-				request.Index,
-				labelSet,
-				replayKey,
-				context));
 			LiquidWalletRuntimeHandoff handoff = new(
 				session.Identity.CanonicalWalletId,
 				session.Identity.NetworkManifestId,
@@ -108,10 +106,35 @@ internal sealed class LiquidWalletReceiveLabelCommandService
 				replacement.SelectableOutputs,
 				replacement.History,
 				replacement.ReceiveMaterial);
-			bool installed = session.TryInstallRefreshSnapshot(snapshotReference, replacement, handoff);
-			if (installed)
+			bool persistenceEntered = false;
+			try
 			{
-				_dependencies.Publish(_runtimeProvider, session, handoff);
+				session.CommitReceiveSnapshot(capture, replacement, handoff, () =>
+				{
+					var saveRequest = new SaveRequest(
+						session.WalletDataDirectory, session.Identity.CanonicalWalletId, labeledState, nextGeneration,
+						captured.PersistenceGeneration, request.Index, labelSet, replayKey, context,
+						capture.ExternalIndexHighWater, capture.InternalIndexHighWater);
+					_dependencies.Validate(saveRequest);
+					request.CancellationToken.ThrowIfCancellationRequested();
+					// SafeFile can throw after replacing the file, without reporting its commit point.
+					persistenceEntered = true;
+					LiquidWalletReceiveLabelAllocation saved = _dependencies.Save(saveRequest);
+					if (saved.PersistedGeneration != nextGeneration || saved.StateRevision != captured.StateRevision)
+					{
+						throw new InvalidOperationException("The Liquid receive label write violated its exact fences.");
+					}
+				});
+				request.CancellationToken.ThrowIfCancellationRequested();
+				if (!_dependencies.Publish(_runtimeProvider, session, handoff))
+				{
+					throw new InvalidOperationException("The Liquid receive labels were saved but the session changed. Reopen the wallet.");
+				}
+			}
+			catch (Exception exception) when (persistenceEntered)
+			{
+				throw new LiquidWalletReceiveIssuanceCommand.LiquidWalletReceiveIssuanceUncertainException(
+					"The Liquid receive labels may have been saved but could not be published. Reopen the wallet.", exception);
 			}
 
 			return Task.FromResult(replacement);
@@ -129,7 +152,9 @@ internal sealed class LiquidWalletReceiveLabelCommandService
 	internal sealed record SetReceiveLabelsRequest(
 		string CanonicalWalletId,
 		uint Index,
-		IReadOnlyList<string> Labels);
+		IReadOnlyList<string> Labels,
+		string ExpectedConfidentialAddress,
+		CancellationToken CancellationToken = default);
 
 	internal sealed record SaveRequest(
 		string WalletDataDirectory,
@@ -140,34 +165,46 @@ internal sealed class LiquidWalletReceiveLabelCommandService
 		uint Index,
 		LiquidWalletLabelSet Labels,
 		byte[] ReplayKey,
-		byte[] Context);
+			byte[] Context,
+			ulong ExternalIndexHighWater = 0,
+			ulong InternalIndexHighWater = 0);
 
 	internal sealed class Dependencies
 	{
 		private Dependencies(
 			Func<SaveRequest, LiquidWalletReceiveLabelAllocation> save,
-			Func<LiquidAuthenticatedRuntimeProvider, LiquidAuthenticatedWalletSession, LiquidWalletRuntimeHandoff, bool> publish)
+			Func<LiquidAuthenticatedRuntimeProvider, LiquidAuthenticatedWalletSession, LiquidWalletRuntimeHandoff, bool> publish,
+			Action<SaveRequest> validate)
 		{
 			Save = save;
 			Publish = publish;
+			Validate = validate;
 		}
 
 		internal static Dependencies Production { get; } = new(
 			static request => LiquidWalletReceiveLabelAllocator.SetLabels(
-				request.WalletDataDirectory,
-				request.WalletName,
-				request.ReplayKey,
-				request.Context,
-				request.Index,
-				request.Labels.GetLabels()),
-			static (provider, session, handoff) => provider.TryPublishRefresh(session, handoff));
+				request.WalletDataDirectory, request.WalletName, request.ReplayKey, request.Context,
+				request.Index, request.Labels.GetLabels()),
+			static (provider, session, handoff) => provider.TryPublishRefresh(session, handoff),
+			static request =>
+			{
+				var loaded = LiquidWalletLoadSave.Load(request.WalletDataDirectory, request.WalletName, request.ReplayKey, request.Context);
+				if (loaded.Generation != request.BaseGeneration || loaded.Revision != request.State.Revision
+					|| loaded.ExternalIndexHighWater != request.ExternalIndexHighWater
+					|| loaded.InternalIndexHighWater != request.InternalIndexHighWater)
+				{
+					throw new InvalidOperationException("The Liquid wallet state changed before the label write.");
+				}
+			});
 
+		internal Action<SaveRequest> Validate { get; }
 		internal Func<SaveRequest, LiquidWalletReceiveLabelAllocation> Save { get; }
 		internal Func<LiquidAuthenticatedRuntimeProvider, LiquidAuthenticatedWalletSession, LiquidWalletRuntimeHandoff, bool> Publish { get; }
 
 		internal static Dependencies CreateForTesting(
 			Func<SaveRequest, LiquidWalletReceiveLabelAllocation> save,
-			Func<LiquidAuthenticatedRuntimeProvider, LiquidAuthenticatedWalletSession, LiquidWalletRuntimeHandoff, bool> publish) =>
-			new(save, publish);
+			Func<LiquidAuthenticatedRuntimeProvider, LiquidAuthenticatedWalletSession, LiquidWalletRuntimeHandoff, bool> publish,
+			Action<SaveRequest>? validate = null) =>
+			new(save, publish, validate ?? (_ => { }));
 	}
 }
