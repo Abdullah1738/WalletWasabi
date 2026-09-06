@@ -51,7 +51,7 @@ public sealed class LiquidCoinJoinCredentialCompatibilityTests
 	public void ShippedPublicValidationSurfaceDoesNotExposePresentationRandomizers()
 	{
 		Assert.Equal(new[] { "Presented", "Requested" }, PublicProperties(typeof(CredentialsResponseValidation)));
-		Assert.Equal(new[] { "Ca", "CV", "Cx0", "Cx1", "S" }, PublicProperties(typeof(CredentialPresentation)));
+		Assert.Equal(new[] { "CV", "Ca", "Cx0", "Cx1", "S" }, PublicProperties(typeof(CredentialPresentation)));
 		Assert.Equal(new[] { "Mac", "Randomness", "Value" }, PublicProperties(typeof(Credential)));
 		Assert.Equal(new[] { "CredentialsRequest", "CredentialsResponseValidation" }, PublicProperties(typeof(RealCredentialsRequestData)));
 	}

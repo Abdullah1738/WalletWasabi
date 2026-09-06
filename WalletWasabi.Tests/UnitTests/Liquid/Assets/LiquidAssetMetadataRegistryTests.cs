@@ -1,14 +1,18 @@
 using WalletWasabi.Liquid.Assets;
 using WalletWasabi.Liquid.Network;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace WalletWasabi.Tests.UnitTests.Liquid.Assets;
 
 public class LiquidAssetMetadataRegistryTests
 {
+	private const string TestnetAssetId = "38fca2d939696061a8f76d4e6b5eecd54e3b4221c846f24a6b279e79952850a5";
 	private static ElementsPublicNetworkManifest Manifest => ElementsPublicNetworkManifest.LiquidTestnet;
 	[Fact]
-	public void BuiltInRegistryContainsOnlyProtocolPeggedMetadata()
+	public void BuiltInRegistryPreservesProtocolPeggedMetadataAndUnknownFallback()
 	{
 		var registry = LiquidAssetMetadataRegistry.ForManifest(ElementsPublicNetworkManifest.LiquidTestnet);
 		Assert.True(registry.TryGet(registry.PeggedAssetId, out var metadata));
@@ -16,6 +20,40 @@ public class LiquidAssetMetadataRegistryTests
 		Assert.Equal("Liquid Bitcoin", metadata.Name);
 		Assert.Equal(8, metadata.Precision);
 		Assert.False(registry.TryGet(new string('a', 64), out _));
+	}
+
+	[Fact]
+	public void ReviewedTestnetSnapshotContainsTestMetadataAndProvenance()
+	{
+		var registry = LiquidAssetMetadataRegistry.ForManifest(ElementsPublicNetworkManifest.LiquidTestnet);
+		Assert.True(registry.TryGet(TestnetAssetId, out var metadata));
+		Assert.Equal("TEST", metadata.Ticker);
+		Assert.Equal("Testnet Asset", metadata.Name);
+		Assert.Equal(3, metadata.Precision);
+		Assert.Equal(TestnetAssetId, metadata.AssetIdHex);
+		Assert.Equal("Blockstream/asset_registry_testnet_db", LiquidTestnetAssetSnapshot.Source);
+		Assert.Equal("e07ca133ed964a5978cd57b836f2eacb342df588", LiquidTestnetAssetSnapshot.Revision);
+		Assert.Equal($"38/{TestnetAssetId}.json", LiquidTestnetAssetSnapshot.SourcePath);
+		Assert.Equal("8c4f129205a2ea6a290826eb7121dc103bf5bb94dc9b3ebe210257b00f63dde2", LiquidTestnetAssetSnapshot.SourceSha256);
+		Assert.Equal(LiquidTestnetAssetSnapshot.SourceSha256,
+			Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(LiquidTestnetAssetSnapshot.SourceJson))));
+		using var source = JsonDocument.Parse(LiquidTestnetAssetSnapshot.SourceJson);
+		Assert.Equal(metadata.AssetIdHex, source.RootElement.GetProperty("asset_id").GetString());
+		foreach (var fields in new[] { source.RootElement, source.RootElement.GetProperty("contract") })
+		{
+			Assert.Equal(metadata.Ticker, fields.GetProperty("ticker").GetString());
+			Assert.Equal(metadata.Name, fields.GetProperty("name").GetString());
+			Assert.Equal(metadata.Precision, fields.GetProperty("precision").GetInt32());
+		}
+	}
+
+	[Fact]
+	public void TestMetadataNeverAppearsOnMainnetOrUnknownFallback()
+	{
+		var mainnet = LiquidAssetMetadataRegistry.ForManifest(ElementsPublicNetworkManifest.LiquidMainnet);
+		Assert.False(mainnet.TryGet(TestnetAssetId, out _));
+		Assert.False(mainnet.TryGet(new string('a', 64), out _));
+		Assert.False(LiquidAssetMetadataRegistry.ForManifest(Manifest).TryGet(TestnetAssetId.ToUpperInvariant(), out _));
 	}
 
 	[Fact]

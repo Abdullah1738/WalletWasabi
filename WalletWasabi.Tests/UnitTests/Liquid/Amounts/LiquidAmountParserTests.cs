@@ -1,5 +1,6 @@
 using WalletWasabi.Liquid.Amounts;
 using WalletWasabi.Liquid.Assets;
+using WalletWasabi.Liquid.Network;
 using System.Globalization;
 using Xunit;
 
@@ -8,6 +9,22 @@ namespace WalletWasabi.Tests.UnitTests.Liquid.Amounts;
 public class LiquidAmountParserTests
 {
 	private static readonly LiquidAssetMetadata Precision2 = new(new string('a', 64), "FIX", "Fixture", 2);
+
+	[Fact]
+	public void ParsesReviewedTestAssetExactDecimalToAtomicUnits()
+	{
+		const string assetId = "38fca2d939696061a8f76d4e6b5eecd54e3b4221c846f24a6b279e79952850a5";
+		var testnet = LiquidAssetMetadataRegistry.ForManifest(ElementsPublicNetworkManifest.LiquidTestnet);
+		Assert.True(testnet.TryGet(assetId, out var metadata));
+		var result = LiquidAmountParser.Parse("1.234", metadata);
+		Assert.True(result.Success);
+		Assert.Equal(1234, result.AtomicUnits);
+		Assert.False(LiquidAmountParser.Parse("1.2340", metadata).Success);
+		var mainnet = LiquidAssetMetadataRegistry.ForManifest(ElementsPublicNetworkManifest.LiquidMainnet);
+		Assert.False(mainnet.TryGet(assetId, out var unknown));
+		Assert.False(LiquidAmountParser.Parse("1.234", unknown).Success);
+		Assert.Equal(1234, LiquidAmountParser.Parse("1234", unknown).AtomicUnits);
+	}
 
 	[Theory]
 	[InlineData("12.34", 1234)]

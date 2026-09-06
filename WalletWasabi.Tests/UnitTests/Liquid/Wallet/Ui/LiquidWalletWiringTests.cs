@@ -305,6 +305,40 @@ public class LiquidWalletWiringTests
 	}
 
 	[Fact]
+	public void ReviewedTestAssetDisplaysDecimalsWithoutChangingPlanAtomicIdentity()
+	{
+		const string assetId = "38fca2d939696061a8f76d4e6b5eecd54e3b4221c846f24a6b279e79952850a5";
+		UiContext uiContext = BuildUiContext(false);
+		using var model = CreateModel("test-metadata", 5000, 7500);
+		var recipient = new LiquidSendRecipientViewModel(uiContext, model);
+		recipient.AssetIdHex = assetId;
+		recipient.AmountText = "1.234";
+		Assert.True(recipient.IsAmountValid);
+		Assert.Equal(1234, recipient.AtomicUnits);
+		var asset = LiquidAssetId.ParseRpcHex(assetId);
+		var state = LiquidWalletState.Empty(PeggedAsset).Apply(0, Delta(Tx('c'), [],
+			[Output(Tx('c'), 0, asset, 1234), Output(Tx('c'), 1, PeggedAsset, 100)]));
+		var plan = LiquidWalletUiFacade.CreateSpendPlan("test-metadata", Manifest, state,
+			[OutPointHexForTag(Tx('c'), 0), OutPointHexForTag(Tx('c'), 1)],
+			ConfidentialAddressForTag(), recipient.AssetIdHex, recipient.AtomicUnits, 100);
+		var display = new LiquidSpendPlanItemViewModel(uiContext, plan, model.AssetRegistry);
+		Assert.Equal("1.234 TEST", display.Destinations[0].AmountDisplayText);
+		Assert.Equal("TEST - Testnet Asset", display.Destinations[0].AssetLabel);
+		Assert.Equal(assetId, display.Destinations[0].AssetIdHex);
+		Assert.Equal(1234, display.Destinations[0].AtomicUnits);
+		foreach (var registry in new[] {
+			LiquidAssetMetadataRegistry.ForManifest(ElementsPublicNetworkManifest.LiquidMainnet),
+			new LiquidAssetMetadataRegistry(Manifest, Manifest.ManifestId, []) })
+		{
+			var fallback = new LiquidSpendPlanItemViewModel(uiContext, plan, registry);
+			Assert.Equal("1234 atomic units", fallback.Destinations[0].AmountDisplayText);
+			Assert.Equal("Unknown asset (atomic units)", fallback.Destinations[0].AssetLabel);
+			Assert.Equal(assetId, fallback.Destinations[0].AssetIdHex);
+			Assert.Equal(1234, fallback.Destinations[0].AtomicUnits);
+		}
+	}
+
+	[Fact]
 	public void RegistryFlowsThroughEveryDisplayWrapperWithoutChangingAtomicValues()
 	{
 		UiContext uiContext = BuildUiContext(false);

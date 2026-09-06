@@ -49,6 +49,11 @@ public sealed class LiquidAssetMetadataRegistry
 	public static LiquidAssetMetadataRegistry ForManifest(ElementsPublicNetworkManifest manifest)
 	{
 		ArgumentNullException.ThrowIfNull(manifest);
+		if (StringComparer.Ordinal.Equals(manifest.ManifestId, ElementsPublicNetworkManifest.LiquidTestnet.ManifestId))
+		{
+			return new(manifest, ElementsPublicNetworkManifest.LiquidTestnet.ManifestId,
+				[LiquidTestnetAssetSnapshot.Metadata]);
+		}
 		return new(manifest, manifest.ManifestId, []);
 	}
 }
