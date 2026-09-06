@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace WalletWasabi.Liquid.CoinJoin.Native;
@@ -49,16 +51,26 @@ internal static class LiquidCoinJoinFrame
 		if (payloadLength != frame.Length - HeaderBytes)
 			throw new FormatException("CoinJoin frame payload length does not match the frame.");
 
-		var fields = new List<byte[]>();
 		ReadOnlySpan<byte> payload = frame[HeaderBytes..];
+		int fieldCount = 0;
 		while (!payload.IsEmpty)
 		{
-			if (fields.Count == MaxFields || payload.Length < 4)
+			if (fieldCount == MaxFields || payload.Length < 4)
 				throw new FormatException("Invalid CoinJoin field sequence.");
 			uint length = BinaryPrimitives.ReadUInt32BigEndian(payload[..4]);
 			payload = payload[4..];
 			if (length > MaxFieldBytes || length > payload.Length)
 				throw new FormatException("Invalid CoinJoin field length.");
+			fieldCount++;
+			payload = payload[(int)length..];
+		}
+
+		var fields = new List<byte[]>(fieldCount);
+		payload = frame[HeaderBytes..];
+		while (!payload.IsEmpty)
+		{
+			uint length = BinaryPrimitives.ReadUInt32BigEndian(payload[..4]);
+			payload = payload[4..];
 			fields.Add(payload[..(int)length].ToArray());
 			payload = payload[(int)length..];
 		}
