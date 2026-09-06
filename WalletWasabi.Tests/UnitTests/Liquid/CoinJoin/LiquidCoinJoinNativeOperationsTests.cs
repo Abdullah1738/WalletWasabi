@@ -1,8 +1,10 @@
 using System;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text.Json;
 using WalletWasabi.Liquid.CoinJoin.Native;
 using Xunit;
 
@@ -34,7 +36,10 @@ public sealed class LiquidCoinJoinNativeOperationsTests
 	{
 		LiquidCoinJoinNativeBinding.EnsurePinnedArtifact();
 		var operations = new LiquidCoinJoinNativeOperations();
-		Assert.Throws<FormatException>(() => operations.Canonicalize(ReadOnlyMemory<byte>.Empty, ReadOnlyMemory<byte>.Empty));
+		if (OperatingSystem.IsMacOS() && RuntimeInformation.OSArchitecture == Architecture.Arm64)
+			Assert.Throws<FormatException>(() => operations.Canonicalize(ReadOnlyMemory<byte>.Empty, ReadOnlyMemory<byte>.Empty));
+		else
+			Assert.Throws<PlatformNotSupportedException>(() => operations.Canonicalize(ReadOnlyMemory<byte>.Empty, ReadOnlyMemory<byte>.Empty));
 	}
 
 	[Fact]
@@ -45,7 +50,23 @@ public sealed class LiquidCoinJoinNativeOperationsTests
 		Assert.Equal(
 			"7ef206f60b7ef0a401828da9071a801937f40329d64c8598c9494398fe79ea80",
 			Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path))));
-		Assert.Equal("1d8e9f079d2485477cbfa51838d33ca25d454509", LiquidCoinJoinNativeBinding.NativeCommit);
+		Assert.Equal("f4fbd27463855fb13b2fef209fdf1a3994e3ae76", LiquidCoinJoinNativeBinding.NativeCommit);
+		string directory = Path.GetDirectoryName(path)!;
+		using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "manifest.json")));
+		Assert.Equal(LiquidCoinJoinNativeBinding.NativeCommit, manifest.RootElement.GetProperty("commit").GetString());
+		Assert.Equal("wlcj_execute_v1", manifest.RootElement.GetProperty("export").GetString());
+		Assert.Equal("https://github.com/Abdullah1738/wasabi-liquid-native/actions/runs/34059982842", manifest.RootElement.GetProperty("run_url").GetString());
+		var root = new DirectoryInfo(AppContext.BaseDirectory);
+		while (root is not null && !Directory.Exists(Path.Combine(root.FullName, "WalletWasabi", "Liquid"))) root = root.Parent;
+		Assert.NotNull(root);
+		string source = Path.Combine(root.FullName, "WalletWasabi", "Liquid", "CoinJoin", "Native", "NativeCoinJoin");
+		foreach (var artifact in manifest.RootElement.GetProperty("files").EnumerateObject())
+			Assert.Equal(artifact.Value.GetString(), Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(source, artifact.Name)))));
+		string[] names = ["libwasabi_liquid_coinjoin_v1.dylib", "wasabi_liquid_coinjoin_v1.h", "manifest.json"];
+		var expectedSums = names.Select(name => Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(source, name)))) + "  " + name).Order(StringComparer.Ordinal);
+		Assert.Equal(expectedSums, File.ReadAllLines(Path.Combine(directory, "SHA256SUMS")).Order(StringComparer.Ordinal));
+		Assert.Equal(File.ReadAllBytes(Path.Combine(source, "manifest.json")), File.ReadAllBytes(Path.Combine(directory, "manifest.json")));
+		Assert.Equal(File.ReadAllBytes(Path.Combine(source, "SHA256SUMS")), File.ReadAllBytes(Path.Combine(directory, "SHA256SUMS")));
 	}
 
 	[Fact]

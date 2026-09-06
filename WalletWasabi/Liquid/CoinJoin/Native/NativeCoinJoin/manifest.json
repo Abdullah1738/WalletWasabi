@@ -2,7 +2,7 @@
   "abi_version": 1,
   "build_script_sha256": "33528027bb7d28fcafb2638eb6be7af70560dd10402379f29e5bb99b7a6ca47f",
   "cargo_lock_sha256": "9f45865c3e3edfd33f684c8cc36643225a0a5774814eaaea543788b908cfd8f6",
-  "commit": "1d8e9f079d2485477cbfa51838d33ca25d454509",
+  "commit": "f4fbd27463855fb13b2fef209fdf1a3994e3ae76",
   "export": "wlcj_execute_v1",
   "files": {
     "libwasabi_liquid_coinjoin_v1.dylib": "7ef206f60b7ef0a401828da9071a801937f40329d64c8598c9494398fe79ea80",
@@ -26,7 +26,7 @@
   "profile": "release",
   "repository": "Abdullah1738/wasabi-liquid-native",
   "run_attempt": 1,
-  "run_url": "https://github.com/Abdullah1738/wasabi-liquid-native/actions/runs/34050767856",
+  "run_url": "https://github.com/Abdullah1738/wasabi-liquid-native/actions/runs/34059982842",
   "runner": "macos-14",
   "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
   "schema_version": 1,

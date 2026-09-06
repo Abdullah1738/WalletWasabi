@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.Security.Cryptography;
+using NBitcoin.Secp256k1;
 using WabiSabi;
 using WabiSabi.CredentialRequesting;
 using WabiSabi.Crypto;
@@ -40,6 +42,21 @@ internal sealed class LiquidCoinJoinCredentialCore
 	public (Guid OperationId, ICredentialsRequest Request) CreateIssuance(long amount) => CreateOperation(amount, consuming: false);
 
 	public (Guid OperationId, ICredentialsRequest Request) CreateConsumption() => CreateOperation(0, consuming: true);
+
+	// Participant-only scope: sum every requested commitment, including padding.
+	// Proving only the first Ma would leave the other requested value unbacked.
+	internal T WithRequestedAmountWitness<T>(Guid operationId, Func<long, byte[], byte[], T> prove)
+	{
+		lock (_gate)
+		{
+			EnsurePending(operationId);
+			var requested = _validation!.Requested.ToArray();
+			var randomness = requested.Select(x => x.Randomness).Aggregate((a, b) => a + b).ToBytes();
+			var commitment = requested.Select(x => x.Ma).Aggregate((a, b) => a + b).ToBytes();
+			try { return prove(requested.Sum(x => x.Value), commitment, randomness); }
+			finally { CryptographicOperations.ZeroMemory(randomness); CryptographicOperations.ZeroMemory(commitment); }
+		}
+	}
 
 	private (Guid OperationId, ICredentialsRequest Request) CreateOperation(long amount, bool consuming)
 	{

@@ -42,6 +42,21 @@ internal sealed record LiquidCoinJoinRoundParameters
 	}
 
 	public string NetworkManifestId { get; }
+
+	// Native local rounds may use a synthetic genesis. This constructor does not
+	// admit that identity to the public-network manifest catalog or wallet APIs.
+	internal LiquidCoinJoinRoundParameters(string roundId, string networkIdentity, byte[] genesis, byte[] asset, long fee, string issuerRole)
+	{
+		if (string.IsNullOrWhiteSpace(roundId) || string.IsNullOrWhiteSpace(networkIdentity) || genesis.Length != 32 || asset.Length != 32 || fee <= 0 || string.IsNullOrWhiteSpace(issuerRole))
+			throw new ArgumentException("Invalid native local round identity.");
+		RoundId = roundId;
+		NetworkManifestId = networkIdentity;
+		GenesisHash = Convert.ToHexString(genesis);
+		PeggedAssetId = Convert.ToHexString(asset);
+		Fee = fee;
+		IssuerRole = issuerRole;
+		OwnerCount = 2;
+	}
 	public string RoundId { get; }
 	public string GenesisHash { get; }
 	public string PeggedAssetId { get; }
