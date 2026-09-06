@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using WalletWasabi.Liquid.Wallet.Ui;
+using WalletWasabi.Liquid.Assets;
 
 namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 
@@ -30,6 +31,14 @@ public sealed class LiquidSpendPlanItemViewModel : ViewModelBase
 		SelectedTotals = plan.SelectedTotals
 			.Select(amount => new LiquidSpendPlanAssetAmountItemViewModel(uiContext, amount))
 			.ToList();
+	}
+
+	public LiquidSpendPlanItemViewModel(UiContext uiContext, LiquidWalletUiSpendPlan plan, LiquidAssetMetadataRegistry registry)
+		: this(uiContext, plan)
+	{
+		ExplicitFee = new LiquidSpendPlanAssetAmountItemViewModel(uiContext, plan.ExplicitFee, registry);
+		Destinations = plan.Destinations.Select(x => new LiquidSpendPlanDestinationItemViewModel(uiContext, x, registry)).ToList();
+		SelectedTotals = plan.SelectedTotals.Select(x => new LiquidSpendPlanAssetAmountItemViewModel(uiContext, x, registry)).ToList();
 	}
 
 	public int SelectedInputCount { get; }

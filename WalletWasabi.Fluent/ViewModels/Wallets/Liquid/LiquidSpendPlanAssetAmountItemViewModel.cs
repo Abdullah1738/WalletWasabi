@@ -1,5 +1,6 @@
 using WalletWasabi.Fluent.Helpers;
 using WalletWasabi.Liquid.Wallet.Ui;
+using WalletWasabi.Liquid.Assets;
 
 namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 
@@ -25,7 +26,17 @@ public sealed class LiquidSpendPlanAssetAmountItemViewModel : ViewModelBase
 		IsPeggedAsset = amount.IsPeggedAsset;
 		AtomicUnits = amount.AtomicUnits;
 		AmountDisplayText = LiquidAmountDisplay.FormatBalance(IsPeggedAsset, AtomicUnits);
+		AssetLabel = IsPeggedAsset ? "L-BTC - Liquid Bitcoin" : "Unknown asset (atomic units)";
 	}
+
+	public LiquidSpendPlanAssetAmountItemViewModel(UiContext uiContext, LiquidWalletUiAssetAmount amount, LiquidAssetMetadataRegistry registry)
+		: this(uiContext, amount)
+	{
+		AmountDisplayText = LiquidAmountDisplay.FormatBalance(registry, AssetIdHex, AtomicUnits);
+		AssetLabel = LiquidAmountDisplay.AssetLabel(registry, AssetIdHex);
+	}
+
+	public string AssetLabel { get; }
 
 	public string AssetIdHex { get; }
 	public bool IsPeggedAsset { get; }

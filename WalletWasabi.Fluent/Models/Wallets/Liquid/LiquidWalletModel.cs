@@ -8,6 +8,7 @@ using WalletWasabi.Fluent.Infrastructure;
 using WalletWasabi.Liquid.Network;
 using WalletWasabi.Liquid.Application;
 using WalletWasabi.Liquid.Wallet.Ui;
+using WalletWasabi.Liquid.Assets;
 using System.Collections.Generic;
 
 namespace WalletWasabi.Fluent.Models.Wallets.Liquid;
@@ -31,6 +32,7 @@ namespace WalletWasabi.Fluent.Models.Wallets.Liquid;
 public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 {
 	private readonly ElementsPublicNetworkManifest _manifest;
+	public LiquidAssetMetadataRegistry AssetRegistry { get; }
 	private readonly BehaviorSubject<LiquidWalletUiSnapshot> _balances;
 	private readonly BehaviorSubject<bool> _loaded;
 	private readonly BehaviorSubject<LiquidWalletUiHistorySnapshot?> _history;
@@ -52,7 +54,8 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 		Func<LiquidWalletUiSetReceiveLabelsRequest, CancellationToken, Task>? setNextReceiveLabelsCommand = null,
 		LiquidWalletUiSelectableOutputsSnapshot? initialSelectableOutputs = null,
 		Func<string, string, CancellationToken, Task<LiquidWalletRuntimeHandoff>>? issueReceiveCommand = null,
-		Func<LiquidWalletRuntimeHandoff?>? currentHandoff = null)
+		Func<LiquidWalletRuntimeHandoff?>? currentHandoff = null,
+		LiquidAssetMetadataRegistry? assetRegistry = null)
 	{
 		ArgumentException.ThrowIfNullOrEmpty(name);
 		ArgumentNullException.ThrowIfNull(manifest);
@@ -60,6 +63,11 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 
 		Name = name;
 		_manifest = manifest;
+		AssetRegistry = assetRegistry ?? LiquidAssetMetadataRegistry.ForManifest(manifest);
+		if (AssetRegistry.NetworkManifestId != manifest.ManifestId)
+			throw new ArgumentException("Asset registry and wallet must use the same network manifest.", nameof(assetRegistry));
+		if (initialSnapshot.NetworkManifestId != manifest.ManifestId || initialSnapshot.PeggedAssetIdHex != manifest.PeggedAssetId)
+			throw new ArgumentException("Balance snapshot and wallet must use the same network manifest.", nameof(initialSnapshot));
 		NetworkManifestId = initialSnapshot.NetworkManifestId;
 		Snapshot = initialSnapshot;
 		_receiveMaterial = new(new LiquidWalletUiReceiveMaterial(nextReceiveScriptPubKey.Span, nextReceiveBlindingPublicKey.Span, nextReceiveLabels));
@@ -135,6 +143,8 @@ public sealed class LiquidWalletModel : ReactiveObject, IDisposable
 	public void RefreshBalances(LiquidWalletUiSnapshot snapshot)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
+		if (snapshot.NetworkManifestId != NetworkManifestId || snapshot.PeggedAssetIdHex != AssetRegistry.PeggedAssetId)
+			throw new ArgumentException("Balance snapshot and asset registry must use the same network manifest.", nameof(snapshot));
 		if (HistorySnapshot is { } history && history.Revision != snapshot.Revision)
 		{
 			HistorySnapshot = null;

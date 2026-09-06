@@ -76,15 +76,14 @@
       <ItemsControl ItemsSource="{Binding BalanceRows}" Margin="6 0 6 0">
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="liquid:LiquidAssetBalanceItemViewModel">
-            <DockPanel Margin="0 4 0 4">
-              <TextBlock DockPanel.Dock="Left" Classes="monoSpaced"
-                         Text="{Binding AssetIdHex}" />
-              <TextBlock DockPanel.Dock="Right" Classes="monoSpaced"
-                         Text="{Binding BalanceDisplayText}" />
-              <TextBlock DockPanel.Dock="Right" Margin="8 0 0 0"
-                         Text="confidential" IsVisible="{Binding IsConfidential}" />
-              <Button DockPanel.Dock="Right" Classes="plain" Margin="8 0 0 0"
-                      Focusable="False"
+            <Grid Margin="0 4 0 4" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto">
+              <TextBlock Grid.Row="0" Grid.Column="0" Classes="monoSpaced"
+                         VerticalAlignment="Center" TextWrapping="Wrap"
+                          Text="{Binding BalanceDisplayText}" />
+              <Button Grid.Row="0" Grid.Column="1" Classes="plain" Margin="8 0 0 0"
+                      VerticalAlignment="Top"
+                      AutomationProperties.Name="Send this asset"
+                      AutomationProperties.HelpText="{Binding AssetIdHex}"
                       ToolTip.Tip="Send this asset"
                       Command="{Binding SendCommand}"
                       IsVisible="{Binding SendCommand, Converter={x:Static ObjectConverters.IsNotNull}}">
@@ -93,7 +92,13 @@
                   <TextBlock Text="Send" />
                 </StackPanel>
               </Button>
-            </DockPanel>
+              <TextBlock Grid.Row="1" Grid.ColumnSpan="2" TextWrapping="Wrap"
+                         Text="confidential" IsVisible="{Binding IsConfidential}" />
+              <TextBlock Grid.Row="2" Grid.ColumnSpan="2"
+                         Text="{Binding AssetLabel}" TextWrapping="Wrap" />
+              <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Classes="monoSpaced" Opacity="0.7"
+                         TextWrapping="Wrap" Text="{Binding AssetIdHex}" />
+            </Grid>
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>
@@ -154,9 +159,11 @@
                       <PrivacyContentControl DockPanel.Dock="Right"
                                              PrivacyReplacementMode="Text"
                                              UseOpacity="False">
-                        <TextBlock Classes="monoSpaced"
-                                   TextWrapping="Wrap"
-                                   Text="{Binding DisplayAmount}" />
+                        <StackPanel>
+                          <TextBlock Text="{Binding AssetDisplayReference}" TextWrapping="Wrap" />
+                          <TextBlock Classes="monoSpaced" TextWrapping="Wrap" Text="{Binding DisplayAmount}" />
+                          <TextBlock Classes="monoSpaced" TextWrapping="Wrap" Opacity="0.7" Text="{Binding AssetIdHex}" />
+                        </StackPanel>
                       </PrivacyContentControl>
                     </DockPanel>
                   </DataTemplate>

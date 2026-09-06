@@ -1,4 +1,5 @@
 using WalletWasabi.Fluent.Extensions;
+using WalletWasabi.Liquid.Assets;
 
 namespace WalletWasabi.Fluent.Helpers;
 
@@ -40,4 +41,25 @@ internal static class LiquidAmountDisplay
 		isPeggedAsset
 			? $"{FormatPeggedAmount(atomicUnits)} L-BTC"
 			: $"{atomicUnits} atomic units";
+
+	public static string FormatBalance(LiquidAssetMetadataRegistry registry, string assetIdHex, long atomicUnits)
+	{
+		if (!registry.TryGet(assetIdHex, out var metadata))
+			return $"{atomicUnits.ToString(System.Globalization.CultureInfo.InvariantCulture)} atomic units";
+		if (assetIdHex == registry.PeggedAssetId) return $"{FormatPeggedAmount(atomicUnits)} L-BTC";
+		decimal scaled = atomicUnits / Pow10(metadata.Precision);
+		return $"{scaled.ToString($"F{metadata.Precision}", System.Globalization.CultureInfo.InvariantCulture)} {metadata.Ticker}";
+	}
+
+	public static string AssetLabel(LiquidAssetMetadataRegistry registry, string assetIdHex) =>
+		registry.TryGet(assetIdHex, out var metadata)
+			? $"{metadata.Ticker} - {metadata.Name}"
+			: "Unknown asset (atomic units)";
+
+	private static decimal Pow10(int precision)
+	{
+		decimal value = 1;
+		for (int i = 0; i < precision; i++) value *= 10;
+		return value;
+	}
 }

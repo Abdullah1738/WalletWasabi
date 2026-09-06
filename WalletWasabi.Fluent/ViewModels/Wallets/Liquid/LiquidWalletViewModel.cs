@@ -70,7 +70,7 @@ public partial class LiquidWalletViewModel : RoutableViewModel
 				_historyRows.Clear();
 				foreach (var row in snapshot.Rows)
 				{
-					_historyRows.Add(new LiquidHistoryItemViewModel(uiContext, row));
+					_historyRows.Add(new LiquidHistoryItemViewModel(uiContext, row, walletModel.AssetRegistry));
 				}
 
 				IsHistoryEmpty = _historyRows.Count == 0;
@@ -161,7 +161,7 @@ public partial class LiquidWalletViewModel : RoutableViewModel
 	// default (no pre-selection) path.
 	private LiquidAssetBalanceItemViewModel CreateBalanceRow(LiquidWalletUiAssetBalance balance)
 	{
-		var row = new LiquidAssetBalanceItemViewModel(UiContext, balance);
+		var row = new LiquidAssetBalanceItemViewModel(UiContext, balance, WalletModel.AssetRegistry);
 		string assetIdHex = balance.AssetIdHex;
 		row.SendCommand = ReactiveCommand.Create(() =>
 			UiContext.Navigate(NavigationTarget.DialogScreen)

@@ -7,19 +7,11 @@
              x:DataType="liquid:LiquidSendRecipientViewModel"
              x:CompileBindings="True"
              x:Class="WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidSendRecipientView">
-  <!-- One recipient row: confidential address, asset dropdown bound from the
-       wallet's balance set, raw atomic-units amount. -->
+  <!-- Metadata is display-only; selection and requests retain canonical IDs. -->
   <StackPanel Spacing="8">
     <TextBox Watermark="Confidential address"
              Classes="monoSpaced"
              Text="{Binding ConfidentialAddressText}" />
-    <!-- The asset selector: one option per held asset, the pegged asset
-         (L-BTC) first, then the issued assets in canonical order; each
-         option shows the asset id hex and the pegged-aware balance display —
-         the L-BTC decimal form for the pegged asset, the raw atomic-unit
-         count for any issued asset (an issued asset has no known precision —
-         never scaled). An empty balance set leaves the dropdown empty — no
-         fabricated asset. -->
     <ComboBox ItemsSource="{Binding AssetOptions}"
               SelectedItem="{Binding SelectedAsset}"
               HorizontalAlignment="Stretch"
@@ -30,14 +22,21 @@
           <DockPanel>
             <TextBlock DockPanel.Dock="Right" Classes="monoSpaced"
                        Text="{Binding BalanceDisplayText}" />
-            <TextBlock DockPanel.Dock="Left" Classes="monoSpaced"
-                       TextTrimming="CharacterEllipsis"
-                       Text="{Binding AssetIdHex}" />
+            <StackPanel>
+              <TextBlock Text="{Binding AssetLabel}" TextWrapping="Wrap" />
+              <TextBlock Classes="monoSpaced" Opacity="0.7"
+                         TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding AssetIdHex}"
+                         Text="{Binding AssetIdHex}" />
+            </StackPanel>
           </DockPanel>
         </DataTemplate>
       </ComboBox.ItemTemplate>
     </ComboBox>
-    <TextBox Watermark="Amount (atomic units)"
-             Text="{Binding AtomicUnits}" />
+    <TextBlock Text="{Binding AmountUnitText}" TextWrapping="Wrap" />
+    <TextBox Name="AmountInput" Watermark="Amount"
+             AutomationProperties.Name="Recipient amount"
+             Text="{Binding AmountText, UpdateSourceTrigger=PropertyChanged}" />
+    <TextBlock Name="AmountError" TextWrapping="Wrap" Text="{Binding AmountErrorText}"
+               IsVisible="{Binding AmountErrorText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
   </StackPanel>
 </UserControl>

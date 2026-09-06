@@ -88,7 +88,7 @@ public partial class LiquidSendViewModel : RoutableViewModel
 			.Select(snapshot => (IReadOnlyList<LiquidSelectableOutputItemViewModel>)snapshot.Outputs
 				.Select(output =>
 				{
-					var row = new LiquidSelectableOutputItemViewModel(uiContext, output)
+					var row = new LiquidSelectableOutputItemViewModel(uiContext, output, walletModel.AssetRegistry)
 					{
 						IsSelected = true,
 					};
@@ -192,6 +192,11 @@ public partial class LiquidSendViewModel : RoutableViewModel
 			ExecutionErrorText = "The Liquid send execution surface is not wired for this wallet session.";
 			return;
 		}
+		if (!Recipient.TryParseAmount())
+		{
+			ExecutionErrorText = Recipient.AmountErrorText;
+			return;
+		}
 
 		string[] selectedOutPointHexes = [.. SelectedOutPointHexes];
 
@@ -236,6 +241,13 @@ public partial class LiquidSendViewModel : RoutableViewModel
 		ReadOnlySpan<byte> key,
 		ReadOnlySpan<byte> externalWalletNetworkContext)
 	{
+		SpendPlan = null;
+		ExecutionErrorText = null;
+		if (!Recipient.TryParseAmount())
+		{
+			ExecutionErrorText = Recipient.AmountErrorText;
+			return;
+		}
 		string[] selectedOutPointHexes = [.. SelectedOutPointHexes];
 
 		SpendPlan = new LiquidSpendPlanItemViewModel(UiContext, WalletModel.CreateSpendPlan(
@@ -247,7 +259,7 @@ public partial class LiquidSendViewModel : RoutableViewModel
 			Recipient.AssetIdHex,
 			Recipient.AtomicUnits,
 			ExplicitFeeAtomicUnits,
-			Snapshot?.Revision));
+			Snapshot?.Revision), WalletModel.AssetRegistry);
 	}
 
 	// The snapshot revision the UI last rendered — the caller's freshness

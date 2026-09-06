@@ -10,6 +10,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia;
 using Avalonia.VisualTree;
 using NBitcoin;
 using ReactiveUI;
@@ -77,6 +78,288 @@ public class LiquidWalletWiringTests
 		LiquidSpendKeyReference.Create(Convert.FromHexString(PublicKeyHex), LiquidKeyBranch.External, 0);
 	private static byte[] BlindingKey => Convert.FromHexString(BlindingKeyHex);
 	private static byte[] ReceiveScript => ExternalKey.GetScriptPubKey();
+	private static LiquidAssetMetadataRegistry FixtureRegistry => new(Manifest, Manifest.ManifestId,
+		[new(IssuedAssetAHex, "FIX", "Test fixture asset", 2)]);
+
+	[Avalonia.Headless.XUnit.AvaloniaFact]
+	public async Task RegistryAmountEntryBindsAndProducesAtomicSendRequestAsync()
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using var model = CreateModel("metadata-entry", 5_000, 7_500, assetRegistry: FixtureRegistry);
+		LiquidWalletUiSendExecutionRequest? captured = null;
+		var send = new LiquidSendViewModel(uiContext, model, (request, _) =>
+		{
+			captured = request;
+			throw new InvalidOperationException("Test executor reached");
+		});
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidSendRecipientView { DataContext = send.Recipient };
+		var window = new Avalonia.Controls.Window { Width = 800, Height = 600, Content = view };
+		window.Show();
+		try
+		{
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			var combo = view.GetVisualDescendants().OfType<Avalonia.Controls.ComboBox>().Single();
+			var option = combo.Items.Cast<LiquidAssetBalanceItemViewModel>().Single(x => x.AssetIdHex == IssuedAssetAHex);
+			Assert.Equal("FIX - Test fixture asset", option.AssetLabel);
+			Assert.Equal("75.00 FIX", option.BalanceDisplayText);
+			combo.SelectedItem = option;
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.Contains(view.GetVisualDescendants().OfType<Avalonia.Controls.TextBlock>(), x => x.Text == option.AssetLabel);
+			var input = view.GetVisualDescendants().OfType<Avalonia.Controls.TextBox>().Single(x => x.Name == "AmountInput");
+			input.Text = "12.34";
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.Equal(1234, send.Recipient.AtomicUnits);
+			Assert.True(send.Recipient.IsAmountValid);
+			Assert.NotNull(model.Snapshot);
+			model.RefreshBalances(model.Snapshot);
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.Equal(IssuedAssetAHex, send.Recipient.SelectedAsset?.AssetIdHex);
+			Assert.Equal("12.34", input.Text);
+			Assert.Equal(1234, send.Recipient.AtomicUnits);
+			send.Recipient.ConfidentialAddressText = "tex1qfixture";
+			send.ExplicitFeeAtomicUnits = 100;
+			await send.SendExecution.Execute().ToTask();
+			Assert.NotNull(captured);
+			Assert.Equal(IssuedAssetAHex, captured.DestinationAssetIdHex);
+			Assert.Equal(1234, captured.DestinationAtomicUnits);
+			captured = null;
+			input.Text = "12.345";
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.Equal(0, send.Recipient.AtomicUnits);
+			Assert.False(send.Recipient.IsAmountValid);
+			Assert.True(((System.ComponentModel.INotifyDataErrorInfo)send.Recipient).HasErrors);
+			Assert.Contains(view.GetVisualDescendants().OfType<Avalonia.Controls.TextBlock>(), x => x.Name == "AmountError" && x.IsVisible && !string.IsNullOrEmpty(x.Text));
+			await send.SendExecution.Execute().ToTask();
+			Assert.Null(captured);
+			input.Text = "12.34";
+			combo.SelectedItem = combo.Items.Cast<LiquidAssetBalanceItemViewModel>().Single(x => x.IsPeggedAsset);
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.Equal("", send.Recipient.AmountText);
+			Assert.Equal(0, send.Recipient.AtomicUnits);
+			Assert.False(send.Recipient.IsAmountValid);
+		}
+		finally { window.Close(); }
+	}
+
+	[Avalonia.Headless.XUnit.AvaloniaTheory]
+	[InlineData(800, true)]
+	[InlineData(320, true)]
+	[InlineData(800, false)]
+	[InlineData(320, false)]
+	public void SendViewCoinControlKeepsAmountVisibleWithLongMetadata(int width, bool registered)
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		var registry = registered
+			? new LiquidAssetMetadataRegistry(Manifest, Manifest.ManifestId,
+				[new(IssuedAssetAHex, new string('T', 16), new string('N', 128), 2)])
+			: LiquidAssetMetadataRegistry.ForManifest(Manifest);
+		using var model = CreateModel("metadata-layout", 5_000, long.MaxValue, assetRegistry: registry);
+		var send = new LiquidSendViewModel(uiContext, model);
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidSendView { DataContext = send };
+		var window = new Avalonia.Controls.Window { Width = width, Height = 900, Content = view };
+		window.Show();
+		try
+		{
+			view.Measure(new Avalonia.Size(width, 900));
+			view.Arrange(new Avalonia.Rect(0, 0, width, 900));
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			var list = view.GetVisualDescendants().OfType<Avalonia.Controls.ItemsControl>()
+				.Single(x => ReferenceEquals(x.ItemsSource, send.SelectableOutputs));
+			Assert.True(list.Bounds.Width > 0);
+			Assert.True(list.Bounds.Width <= width);
+			foreach (var output in send.SelectableOutputs)
+			{
+				var texts = list.GetVisualDescendants().OfType<Avalonia.Controls.TextBlock>()
+					.Where(x => ReferenceEquals(x.DataContext, output)).ToArray();
+				foreach (string expected in new[] { output.AmountDisplayText, output.AssetMarkerText, output.AssetIdHex, output.OutPointDisplayText })
+				{
+					var text = Assert.Single(texts, x => x.Text == expected);
+					Assert.True(text.IsEffectivelyVisible);
+					Assert.True(text.Bounds.Width > 0);
+					Assert.True(text.Bounds.Height > 0);
+					var origin = text.TranslatePoint(default, list)!.Value;
+					Assert.True(origin.X >= 0);
+					Assert.True(origin.X + text.Bounds.Width <= list.Bounds.Width + 1,
+						$"'{expected}' extends beyond the {width}px coin list.");
+					Assert.True(text.TextLayout.Width <= text.Bounds.Width + 1,
+						$"'{expected}' text width {text.TextLayout.Width} exceeds its {text.Bounds.Width}px bounds.");
+				}
+			}
+			var issuedOutput = send.SelectableOutputs.Single(x => x.AssetIdHex == IssuedAssetAHex);
+			var checkBox = list.GetVisualDescendants().OfType<Avalonia.Controls.CheckBox>()
+				.Single(x => ReferenceEquals(x.DataContext, issuedOutput));
+			Assert.Equal(issuedOutput.OutPointDisplayText, Avalonia.Automation.AutomationProperties.GetName(checkBox));
+			Assert.Equal(IssuedAssetAHex, Avalonia.Automation.AutomationProperties.GetHelpText(checkBox));
+			checkBox.IsChecked = false;
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			Assert.False(issuedOutput.IsSelected);
+			Assert.DoesNotContain(issuedOutput.SelectionId, send.SelectedOutPointHexes);
+		}
+		finally { window.Close(); }
+	}
+
+	[Avalonia.Headless.XUnit.AvaloniaTheory]
+	[InlineData(800, true)]
+	[InlineData(320, true)]
+	[InlineData(800, false)]
+	[InlineData(320, false)]
+	public void WalletViewBalanceKeepsAmountAndSendVisibleWithLongMetadata(int width, bool registered)
+	{
+		UiContext uiContext = BuildUiContext(privacyMode: false);
+		using ServicesScope _ = InstallTestServices(uiContext.Services.UiConfig);
+		var registry = registered
+			? new LiquidAssetMetadataRegistry(Manifest, Manifest.ManifestId,
+				[new(IssuedAssetAHex, new string('T', 16), new string('N', 128), 2)])
+			: LiquidAssetMetadataRegistry.ForManifest(Manifest);
+		using var model = CreateModel("balance-layout", 5_000, long.MaxValue, assetRegistry: registry);
+		var wallet = new LiquidWalletViewModel(uiContext, model);
+		var view = new WalletWasabi.Fluent.Views.Wallets.Liquid.LiquidWalletView { DataContext = wallet };
+		var window = new Avalonia.Controls.Window { Width = width, Height = 900, Content = view };
+		window.Show();
+		try
+		{
+			view.Measure(new Avalonia.Size(width, 900));
+			view.Arrange(new Avalonia.Rect(0, 0, width, 900));
+			Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+			var list = view.GetVisualDescendants().OfType<Avalonia.Controls.ItemsControl>()
+				.Single(x => ReferenceEquals(x.ItemsSource, wallet.BalanceRows));
+			Assert.InRange(list.Bounds.Width, 1, width);
+			Assert.NotNull(wallet.BalanceRows);
+			Assert.Equal(2, wallet.BalanceRows.Count);
+			foreach (var balance in wallet.BalanceRows)
+			{
+				var texts = list.GetVisualDescendants().OfType<Avalonia.Controls.TextBlock>()
+					.Where(x => ReferenceEquals(x.DataContext, balance)).ToArray();
+				var amount = Assert.Single(texts, x => x.Text == balance.BalanceDisplayText);
+				var button = list.GetVisualDescendants().OfType<Avalonia.Controls.Button>()
+					.Single(x => ReferenceEquals(x.DataContext, balance));
+				foreach (string expected in new[] { balance.BalanceDisplayText, balance.AssetLabel, balance.AssetIdHex, "confidential", "Send" })
+				{
+					var text = Assert.Single(texts, x => x.Text == expected);
+					Assert.True(text.IsEffectivelyVisible);
+					Assert.True(text.Bounds.Width > 0);
+					Assert.True(text.Bounds.Height > 0);
+					var origin = text.TranslatePoint(default, list)!.Value;
+					Assert.True(origin.X >= 0);
+					Assert.True(origin.X + text.Bounds.Width <= list.Bounds.Width + 1,
+						$"'{expected}' extends beyond the {width}px balance list.");
+					Assert.True(text.TextLayout.Width <= text.Bounds.Width + 1,
+						$"'{expected}' text exceeds its {text.Bounds.Width}px bounds.");
+					Assert.True(text.TextLayout.Height <= text.Bounds.Height + 1);
+					var viewOrigin = text.TranslatePoint(default, view)!.Value;
+					Assert.InRange(viewOrigin.X, 0, width - text.Bounds.Width + 1);
+					Assert.InRange(viewOrigin.Y, 0, view.Bounds.Height - text.Bounds.Height + 1);
+				}
+				Assert.True(button.IsEffectivelyVisible);
+				Assert.True(button.IsEnabled);
+				Assert.True(button.Bounds.Width > 0);
+				Assert.True(button.Bounds.Height > 0);
+				var buttonOrigin = button.TranslatePoint(default, list)!.Value;
+				var amountOrigin = amount.TranslatePoint(default, list)!.Value;
+				Assert.True(amountOrigin.X + amount.Bounds.Width <= buttonOrigin.X);
+				Assert.InRange(buttonOrigin.X, 0, list.Bounds.Width - button.Bounds.Width + 1);
+				Assert.Same(balance.SendCommand, button.Command);
+				Assert.Equal("Send this asset", Avalonia.Automation.AutomationProperties.GetName(button));
+				Assert.Equal(balance.AssetIdHex, Avalonia.Automation.AutomationProperties.GetHelpText(button));
+				Assert.True(button.Focusable);
+			}
+		}
+		finally { window.Close(); }
+	}
+
+	[Theory]
+	[InlineData("")]
+	[InlineData("0")]
+	[InlineData("12.345")]
+	[InlineData("1e2")]
+	[InlineData("-1")]
+	[InlineData("1,23")]
+	[InlineData("92233720368547758.08")]
+	public async Task InvalidAmountCannotBuildOrSendEvenWithStaleAtomicValueAsync(string text)
+	{
+		UiContext uiContext = BuildUiContext(false);
+		using var model = CreateModel("invalid-amount", 5000, 7500, assetRegistry: FixtureRegistry);
+		bool executed = false;
+		var send = new LiquidSendViewModel(uiContext, model, (_, _) =>
+		{
+			executed = true;
+			throw new InvalidOperationException("Invalid amount reached executor");
+		});
+		send.Recipient.AssetIdHex = IssuedAssetAHex;
+		send.Recipient.AmountText = "12.34";
+		Assert.Equal(1234, send.Recipient.AtomicUnits);
+		send.Recipient.AmountText = text;
+		Assert.Equal(0, send.Recipient.AtomicUnits);
+		send.Recipient.AtomicUnits = 1234;
+		// Empty persistence arguments would fail if plan construction were reached.
+		send.BuildPlanCommand.Execute(new LiquidSendViewModel.BuildSpendPlanParameters("", default, default));
+		Assert.Null(send.SpendPlan);
+		Assert.Equal(0, send.Recipient.AtomicUnits);
+		Assert.Equal(send.Recipient.AmountErrorText, send.ExecutionErrorText);
+		Assert.False(send.Recipient.IsAmountValid);
+		send.Recipient.AtomicUnits = 1234;
+		await send.SendExecution.Execute().ToTask();
+		Assert.False(executed);
+		Assert.Equal(0, send.Recipient.AtomicUnits);
+		Assert.Equal(send.Recipient.AmountErrorText, send.ExecutionErrorText);
+	}
+
+	[Fact]
+	public void RegistryFlowsThroughEveryDisplayWrapperWithoutChangingAtomicValues()
+	{
+		UiContext uiContext = BuildUiContext(false);
+		var registry = FixtureRegistry;
+		using var model = CreateModel("metadata-display", 5_000, 7_500, assetRegistry: registry);
+		var wallet = new LiquidWalletViewModel(uiContext, model);
+		Assert.Equal("75.00 FIX", wallet.BalanceRows!.Single(x => x.AssetIdHex == IssuedAssetAHex).BalanceDisplayText);
+		var send = new LiquidSendViewModel(uiContext, model);
+		var output = send.SelectableOutputs.Single(x => x.AssetIdHex == IssuedAssetAHex);
+		Assert.Equal("75.00 FIX", output.AmountDisplayText);
+		Assert.Equal("FIX - Test fixture asset", output.AssetMarkerText);
+		Assert.Equal(7500, output.AtomicUnits);
+		var state = LiquidWalletState.Empty(PeggedAsset).Apply(0, Delta(Tx('c'), [], [Output(Tx('c'), 0, IssuedAssetA, 1234)]));
+		var history = LiquidWalletUiFacade.CaptureHistory("metadata-display", Manifest, state);
+		var historyItem = new LiquidHistoryItemViewModel(uiContext, history.Rows[0], registry);
+		Assert.Equal("12.34 FIX", historyItem.AssetChanges[0].DisplayAmount);
+		Assert.Contains(IssuedAssetAHex, historyItem.NormalAccessibilitySummary);
+		Assert.Contains("Test fixture asset", historyItem.AccessibilitySummary);
+		var change = new LiquidHistoryAssetChangeItemViewModel(uiContext, history.Rows[0].AssetChanges[0], LiquidAssetMetadataRegistry.ForManifest(Manifest));
+		Assert.Equal("1234 atomic units", change.DisplayAmount);
+		Assert.Equal("Unknown asset (atomic units)", change.AssetDisplayReference);
+		Assert.Equal(IssuedAssetAHex, change.AssetIdHex);
+		state = state.Apply(1, Delta(Tx('d'), [], [Output(Tx('d'), 0, PeggedAsset, 100)]));
+		send.Recipient.AssetIdHex = IssuedAssetAHex;
+		send.Recipient.AmountText = "12.34";
+		var plan = LiquidWalletUiFacade.CreateSpendPlan("metadata-display", Manifest, state,
+			[OutPointHexForTag(Tx('c'), 0), OutPointHexForTag(Tx('d'), 0)],
+			ConfidentialAddressForTag(), send.Recipient.AssetIdHex, send.Recipient.AtomicUnits, 100);
+		var planItem = new LiquidSpendPlanItemViewModel(uiContext, plan, registry);
+		Assert.Equal("12.34 FIX", planItem.Destinations[0].AmountDisplayText);
+		Assert.Equal("12.34 FIX", planItem.SelectedTotals.Single(x => x.AssetIdHex == IssuedAssetAHex).AmountDisplayText);
+		Assert.Equal("FIX - Test fixture asset", planItem.Destinations[0].AssetLabel);
+		Assert.Equal(IssuedAssetAHex, planItem.Destinations[0].AssetIdHex);
+		Assert.Equal(1234, planItem.Destinations[0].AtomicUnits);
+		var unknownPlan = new LiquidSpendPlanItemViewModel(uiContext, plan, LiquidAssetMetadataRegistry.ForManifest(Manifest));
+		Assert.Equal("1234 atomic units", unknownPlan.Destinations[0].AmountDisplayText);
+		Assert.Equal("1234 atomic units", unknownPlan.SelectedTotals.Single(x => x.AssetIdHex == IssuedAssetAHex).AmountDisplayText);
+	}
+
+	[Fact]
+	public void UnknownAmountEntryIsAtomicAndForeignRegistryIsRejected()
+	{
+		UiContext uiContext = BuildUiContext(false);
+		using var model = CreateModel("unknown-entry", 5000, 7500);
+		var recipient = new LiquidSendRecipientViewModel(uiContext, model);
+		recipient.AssetIdHex = IssuedAssetAHex;
+		recipient.AmountText = "12";
+		Assert.Equal(12, recipient.AtomicUnits);
+		recipient.AmountText = "12.00";
+		Assert.False(recipient.IsAmountValid);
+		Assert.Equal(0, recipient.AtomicUnits);
+		Assert.Contains("integer atomic", recipient.AmountErrorText);
+		Assert.Throws<ArgumentException>(() => CreateModel("foreign-registry", 5000,
+			assetRegistry: LiquidAssetMetadataRegistry.ForManifest(ElementsPublicNetworkManifest.LiquidMainnet)));
+	}
 
 	// A registered Liquid wallet appears as exactly one NavBar item carrying the
 	// same model, and removing it from the repository removes the NavBar item.
@@ -252,7 +535,7 @@ public class LiquidWalletWiringTests
 		LiquidSendViewModel send = new(uiContext, model, Executor);
 		send.Recipient.ConfidentialAddressText = "tex1qdestination";
 		send.Recipient.AssetIdHex = new string('b', 64);
-		send.Recipient.AtomicUnits = 4_000;
+		send.Recipient.AmountText = "4000";
 		send.ExplicitFeeAtomicUnits = 100;
 
 		// The coin-control list binds from the wallet's selectable snapshot;
@@ -291,7 +574,7 @@ public class LiquidWalletWiringTests
 		LiquidSendViewModel send = new(uiContext, model, Executor);
 		send.Recipient.ConfidentialAddressText = "tex1qdestination";
 		send.Recipient.AssetIdHex = new string('b', 64);
-		send.Recipient.AtomicUnits = 4_000;
+		send.Recipient.AmountText = "4000";
 		send.ExplicitFeeAtomicUnits = 100;
 
 		await send.SendExecution.Execute().ToTask();
@@ -551,7 +834,8 @@ public class LiquidWalletWiringTests
 		long? issuedAtomic = null,
 		IReadOnlyList<string>? nextReceiveLabels = null,
 		Func<LiquidWalletUiSetReceiveLabelsRequest, CancellationToken, Task>? setNextReceiveLabelsCommand = null,
-		Func<string, string, CancellationToken, Task<LiquidWalletRuntimeHandoff>>? issueReceiveCommand = null)
+		Func<string, string, CancellationToken, Task<LiquidWalletRuntimeHandoff>>? issueReceiveCommand = null,
+		LiquidAssetMetadataRegistry? assetRegistry = null)
 	{
 		LiquidWalletState state = LiquidWalletState.Empty(PeggedAsset);
 		ulong revision = 0;
@@ -585,7 +869,8 @@ public class LiquidWalletWiringTests
 			nextReceiveLabels,
 			setNextReceiveLabelsCommand,
 			selectableOutputs,
-			issueReceiveCommand);
+			issueReceiveCommand,
+			assetRegistry: assetRegistry);
 	}
 
 	// Wraps a wallet state in the landed external-index allocation the
@@ -822,8 +1107,8 @@ public class LiquidWalletWiringTests
 
 			// The pegged row shows the L-BTC marker; the issued row shows the
 			// issued marker; the outpoint coordinate renders txid:vout.
-			Assert.Equal("L-BTC", send.SelectableOutputs[0].AssetMarkerText);
-			Assert.Equal("issued", send.SelectableOutputs[1].AssetMarkerText);
+			Assert.Equal("L-BTC - Liquid Bitcoin", send.SelectableOutputs[0].AssetMarkerText);
+			Assert.Equal("Unknown asset (atomic units)", send.SelectableOutputs[1].AssetMarkerText);
 			Assert.Equal("0.00 005 000 L-BTC", send.SelectableOutputs[0].AmountDisplayText);
 			Assert.Equal("7500 atomic units", send.SelectableOutputs[1].AmountDisplayText);
 			Assert.EndsWith(":0", send.SelectableOutputs[0].OutPointDisplayText);

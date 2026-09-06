@@ -4,6 +4,7 @@ using System.Reactive.Linq;
 using System.Windows.Input;
 using ReactiveUI;
 using WalletWasabi.Liquid.Wallet.Ui;
+using WalletWasabi.Liquid.Assets;
 
 namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 
@@ -25,6 +26,11 @@ public sealed class LiquidHistoryItemViewModel : ViewModelBase
 	private string _accessibilitySummary = "";
 
 	public LiquidHistoryItemViewModel(UiContext uiContext, LiquidWalletUiHistoryRow row)
+		: this(uiContext, row, null)
+	{
+	}
+
+	public LiquidHistoryItemViewModel(UiContext uiContext, LiquidWalletUiHistoryRow row, LiquidAssetMetadataRegistry? registry)
 		: base(uiContext)
 	{
 		ArgumentNullException.ThrowIfNull(row);
@@ -43,7 +49,9 @@ public sealed class LiquidHistoryItemViewModel : ViewModelBase
 		var changes = new LiquidHistoryAssetChangeItemViewModel[row.AssetChanges.Count];
 		for (int index = 0; index < row.AssetChanges.Count; index++)
 		{
-			changes[index] = new LiquidHistoryAssetChangeItemViewModel(uiContext, row.AssetChanges[index]);
+			changes[index] = registry is null
+				? new LiquidHistoryAssetChangeItemViewModel(uiContext, row.AssetChanges[index])
+				: new LiquidHistoryAssetChangeItemViewModel(uiContext, row.AssetChanges[index], registry);
 		}
 
 		AssetChanges = new ReadOnlyCollection<LiquidHistoryAssetChangeItemViewModel>(changes);
@@ -93,6 +101,8 @@ public sealed class LiquidHistoryItemViewModel : ViewModelBase
 				builder
 					.Append(' ')
 					.Append(change.DirectionText)
+					.Append(' ').Append(change.AssetDisplayReference)
+					.Append(' ').Append(change.AssetIdHex)
 					.Append(' ')
 					.Append(change.DisplayAmount);
 			}

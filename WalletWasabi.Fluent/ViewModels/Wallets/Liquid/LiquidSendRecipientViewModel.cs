@@ -3,6 +3,9 @@ using System.Linq;
 using System.Reactive.Linq;
 using ReactiveUI;
 using WalletWasabi.Fluent.Models.Wallets.Liquid;
+using WalletWasabi.Fluent.Validation;
+using WalletWasabi.Liquid.Amounts;
+using WalletWasabi.Models;
 
 namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 
@@ -11,7 +14,7 @@ namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 /// address, the destination asset (picked from a dropdown bound from
 /// <see cref="LiquidWalletModel.Balances"/> — the multiasset balance set:
 /// the pegged asset first, then the issued assets in canonical order), and
-/// the raw atomic-units amount (no decimal formatting, no USD conversion).
+/// an exact decimal amount for known metadata or integer atomic units otherwise.
 /// The selected asset keeps <see cref="AssetIdHex"/> in sync — the property
 /// the plan/sign path already consumes. Every Liquid managed-wallet
 /// destination is confidential by construction, so
@@ -20,11 +23,14 @@ namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 public sealed partial class LiquidSendRecipientViewModel : ViewModelBase
 {
 	private readonly LiquidWalletModel _walletModel;
+	private string? _amountAssetId;
 	private readonly ObservableAsPropertyHelper<IReadOnlyList<LiquidAssetBalanceItemViewModel>> _assetOptions;
 
 	[AutoNotify] private string _confidentialAddressText = "";
 	[AutoNotify] private string _assetIdHex = "";
 	[AutoNotify] private long _atomicUnits;
+	[AutoNotify] private string _amountText = "";
+	[AutoNotify] private string? _amountErrorText;
 	[AutoNotify] private LiquidAssetBalanceItemViewModel? _selectedAsset;
 
 	public LiquidSendRecipientViewModel(UiContext uiContext, LiquidWalletModel walletModel)
@@ -45,7 +51,7 @@ public sealed partial class LiquidSendRecipientViewModel : ViewModelBase
 		_assetOptions = walletModel.Balances
 			.ObserveOn(RxApp.MainThreadScheduler)
 			.Select(snapshot => (IReadOnlyList<LiquidAssetBalanceItemViewModel>)snapshot.Balances
-				.Select(balance => new LiquidAssetBalanceItemViewModel(uiContext, balance))
+				.Select(balance => new LiquidAssetBalanceItemViewModel(uiContext, balance, walletModel.AssetRegistry))
 				.ToArray())
 			.ToProperty(
 				this,
@@ -70,13 +76,56 @@ public sealed partial class LiquidSendRecipientViewModel : ViewModelBase
 		// The selected option drives the asset id the plan/sign path consumes;
 		// a cleared selection clears the id (the landed fail-closed validation
 		// surfaces as-is).
+		this.WhenAnyValue(x => x.AssetIdHex).Subscribe(assetId =>
+		{
+			// A selector can clear transiently while refreshing its items. Keep text
+			// for the same ID, but never carry its numeric meaning to another asset.
+			if (!string.IsNullOrEmpty(assetId))
+			{
+				if (_amountAssetId is not null && _amountAssetId != assetId) AmountText = "";
+				_amountAssetId = assetId;
+			}
+			TryParseAmount();
+			this.RaisePropertyChanged(nameof(AmountText));
+			this.RaisePropertyChanged(nameof(AmountUnitText));
+		});
 		this.WhenAnyValue(x => x.SelectedAsset)
 			.Subscribe(selected => AssetIdHex = selected?.AssetIdHex ?? "");
+		this.WhenAnyValue(x => x.AmountText).Subscribe(_ => TryParseAmount());
+		this.ValidateProperty(x => x.AmountText, errors =>
+		{
+			if (string.IsNullOrEmpty(AssetIdHex))
+			{
+				errors.Add(ErrorSeverity.Error, "Select an asset.");
+				return;
+			}
+			_walletModel.AssetRegistry.TryGet(AssetIdHex, out var metadata);
+			var result = LiquidAmountParser.Parse(AmountText, metadata);
+			if (result.Error is { } error) errors.Add(ErrorSeverity.Error, error);
+			else if (result.AtomicUnits == 0) errors.Add(ErrorSeverity.Error, "Enter an amount greater than zero.");
+		});
+		this.RaisePropertyChanged(nameof(AmountText));
 	}
 
 	public IReadOnlyList<LiquidAssetBalanceItemViewModel> AssetOptions => _assetOptions.Value;
 
 	public bool IsConfidential => true;
+	public string AmountUnitText => _walletModel.AssetRegistry.TryGet(AssetIdHex, out var metadata)
+		? $"Amount in {metadata.Ticker} (up to {metadata.Precision} decimal places)"
+		: "Unknown asset: integer atomic units only";
+
+	internal bool TryParseAmount()
+	{
+		_walletModel.AssetRegistry.TryGet(AssetIdHex, out var metadata);
+		LiquidAmountParseResult result = LiquidAmountParser.Parse(AmountText, metadata);
+		AmountErrorText = string.IsNullOrEmpty(AssetIdHex) ? "Select an asset."
+			: result.Error ?? (result.AtomicUnits == 0 ? "Enter an amount greater than zero." : null);
+		AtomicUnits = AmountErrorText is null ? result.AtomicUnits : 0;
+		this.RaisePropertyChanged(nameof(IsAmountValid));
+		return IsAmountValid;
+	}
+
+	public bool IsAmountValid => AmountErrorText is null && !string.IsNullOrEmpty(AmountText);
 
 	/// <summary>
 	/// Holds the asset id the per-balance-row Send affordance wants pre-selected.
@@ -125,6 +174,7 @@ public sealed partial class LiquidSendRecipientViewModel : ViewModelBase
 			return;
 		}
 
-		SelectedAsset = options.FirstOrDefault(option => option.IsPeggedAsset) ?? options.FirstOrDefault();
+		SelectedAsset = options.FirstOrDefault(option => option.AssetIdHex == _amountAssetId)
+			?? options.FirstOrDefault(option => option.IsPeggedAsset) ?? options.FirstOrDefault();
 	}
 }

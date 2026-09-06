@@ -293,7 +293,8 @@ public sealed class LiquidWalletSession : IAsyncDisposable
 				session.SetNextReceiveLabelsAsync,
 				current.SelectableOutputs,
 				client.IssueNextReceiveAddressAsync,
-				() => client.CurrentHandoff);
+				() => client.CurrentHandoff,
+				WalletWasabi.Liquid.Assets.LiquidAssetMetadataRegistry.ForManifest(manifest));
 
 			// Feed the already-produced history into the model so a funded
 			// wallet presents its retained history instead of the "not

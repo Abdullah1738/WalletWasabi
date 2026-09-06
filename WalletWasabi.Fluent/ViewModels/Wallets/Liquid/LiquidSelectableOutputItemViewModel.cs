@@ -1,5 +1,6 @@
 using WalletWasabi.Fluent.Helpers;
 using WalletWasabi.Liquid.Wallet.Ui;
+using WalletWasabi.Liquid.Assets;
 
 namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 
@@ -33,6 +34,13 @@ public sealed partial class LiquidSelectableOutputItemViewModel : ViewModelBase
 		OutPointDisplayText = $"{TruncateHex(TransactionIdHex)}:{OutputIndex}";
 		AssetMarkerText = IsPeggedAsset ? "L-BTC" : "issued";
 		AmountDisplayText = LiquidAmountDisplay.FormatBalance(IsPeggedAsset, AtomicUnits);
+	}
+
+	public LiquidSelectableOutputItemViewModel(UiContext uiContext, LiquidWalletUiSelectableOutput output, LiquidAssetMetadataRegistry registry)
+		: this(uiContext, output)
+	{
+		AssetMarkerText = LiquidAmountDisplay.AssetLabel(registry, AssetIdHex);
+		AmountDisplayText = LiquidAmountDisplay.FormatBalance(registry, AssetIdHex, AtomicUnits);
 	}
 
 	// The exact 72-character consensus-bytes hex the plan/sign path consumes.

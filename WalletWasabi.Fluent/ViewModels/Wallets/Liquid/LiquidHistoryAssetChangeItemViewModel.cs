@@ -1,4 +1,6 @@
 using WalletWasabi.Liquid.Wallet.Ui;
+using WalletWasabi.Liquid.Assets;
+using WalletWasabi.Fluent.Helpers;
 
 namespace WalletWasabi.Fluent.ViewModels.Wallets.Liquid;
 
@@ -31,6 +33,13 @@ public sealed class LiquidHistoryAssetChangeItemViewModel : ViewModelBase
 		AssetDisplayReference = change.IsPeggedAsset
 			? "L-BTC"
 			: change.AssetIdHex;
+	}
+
+	public LiquidHistoryAssetChangeItemViewModel(UiContext uiContext, LiquidWalletUiHistoryAssetChange change, LiquidAssetMetadataRegistry registry)
+		: this(uiContext, change)
+	{
+		DisplayAmount = LiquidAmountDisplay.FormatBalance(registry, AssetIdHex, NetAtomicUnits);
+		AssetDisplayReference = LiquidAmountDisplay.AssetLabel(registry, AssetIdHex);
 	}
 
 	public long NetAtomicUnits { get; }
