@@ -26,19 +26,22 @@ internal sealed class LiquidCoinJoinNativeOperations
 		_executeNative = executeNative ?? throw new ArgumentNullException(nameof(executeNative));
 	}
 
-	internal Response Canonicalize(ReadOnlyMemory<byte> pset) => Execute(1, pset);
-	internal Response BlindNonLast(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> context, ReadOnlyMemory<byte> witnesses) => Execute(4, pset, context, witnesses);
-	internal Response BlindLast(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> context, ReadOnlyMemory<byte> witnesses) => Execute(5, pset, context, witnesses);
-	internal Response FinalView(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> context) => Execute(6, pset, context);
-	internal Response EqualityProof(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> context, ReadOnlyMemory<byte> witness, ReadOnlyMemory<byte> entropy) => Execute(8, pset, context, witness, entropy);
-	internal Response EqualityProofOutput(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> context, ReadOnlyMemory<byte> witness, ReadOnlyMemory<byte> entropy, ReadOnlyMemory<byte> valueProof, ReadOnlyMemory<byte> assetProof) => Execute(9, pset, context, witness, entropy, valueProof, assetProof);
-	internal Response BalanceProof(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> context, ReadOnlyMemory<byte> residual, ReadOnlyMemory<byte> entropy) => Execute(10, pset, context, residual, entropy);
+	internal Response Canonicalize(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> canonicalContext) => Execute(1, pset, canonicalContext);
+	internal Response VerifyInputRegistration(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> registrationContext, ReadOnlyMemory<byte> proof, ReadOnlyMemory<byte> Ma) => Execute(2, pset, registrationContext, proof, Ma);
+	internal Response VerifyOutputRegistration(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> registrationContext, ReadOnlyMemory<byte> proof, ReadOnlyMemory<byte> Ma, ReadOnlyMemory<byte> valueProof, ReadOnlyMemory<byte> assetProof) => Execute(3, pset, registrationContext, proof, Ma, valueProof, assetProof);
+	internal Response BlindNonLast(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> roleMap, ReadOnlyMemory<byte> secretRecords, ReadOnlyMemory<byte> entropy) => Execute(4, pset, roleMap, secretRecords, entropy);
+	internal Response BlindLast(ReadOnlyMemory<byte> originalPset, ReadOnlyMemory<byte> roleMap, ReadOnlyMemory<byte> intermediatePset, ReadOnlyMemory<byte> secretRecords, ReadOnlyMemory<byte> entropy) => Execute(5, originalPset, roleMap, intermediatePset, secretRecords, entropy);
+	internal Response FinalView(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> canonicalContext) => Execute(6, pset, canonicalContext);
+	internal Response VerifyPartialBalance(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> balanceContext, ReadOnlyMemory<byte> proof) => Execute(7, pset, balanceContext, proof);
+	internal Response EqualityProof(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> registrationContext, ReadOnlyMemory<byte> Ma, ReadOnlyMemory<byte> valueBE8, ReadOnlyMemory<byte> r1, ReadOnlyMemory<byte> r2, ReadOnlyMemory<byte> entropy) => Execute(8, pset, registrationContext, Ma, valueBE8, r1, r2, entropy);
+	internal Response EqualityProofOutput(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> registrationContext, ReadOnlyMemory<byte> Ma, ReadOnlyMemory<byte> valueBE8, ReadOnlyMemory<byte> r1, ReadOnlyMemory<byte> r2, ReadOnlyMemory<byte> entropy, ReadOnlyMemory<byte> valueProof, ReadOnlyMemory<byte> assetProof) => Execute(9, pset, registrationContext, Ma, valueBE8, r1, r2, entropy, valueProof, assetProof);
+	internal Response BalanceProof(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> balanceContext, ReadOnlyMemory<byte> residual, ReadOnlyMemory<byte> entropy) => Execute(10, pset, balanceContext, residual, entropy);
 	internal Response OwnedDigests(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> context, ReadOnlyMemory<byte> digest, ReadOnlyMemory<byte> authorization, ReadOnlyMemory<byte> owned) => Execute(11, pset, context, digest, authorization, owned);
 	internal Response Assembly(ReadOnlyMemory<byte> pset, ReadOnlyMemory<byte> context, ReadOnlyMemory<byte> digest, ReadOnlyMemory<byte> authorization, ReadOnlyMemory<byte> signatures) => Execute(12, pset, context, digest, authorization, signatures);
 
 	internal Response Execute(uint operation, params ReadOnlyMemory<byte>[] fields)
 	{
-		if (operation is not (1 or 4 or 5 or 6 or 8 or 9 or 10 or 11 or 12))
+		if (operation is < 1 or > 12)
 			throw new NotSupportedException($"CoinJoin operation {operation} is not supported by this adapter.");
 
 		byte[] request = LiquidCoinJoinFrame.Encode(operation, fields);
@@ -76,15 +79,37 @@ internal sealed class LiquidCoinJoinNativeOperations
 		if (length != response.Length)
 			throw new FormatException("Native response length is inconsistent.");
 		(uint responseOperation, IReadOnlyList<byte[]> fields) = LiquidCoinJoinFrame.Decode(response.AsSpan(0, length));
-		int expectedFields = operation switch
+		try
 		{
-			11 => 3,
-			12 => 4,
-			_ => 1
-		};
-		if (responseOperation != operation || fields.Count != expectedFields)
-			throw new FormatException("Native response header or fields are invalid.");
-		return new Response(responseOperation, fields);
+			int expectedFields = operation switch
+			{
+				1 or 6 => 2,
+				11 => 3,
+				12 => 4,
+				_ => 1
+			};
+			if (responseOperation != operation || fields.Count != expectedFields)
+				throw new FormatException("Native response header or fields are invalid.");
+			bool validLengths = operation switch
+			{
+				1 or 6 => fields[1].Length == 32,
+				8 or 9 => fields[0].Length == 162,
+				10 => fields[0].Length == 65,
+				11 => fields[0].Length == 32 && fields[1].Length == 32,
+				12 => fields[0].Length == 32 && fields[1].Length == 32 && fields[3].Length == 32,
+				_ => true
+			};
+			if (!validLengths)
+				throw new FormatException("Native response fixed-size fields are invalid.");
+			return new Response(responseOperation, fields);
+		}
+		catch
+		{
+			// Rejected decoded fields may contain witness-class intermediate PSET data.
+			foreach (byte[] field in fields)
+				CryptographicOperations.ZeroMemory(field);
+			throw;
+		}
 	}
 
 	internal static Response ParseResponseForTest(uint operation, byte[] response) => ParseResponse(operation, response, response.Length);
