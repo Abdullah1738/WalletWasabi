@@ -103,6 +103,22 @@
 			<Link>NativeWalletFacts\libwasabi_liquid_wallet_facts_v1.so</Link>
 			<Visible>false</Visible>
 		</None>
+		<!-- The commit-bound CoinJoin FFI artifact published by the native workflow. -->
+		<None Update="Liquid\CoinJoin\Native\NativeCoinJoin\libwasabi_liquid_coinjoin_v1.dylib">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>NativeCoinJoin\libwasabi_liquid_coinjoin_v1.dylib</Link>
+			<Visible>false</Visible>
+		</None>
+		<None Update="Liquid\CoinJoin\Native\NativeCoinJoin\manifest.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>NativeCoinJoin\manifest.json</Link>
+			<Visible>false</Visible>
+		</None>
+		<None Update="Liquid\CoinJoin\Native\NativeCoinJoin\SHA256SUMS">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>NativeCoinJoin\SHA256SUMS</Link>
+			<Visible>false</Visible>
+		</None>
 		<None Update="Scheme\Wasabilib.scm">
 		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
