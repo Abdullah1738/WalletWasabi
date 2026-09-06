@@ -857,24 +857,39 @@ public class LiquidWalletFactsWireV1UntrustedStructuralResponseTests
 		byte[] sourceB,
 		ExpectedResponse expected)
 	{
-		using var start = new ManualResetEventSlim();
-		int stop = 0;
-		Task mutator = Task.Run(() =>
-		{
-			start.Wait();
-			while (Volatile.Read(ref stop) == 0)
-			{
-				sourceB.CopyTo(mutationTarget.AsSpan(mutationOffset, sourceB.Length));
-				Thread.SpinWait(64);
-				sourceA.CopyTo(mutationTarget.AsSpan(mutationOffset, sourceA.Length));
-				Thread.SpinWait(256);
-			}
-		});
-
-		int acceptedCount = 0;
-		start.Set();
+		LiquidWalletFactsWireV1UntrustedStructuralResponse? controlResponse = null;
 		try
 		{
+			Assert.True(LiquidWalletFactsWireV1UntrustedStructuralResponse.TryDecodeUntrustedStructuralResponse(
+				frame,
+				expectedSource,
+				out controlResponse,
+				out LiquidWalletFactsWireErrorCode controlErrorCode));
+			Assert.Equal(LiquidWalletFactsWireErrorCode.None, controlErrorCode);
+			AssertResponseEquals(expected, Assert.IsType<LiquidWalletFactsWireV1UntrustedStructuralResponse>(controlResponse));
+		}
+		finally
+		{
+			controlResponse?.Dispose();
+		}
+
+		var mutationObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		int stop = 0;
+		Task mutator = Task.CompletedTask;
+		try
+		{
+			mutator = Task.Run(() =>
+			{
+				while (Volatile.Read(ref stop) == 0)
+				{
+					sourceB.CopyTo(mutationTarget.AsSpan(mutationOffset, sourceB.Length));
+					mutationObserved.TrySetResult();
+					Thread.SpinWait(64);
+					sourceA.CopyTo(mutationTarget.AsSpan(mutationOffset, sourceA.Length));
+					Thread.SpinWait(256);
+				}
+			});
+			await mutationObserved.Task.WaitAsync(TimeSpan.FromSeconds(30));
 			for (int iteration = 0; iteration < 2_048; iteration++)
 			{
 				LiquidWalletFactsWireV1UntrustedStructuralResponse? response = null;
@@ -887,7 +902,6 @@ public class LiquidWalletFactsWireV1UntrustedStructuralResponseTests
 						out LiquidWalletFactsWireErrorCode errorCode);
 					if (accepted)
 					{
-						acceptedCount++;
 						Assert.Equal(LiquidWalletFactsWireErrorCode.None, errorCode);
 						LiquidWalletFactsWireV1UntrustedStructuralResponse ownedResponse = Assert.IsType<LiquidWalletFactsWireV1UntrustedStructuralResponse>(response);
 						Assert.Equal(sourceA, ownedResponse.GetSourceEpoch());
@@ -908,11 +922,15 @@ public class LiquidWalletFactsWireV1UntrustedStructuralResponseTests
 		finally
 		{
 			Volatile.Write(ref stop, 1);
-			await mutator;
-			sourceA.CopyTo(mutationTarget.AsSpan(mutationOffset, sourceA.Length));
+			try
+			{
+				await mutator;
+			}
+			finally
+			{
+				sourceA.CopyTo(mutationTarget.AsSpan(mutationOffset, sourceA.Length));
+			}
 		}
-
-		Assert.True(acceptedCount > 0);
 	}
 
 	private static void AssertNonPrivateDeclaredMemberNames(Type type, params string[] expectedNames)
